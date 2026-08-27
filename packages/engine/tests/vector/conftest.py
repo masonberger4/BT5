@@ -41,3 +41,37 @@ def make_cds(n_codons: int, *, seed: int = 11, table_id: int = 1) -> tuple[str, 
     cds = "ATG" + "".join(sense[i] for i in picks) + table.stop_codons[0]
     protein = "".join(table.forward_table[cds[i : i + 3]] for i in range(0, len(cds) - 3, 3))
     return cds, protein
+
+
+def translate(cds: str, *, table_id: int = 1) -> str:
+    """Protein for a CDS, dropping a terminal stop."""
+    table = CodonTable.unambiguous_dna_by_id[table_id]
+    out = []
+    for i in range(0, len(cds), 3):
+        codon = cds[i : i + 3]
+        if codon in table.stop_codons:
+            break
+        out.append(table.forward_table[codon])
+    return "".join(out)
+
+
+def resynonymise(cds: str, *, table_id: int = 1) -> str:
+    """A DIFFERENT nucleotide sequence encoding the SAME protein.
+
+    This is what re-optimisation actually does, and the case where annotation
+    inside the CDS still describes exactly the residues it described before.
+    """
+    table = CodonTable.unambiguous_dna_by_id[table_id]
+    synonyms: dict[str, list[str]] = {}
+    for codon, aa in sorted(table.forward_table.items()):
+        synonyms.setdefault(aa, []).append(codon)
+    out = []
+    for i in range(0, len(cds), 3):
+        codon = cds[i : i + 3]
+        if codon in table.stop_codons:
+            out.append(codon)
+            continue
+        options = synonyms[table.forward_table[codon]]
+        # pick a different codon where one exists, so the test is not vacuous
+        out.append(next((c for c in options if c != codon), codon))
+    return "".join(out)
