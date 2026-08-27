@@ -16,6 +16,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
+from Bio.Data import CodonTable
+
 from bt5.core.types import (
     DNA_ALPHABET,
     Construct,
@@ -43,6 +45,19 @@ from bt5.vector.remap import IntervalRemapper
 #: only slices non-CDS segments -- but `Construct` requires a valid alphabet, so
 #: it cannot be N.
 _REFERENCE_FILLER = "A"
+
+#: INSDC feature keys whose coordinates describe RESIDUES, not bases. When the
+#: redesigned CDS encodes the same protein these still describe exactly what they
+#: did before, so they survive the redesign; a `primer_bind` or a restriction
+#: site over the same span does not, because its bases changed underneath it.
+#:
+#: This is the difference between keeping and losing the annotation a user cares
+#: about most. Real vector maps annotate cassette elements -- a signal peptide, a
+#: Myc tag, a TM domain -- as sub-features INSIDE the ORF, and those elements are
+#: exactly what BT5 back-translates as part of the whole CDS.
+PROTEIN_LEVEL_KINDS = frozenset(
+    {"cds", "sig_peptide", "mat_peptide", "transit_peptide", "propeptide"}
+)
 
 
 @dataclass(frozen=True)
@@ -118,7 +133,12 @@ def assemble(
     if len(sequence) != remapper.new_length:  # pragma: no cover - arithmetic guard
         raise VectorError("assembled length disagrees with the remapper; refusing to emit")
 
-    features, compound_parts, dropped = _remap_features(backbone, remapper, site)
+    features, compound_parts, dropped = _remap_features(
+        backbone,
+        remapper,
+        site,
+        protein_preserved=_encodes_same_protein(backbone, site, table_id, protein),
+    )
     features = (*features, _cds_feature(remapper.insert_interval, site, table_id))
 
     segments = _segments(
@@ -196,6 +216,49 @@ def _check_table(site: InsertionSite, table_id: int) -> None:
         )
 
 
+def _encodes_same_protein(
+    backbone: VectorBackbone, site: InsertionSite, table_id: int, protein: str
+) -> bool:
+    """Does the sequence being replaced already encode the protein being designed?
+
+    True for the dominant case -- re-optimising a CDS in place -- and false when
+    the user is swapping in a different protein, where an internal annotation's
+    residue coordinates would describe nothing. Answered by translating, not
+    assumed from lengths: two proteins of equal length are equally likely here.
+    """
+    old = backbone.slice(site.interval)
+    if len(old) % 3 != 0:
+        return False
+    try:
+        table = CodonTable.unambiguous_dna_by_id[table_id]
+    except KeyError:
+        return False
+    residues: list[str] = []
+    for i in range(0, len(old), 3):
+        codon = old[i : i + 3]
+        if codon in table.stop_codons:
+            residues.append("*")
+            continue
+        aa = table.forward_table.get(codon)
+        if aa is None:
+            return False
+        residues.append(aa)
+    observed = "".join(residues)
+    return observed.rstrip("*") == protein.rstrip("*") and "*" not in observed.rstrip("*")
+
+
+def _is_in_frame_inside(feature: Feature, site: InsertionSite) -> bool:
+    """A protein-level feature lying wholly inside the CDS, on a codon boundary."""
+    if feature.kind.lower() not in PROTEIN_LEVEL_KINDS:
+        return False
+    iv = feature.interval
+    cds = site.interval
+    if not (cds.start <= iv.start and iv.end <= cds.end):
+        return False
+    offset = iv.start - cds.start if site.strand == 1 else cds.end - iv.end
+    return offset % 3 == 0 and iv.length % 3 == 0
+
+
 def _check_no_intron_in_cds(
     backbone: VectorBackbone,
     site: InsertionSite,
@@ -239,14 +302,26 @@ def _check_cds(cds: str) -> None:
 
 
 def _remap_features(
-    backbone: VectorBackbone, remapper: IntervalRemapper, site: InsertionSite
+    backbone: VectorBackbone,
+    remapper: IntervalRemapper,
+    site: InsertionSite,
+    *,
+    protein_preserved: bool,
 ) -> tuple[tuple[Feature, ...], dict[str, tuple[Interval, ...]], tuple[DesignNote, ...]]:
     """Move every backbone feature into assembled coordinates.
 
     The `source` feature is rewritten to span the new length; the old CDS feature
-    is dropped because it is replaced. Anything else overlapping the insert is
-    dropped and reported -- clipping it would assert a boundary the source file
-    never contained.
+    is dropped because it is replaced.
+
+    A feature overlapping the insert is dropped, with one exception. When the
+    redesign encodes the SAME protein, an in-frame protein-level feature wholly
+    inside the CDS still describes the same residues, so it is kept -- the codon
+    count is unchanged, so its coordinates are unchanged too. Dropping it would
+    silently delete the Myc tag and the signal peptide from a user's map on a
+    routine re-optimisation.
+
+    Everything else overlapping the insert is still dropped rather than clipped,
+    because clipping asserts a boundary the source file never contained.
     """
     out: list[Feature] = []
     parts: dict[str, tuple[Interval, ...]] = {}
@@ -261,12 +336,15 @@ def _remap_features(
 
         moved = remapper.interval(feature.interval)
         if moved is None:
+            if protein_preserved and _is_in_frame_inside(feature, site):
+                out.append(feature)
+                continue
             dropped.append(
                 DesignNote(
                     kind="change",
                     summary=(
                         f"dropped feature {backbone.label_of(feature)!r} ({feature.kind}): it "
-                        f"overlaps the replaced CDS, so its coordinates no longer describe "
+                        f"overlaps the redesigned CDS, so its coordinates no longer describe "
                         f"anything"
                     ),
                     bears_on="map fidelity",

@@ -31,7 +31,7 @@ from bt5.vector import (
     write_genbank,
 )
 from bt5.verify import verify_construct
-from conftest import make_cds
+from conftest import make_cds, resynonymise, translate
 
 LONGER = 150  # codons; the fixture's own CDS is 140
 SHORTER = 120
@@ -229,7 +229,8 @@ class TestFeatureRemapping:
         construct: Construct = assembly.construct  # type: ignore[attr-defined]
         assert not any(f.uid == "overlap" for f in construct.features)
         assert any(  # type: ignore[attr-defined]
-            n.kind == "change" and "overlaps the replaced CDS" in n.summary for n in assembly.notes
+            n.kind == "change" and "overlaps the redesigned CDS" in n.summary
+            for n in assembly.notes
         )
 
 
@@ -363,3 +364,101 @@ class TestReverseOrientedCassette:
         assembly = assemble(self.backbone(), cds, protein=protein, table_id=1)
         text = write_genbank(construct_to_record(assembly.construct))
         assert "complement(201..290)" in text
+
+
+class TestAnnotationInsideTheCds:
+    """Real vector maps annotate cassette elements as sub-features INSIDE the ORF.
+
+    A signal peptide, a Myc tag, a TM domain -- exactly the elements BT5
+    back-translates as part of the whole CDS. Dropping them on a routine
+    re-optimisation silently deletes the annotation a user cares about most,
+    while a primer site over the same span genuinely IS invalidated because its
+    bases changed underneath it. The difference is whether the coordinates
+    describe residues or bases.
+    """
+
+    def backbone_with_internal_features(self, backbone: VectorBackbone) -> VectorBackbone:
+        cds = backbone.find_insertion_site().interval
+        extra = (
+            Feature(
+                Interval(cds.start, cds.start + 60), "sig_peptide", {"label": ("leader",)}, "sp"
+            ),
+            Feature(Interval(cds.end - 30, cds.end), "CDS", {"label": ("Myc",)}, "tag"),
+            Feature(
+                Interval(cds.start + 90, cds.start + 112), "primer_bind", {"label": ("fwd",)}, "pb"
+            ),
+            Feature(Interval(cds.start + 1, cds.start + 31), "CDS", {"label": ("shifted",)}, "off"),
+        )
+        return replace(backbone, features=(*backbone.features, *extra))
+
+    def reoptimised(self, backbone: VectorBackbone):  # type: ignore[no-untyped-def]
+        bb = self.backbone_with_internal_features(backbone)
+        site = bb.find_insertion_site(label="transgene")
+        native = bb.slice(site.interval)
+        protein = translate(native)
+        redesigned = resynonymise(native)
+        assert redesigned != native, "the test is vacuous unless the bases actually change"
+        return bb, assemble(bb, redesigned, protein=protein, table_id=1, site=site), protein
+
+    def labels(self, construct: Construct) -> set[str]:
+        return {f.qualifiers.get("label", ("",))[0] for f in construct.features}
+
+    def test_a_protein_level_feature_survives_reoptimisation(
+        self, backbone: VectorBackbone
+    ) -> None:
+        _, assembly, _ = self.reoptimised(backbone)
+        kept = self.labels(assembly.construct)
+        assert "leader" in kept, "a signal peptide still describes the same residues"
+        assert "Myc" in kept
+
+    def test_a_nucleotide_level_feature_is_still_dropped(self, backbone: VectorBackbone) -> None:
+        """The primer no longer binds -- its bases changed underneath it."""
+        _, assembly, _ = self.reoptimised(backbone)
+        assert "fwd" not in self.labels(assembly.construct)
+        assert any("fwd" in n.summary for n in assembly.notes)
+
+    def test_an_out_of_frame_feature_is_dropped(self, backbone: VectorBackbone) -> None:
+        """Off a codon boundary it cannot be describing residues, whatever its key."""
+        _, assembly, _ = self.reoptimised(backbone)
+        assert "shifted" not in self.labels(assembly.construct)
+
+    def test_the_preserved_feature_still_covers_the_same_residues(
+        self, backbone: VectorBackbone
+    ) -> None:
+        bb, assembly, protein = self.reoptimised(backbone)
+        leader = next(f for f in assembly.construct.features if f.uid == "sp")
+        assert translate(assembly.construct.slice(leader.interval)) == protein[:20]
+
+    def test_a_different_protein_drops_everything_internal(self, backbone: VectorBackbone) -> None:
+        """Those residues no longer exist, so the coordinates describe nothing."""
+        bb = self.backbone_with_internal_features(backbone)
+        site = bb.find_insertion_site(label="transgene")
+        cds, protein = make_cds(140, seed=99)
+        assembly = assemble(bb, cds, protein=protein, table_id=1, site=site)
+        kept = self.labels(assembly.construct)
+        assert "leader" not in kept
+        assert "Myc" not in kept
+
+    def test_a_reverse_cassette_measures_frame_from_the_high_end(self) -> None:
+        cds, protein = make_cds(30)
+        span = Interval(200, 200 + len(cds), -1)
+        filler = "ACGT" * 150
+        bb = VectorBackbone(
+            # the minus-strand CDS must really be there: the same-protein check
+            # translates what is being replaced, it does not take the map's word
+            sequence=filler[:200] + reverse_complement(cds) + filler[200 + len(cds) :],
+            topology=Topology.CIRCULAR,
+            features=(
+                Feature(span, "CDS", {"label": ("rev",), "transl_table": ("1",)}, "f0"),
+                # first 5 codons of the protein: at the HIGH end on the minus strand
+                Feature(
+                    Interval(span.end - 15, span.end, -1), "sig_peptide", {"label": ("lead",)}, "sp"
+                ),
+            ),
+            name="reverse",
+        )
+        assembly = assemble(bb, resynonymise(cds), protein=protein, table_id=1)
+        kept = {f.qualifiers.get("label", ("",))[0] for f in assembly.construct.features}
+        assert "lead" in kept
+        lead = next(f for f in assembly.construct.features if f.uid == "sp")
+        assert translate(assembly.construct.slice(lead.interval)) == protein[:5]
