@@ -223,3 +223,49 @@ class TestMarkerVocabulary:
     @pytest.mark.parametrize("text", ["attB1", "loxP", "FRT site", "Gateway attP"])
     def test_recombination_sites_are_recognised(self, text: str) -> None:
         assert is_recombination_site(text)
+
+
+class TestReverseOrientedCassette:
+    """A lentiviral CAR cassette commonly runs on the minus strand.
+
+    Everything about locating it inverts: the promoter is at HIGHER coordinates
+    than the start codon, and the polyA signal is at lower ones. A detector that
+    ignores strand credits whichever signals happen to be nearby and puts a false
+    reason in front of the user even when the ranking survives.
+    """
+
+    def backbone(self, *, polya_strand: int = -1) -> VectorBackbone:
+        cds, _ = make_cds(200)
+        bb = backbone_with(cds, 900, strand=-1)
+        end = 900 + len(cds)
+        return replace(
+            bb,
+            features=(
+                # upstream on the minus strand means ABOVE the ORF
+                feature("promoter", end + 20, end + 300, -1, "EF-1-alpha core promoter"),
+                # downstream on the minus strand means BELOW it
+                feature("polyA_signal", 600, 700, polya_strand, "SV40 poly(A) signal"),
+            ),
+        )
+
+    def test_a_reverse_cassette_is_found_and_ranks_first(self) -> None:
+        bb = self.backbone()
+        cds, _ = make_cds(200)
+        top = suggest_insertion_sites(bb, table_id=1)[0]
+        assert top.interval == Interval(900, 900 + len(cds), -1)
+
+    def test_the_promoter_above_it_counts(self) -> None:
+        bb = self.backbone()
+        cds, _ = make_cds(200)
+        _, reasons = score_candidate(bb, Interval(900, 900 + len(cds), -1), table_id=1)
+        assert any("EF-1-alpha" in r for r in reasons)
+
+    def test_a_plus_strand_polya_does_not_terminate_a_minus_strand_transcript(self) -> None:
+        """AATAAA is directional; a reverse cassette is polyadenylated by its 3' LTR."""
+        cds, _ = make_cds(200)
+        orf = Interval(900, 900 + len(cds), -1)
+        matched, matched_reasons = score_candidate(self.backbone(polya_strand=-1), orf, table_id=1)
+        crossed, crossed_reasons = score_candidate(self.backbone(polya_strand=1), orf, table_id=1)
+        assert matched > crossed
+        assert any("poly(A)" in r for r in matched_reasons)
+        assert not any("poly(A)" in r for r in crossed_reasons)
