@@ -1,0 +1,82 @@
+LOCUS       pBT5_SYNTH_LENTI        2000 bp    DNA     circular SYN 27-AUG-2026
+DEFINITION  Synthetic lentiviral transfer plasmid fixture for BT5 vector-lane tests.
+ACCESSION   .
+VERSION     .
+KEYWORDS    .
+SOURCE      synthetic DNA construct
+  ORGANISM  synthetic DNA construct
+            other sequences; artificial sequences.
+FEATURES             Location/Qualifiers
+     source          1..2000
+                     /organism="synthetic DNA construct"
+                     /mol_type="other DNA"
+     rep_origin      join(1801..2000,1..80)
+                     /label="ori"
+                     /note="high-copy-number ColE1/pMB1-style origin; spans the
+                     origin of the coordinate system on purpose"
+     LTR             81..330
+                     /label="5' LTR"
+                     /note="identical to the 3' LTR -- a 250 bp perfect direct
+                     repeat that no codon choice can remove"
+     misc_feature    331..380
+                     /label="psi"
+                     /note="packaging signal"
+     misc_feature    381..500
+                     /label="RRE"
+     promoter        501..720
+                     /label="EF-1alpha core promoter"
+     intron          721..800
+                     /label="chimeric intron"
+                     /note="deliberately placed to raise expression; immutable
+                     and exempt from splice scanning"
+     5'UTR           801..860
+                     /label="5' UTR"
+     CDS             861..1280
+                     /label="transgene"
+                     /codon_start=1
+                     /transl_table=1
+                     /translation="MLVTAAFARSKSVQNYVVSTKDSPLYYLRKWVRSGYKFDCEEVG
+                     LREHQGPAATYTPTQAIWRLTLPSPLLNVDVWQNSCKSLQHTASWKKHRFGLFTLVIS
+                     PLIRLGEVASLCGLCEHTATSEVKVCPIDCLQSPTSF"
+     misc_feature    1281..1520
+                     /label="WPRE"
+                     /note="backbone: after the stop codon, never translated"
+     LTR             1521..1770
+                     /label="3' LTR"
+                     /note="identical to the 5' LTR"
+ORIGIN
+        1 gccgtgggcg cggaaggact gtcaccccac cgagtgtcac tggggatgtg acaaatagtg
+       61 caataaaata aattaggact gtattggaat tagcgctcct atggtcacaa atattccata
+      121 gcctgcgccg gctgtggcca tgggcttccc ggcttcggtg tcgtaaacag catctcgaaa
+      181 tcgaaagcag cttaggagcc agaggtcgac agcgctccac tcctggtcga caaggctgcg
+      241 aagccctggg gacacgtgac gaagatatcc ggccacctcc ttactcactc gggaggtatg
+      301 tgtaaggtta gcctcctttg aattggaaag agactgcaac gaaaatatgt gcctgcacac
+      361 gctgtctcca acctggagcg aagttcatta agttttttca atgattattg tggatctgtc
+      421 tcaatttacg ctgccggcgt gagtaggtaa atatgaatgt gacttggtag gtctctccgg
+      481 gcgttgggct taggggagcc tcgaaccttg agtatacggt ttttgtcgca agcagtaagg
+      541 gctcaagcaa attaacttgc tcgggatcta tcgctaccag tgccctaacc cgcactcacc
+      601 tctacgacaa aggcttatgc ctcatatcga ggagtgcacg ttaattacag cgaggatcac
+      661 gattcctcta taatatgaag ttgatgggac ggtgcgacaa accgtgacct atgcctaatt
+      721 ttttgtcttc ggatcaagaa cgccagattt gtgaacgtcc agggcaaacc agttacgatt
+      781 gacgatctta gatgagggac ctaatcacaa cgccatgaac tctagatcta cgtcgatcga
+      841 ggcgaccgat cgatataatt atgttagtga cggccgcgtt cgcacggtcc aaatcggtac
+      901 agaattacgt tgtaagcaca aaggactcac ccttgtatta ccttaggaag tgggtccggt
+      961 cgggctacaa gtttgactgc gaggaggtgg ggctacgtga gcaccaaggg cctgccgcca
+     1021 cgtacacgcc gacacaggct atctggcgac tcaccctacc ttccccgtta ctaaacgtcg
+     1081 acgtatggca aaactcatgc aaatcactgc agcatacggc tagctggaaa aaacacagat
+     1141 tcgggttatt caccctcgtc atcagccccc ttattcgtct tggggaggta gcatccctat
+     1201 gcggactttg cgagcacacg gcgacgagtg aagtaaaagt ctgccccata gactgtctgc
+     1261 agagtcccac ttcgttttaa ctgttgagtg aacttgaggc caatcctgca aaacgtaaag
+     1321 gtccgactag aaggtttaga cccaatatct tccaccagat caattagaac gcgcagtacc
+     1381 aatcccgacg gataccgtga ttaggcactg gcggtccatt ggcgcagact tcgacacttt
+     1441 ccatagatga ccagcctcta aagttatgat acgggataca agggttggct tacgcgcgtc
+     1501 cccactagcc attgcacatc gtattggaat tagcgctcct atggtcacaa atattccata
+     1561 gcctgcgccg gctgtggcca tgggcttccc ggcttcggtg tcgtaaacag catctcgaaa
+     1621 tcgaaagcag cttaggagcc agaggtcgac agcgctccac tcctggtcga caaggctgcg
+     1681 aagccctggg gacacgtgac gaagatatcc ggccacctcc ttactcactc gggaggtatg
+     1741 tgtaaggtta gcctcctttg aattggaaag aagtgtttac tgcagaatca tggctgatgc
+     1801 atcgttctac tgggtctgat ctaatgccgt tttcataacg gttcccccgt gagaactaaa
+     1861 aaagtggtca taaggattag catggacaac agattcaacg gaaattcagt atgtcggtat
+     1921 taaacaacct cctaggtggc gaggtgcgga cgatagccta cctaggcagt tacgaaagta
+     1981 aatcgccaac tggccgcgct
+//
