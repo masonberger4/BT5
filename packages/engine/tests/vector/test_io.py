@@ -117,3 +117,40 @@ class TestOtherFormats:
         path.write_text("nonsense")
         with pytest.raises(VectorError, match="unrecognised vector file extension"):
             read_vector(path)
+
+
+MULTIPART = """LOCUS       multipart                 60 bp    DNA     circular SYN 01-JAN-2026
+FEATURES             Location/Qualifiers
+     CDS             complement(join(4..30,31..45))
+                     /label="split"
+     misc_feature    join(4..10,20..25)
+                     /label="two exons"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//
+"""
+
+
+class TestMultiPartLocations:
+    """A minus-strand multi-part join is where part order becomes semantic."""
+
+    def test_the_join_is_written_back_in_the_original_order(self) -> None:
+        backbone = read_genbank(io.StringIO(MULTIPART))
+        text = write_genbank(backbone_to_record(backbone))
+        assert "complement(join(4..30,31..45))" in text
+        assert "join(4..10,20..25)" in text
+
+    def test_every_feature_extracts_the_same_sequence_after_export(self) -> None:
+        """The check that catches a reordering: compare BASES, not coordinates."""
+        from Bio import SeqIO as _SeqIO
+
+        original = _SeqIO.read(io.StringIO(MULTIPART), "genbank")
+        backbone = read_genbank(io.StringIO(MULTIPART))
+        exported = _SeqIO.read(io.StringIO(write_genbank(backbone_to_record(backbone))), "genbank")
+        for before, after in zip(original.features, exported.features, strict=True):
+            assert str(before.extract(original.seq)) == str(after.extract(exported.seq))
+
+    def test_parts_survive_a_round_trip(self) -> None:
+        backbone = read_genbank(io.StringIO(MULTIPART))
+        again = read_genbank(io.StringIO(write_genbank(backbone_to_record(backbone))))
+        assert again.compound_parts == backbone.compound_parts

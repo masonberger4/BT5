@@ -111,12 +111,21 @@ def location_to_interval(
     parts, one starts at 0 and the other ends at `length`.
     """
     strand = _strand_of(location)
-    spans = sorted(
+    # BIOLOGICAL order, as Biopython supplies it: 5'->3' along the feature's own
+    # strand, which for a minus-strand feature is DESCENDING in genomic
+    # coordinates. That order is load-bearing and must not be normalised away.
+    # `complement(join(A,B))` concatenates A then B and reverse-complements the
+    # result, so re-emitting the parts sorted ascending describes a different
+    # sequence -- an AmpR written that way translates from its signal peptide
+    # rather than from its start codon, silently, in the user's exported map.
+    ordered = [
         (_exact(part.start, what="location start"), _exact(part.end, what="location end"))
         for part in location.parts
-    )
-    if not spans:
+    ]
+    if not ordered:
         raise LocationError("location has no parts")
+    # Sorted only to recognise an origin wrap and to bound the outer interval.
+    spans = sorted(ordered)
 
     if circular and len(spans) == 2 and spans[0][0] == 0 and spans[1][1] == length:
         # The tail [0, e) is the continuation of the head [s, length).
@@ -125,11 +134,11 @@ def location_to_interval(
             wraps_origin=True,
         )
 
-    if len(spans) == 1:
-        start, end = spans[0]
+    if len(ordered) == 1:
+        start, end = ordered[0]
         return ParsedLocation(interval=Interval(start, end, strand))
 
-    parts = tuple(Interval(s, e, strand) for s, e in spans)
+    parts = tuple(Interval(s, e, strand) for s, e in ordered)
     return ParsedLocation(interval=Interval(spans[0][0], spans[-1][1], strand), parts=parts)
 
 
