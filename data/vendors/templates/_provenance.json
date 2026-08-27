@@ -1,0 +1,21 @@
+{
+  "idt_eblocks_plate_96.xlsx": {
+    "vendor": "IDT",
+    "product": "eBlocks Gene Fragments, 96-well plate order",
+    "source": "Supplied by repository owner from the IDT ordering portal (login-gated)",
+    "retrieved": "2026-08-27",
+    "sha256": "69a1bc7fc419d4554b0e0e679879e1b81c1e73440f029ed0344fa871905e1f45",
+    "format": {
+      "type": "xlsx",
+      "sheet_name_is_plate_name": true,
+      "columns": [
+        "Well Position",
+        "Name",
+        "Sequence"
+      ],
+      "well_order": "row-major A1..A12, B1..B12, ... H1..H12",
+      "rows": 96
+    },
+    "notes": "Sheet name carries the plate name; there is no plate-name column. Column C is bare ACGT."
+  }
+}

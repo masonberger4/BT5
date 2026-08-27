@@ -1,0 +1,83 @@
+[project]
+name = "bt5"
+version = "0.1.0"
+description = "Codon optimization and protein back-translation, evaluated on the assembled construct"
+requires-python = ">=3.11"
+
+# EVERY runtime dependency is declared here in PR #0. No lane adds one.
+# uv.lock is the least-mergeable file in the repo; see CLAUDE.md section 5.
+dependencies = [
+    "numpy>=1.26",
+    "biopython>=1.83",
+    "pyahocorasick>=2.1",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Folding. ViennaRNA is the BUNDLED DEFAULT (owner holds bundling permission).
+# Pinned exactly: energy parameters determine every dG, so an unannounced version
+# change silently shifts every benchmark baseline. See docs/PLAN.md "ViennaRNA version policy".
+fold = ["viennarna==2.7.2"]
+
+# Biosecurity. The biorisk-only tier is <1 GB and ships ON BY DEFAULT.
+# The full protein/nucleotide similarity tier needs ~600 GB and is explicit opt-in.
+screen = ["commec>=0.2"]
+
+server = ["fastapi>=0.110", "uvicorn>=0.29", "sse-starlette>=2.0"]
+export = ["openpyxl>=3.1"]
+
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "pytest-xdist",
+    "hypothesis>=6.100",
+    "syrupy>=4",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+# Nightly differential oracle only. NOT used in the engine.
+diff = ["dnachisel>=3.2"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["packages/engine/src/bt5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages/engine/tests"]
+markers = [
+    "slow: excluded from PR runs; nightly only",
+    "differential: requires the `diff` extra",
+]
+# Biopython's Seq.translate() SILENTLY TRUNCATES a non-multiple-of-3 sequence,
+# emitting only a BiopythonWarning. A frame-length bug would pass a naive
+# round-trip test. Promote it to an error.
+filterwarnings = ["error::Bio.BiopythonWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "PT", "RET", "SIM", "PGH"]
+# PGH003/PGH004 (blanket type: ignore / noqa) stay enabled deliberately -- a
+# blanket suppression is how a real defect gets hidden from review.
+
+[tool.ruff.lint.per-file-ignores]
+# InfeasibleConstraints is domain vocabulary and reads correctly at call sites;
+# renaming it to InfeasibleConstraintsError would be worse.
+"packages/engine/src/bt5/core/result.py" = ["N818"]
+"tests/**" = ["PT018"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["packages/engine/src/bt5"]
+
+[tool.coverage.report]
+fail_under = 85

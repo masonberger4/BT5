@@ -1,0 +1,127 @@
+name: ci
+
+# DELIBERATELY no `paths:` filter. A workflow that never triggers emits no check
+# run, and a required check that never reports blocks the PR forever with no
+# error and no timeout. All path filtering happens INSIDE jobs.
+on:
+  pull_request:
+  merge_group:        # REQUIRED if a merge queue is ever enabled
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  PYTHONHASHSEED: "0"   # set/dict iteration order must not vary between runs
+  FORCE_COLOR: "1"
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            engine:
+              - 'packages/engine/**'
+              - 'tests/**'
+              - 'data/**'
+              - 'benchmarks/**'
+              - 'pyproject.toml'
+            web:
+              - 'apps/web/**'
+
+  python-quality:
+    name: python-quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv venv --python 3.11 .venv
+      - run: uv pip install --python .venv/bin/python -e ".[dev,export]"
+      - name: ruff lint
+        run: .venv/bin/ruff check .
+      - name: ruff format
+        run: .venv/bin/ruff format --check .
+      - name: Ban global RNG state in engine source
+        run: |
+          if grep -rnE '(^|[^.\w])(np|numpy)\.random\.(seed|rand|randn|choice|randint)\(|(^|[^.\w])random\.seed\(' \
+               packages/engine/src/; then
+            echo "::error::Use np.random.default_rng(seed); global RNG breaks reproducibility"
+            exit 1
+          fi
+      - name: Ban paths filters on workflows owning a required check
+        run: |
+          if awk '/^on:/,/^jobs:/' .github/workflows/ci.yml | grep -qE '^\s+paths:'; then
+            echo "::error::ci.yml owns a required check and must not filter on paths"
+            exit 1
+          fi
+
+  invariants:
+    name: invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv venv --python 3.11 .venv
+      - run: uv pip install --python .venv/bin/python -e ".[dev]"
+      - name: Property-based invariants
+        env: { HYPOTHESIS_PROFILE: ci }
+        run: .venv/bin/pytest tests/invariants -q -p no:randomly
+
+  contract:
+    name: contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv venv --python 3.11 .venv
+      - run: uv pip install --python .venv/bin/python -e ".[dev]"
+      - name: Rule contract, honesty and oracle-independence gates
+        run: .venv/bin/pytest tests/data_integrity -q
+
+  python-tests:
+    name: python-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv venv --python 3.11 .venv
+      - run: uv pip install --python .venv/bin/python -e ".[dev,export]"
+      - run: .venv/bin/pytest packages/engine/tests -q -m "not slow"
+
+  # ---- The ONLY check named in the ruleset ---------------------------------
+  # `if: always()` plus an explicit needs.*.result inspection. Without the
+  # inspection the gate reports success while everything under it burns; with
+  # `if: success()` the gate is SKIPPED when a dependency fails, and a skipped
+  # required check SATISFIES the requirement, so failing tests would merge.
+  required-checks:
+    name: required-checks
+    if: always()
+    needs: [changes, python-quality, invariants, contract, python-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job did not succeed
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::One or more required jobs did not succeed"
+          echo '${{ toJSON(needs) }}'
+          exit 1

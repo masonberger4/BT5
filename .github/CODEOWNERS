@@ -1,0 +1,17 @@
+# Routing and documented ownership boundaries.
+#
+# "Require review from Code Owners" is deliberately NOT enabled: code owners need
+# write access, so the repository owner is the only possible owner AND is also the
+# author of every PR, and GitHub forbids self-approval. Enabling it would make
+# every PR permanently unmergeable.
+
+*                                   @masonberger4
+
+# Load-bearing. Changes here also trip the path-guard label check.
+/packages/engine/src/bt5/verify.py  @masonberger4
+/packages/engine/src/bt5/core/      @masonberger4
+/tests/invariants/                  @masonberger4
+/tests/data_integrity/              @masonberger4
+/benchmarks/                        @masonberger4
+/data/                              @masonberger4
+/.github/                           @masonberger4
