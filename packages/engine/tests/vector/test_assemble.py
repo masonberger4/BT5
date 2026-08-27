@@ -462,3 +462,109 @@ class TestAnnotationInsideTheCds:
         assert "lead" in kept
         lead = next(f for f in assembly.construct.features if f.uid == "sp")
         assert translate(assembly.construct.slice(lead.interval)) == protein[:5]
+
+
+class TestRbsSurvivesAssembly:
+    """The Shine-Dalgarno is upstream of the insert, so it survives -- but only
+    if it is remapped with everything else. A context whose 5'UTR is in construct
+    coordinates and whose RBS is still in vector coordinates is worse than one
+    that dropped the RBS: it reads as valid and points at the wrong bases."""
+
+    def with_rbs(self, backbone: VectorBackbone) -> tuple[VectorBackbone, Interval]:
+        # Immediately upstream of the fixture's CDS at 860, inside its 5'UTR.
+        rbs = Interval(830, 853, 1)
+        return (
+            replace(
+                backbone,
+                features=(
+                    *backbone.features,
+                    Feature(interval=rbs, kind="RBS", qualifiers={"label": ("SD",)}, uid="rbs"),
+                ),
+            ),
+            rbs,
+        )
+
+    def test_the_rbs_lands_on_the_same_bases_after_assembly(self, backbone: VectorBackbone) -> None:
+        bb, rbs = self.with_rbs(backbone)
+        assembly, _, _ = build(bb)
+        moved = assembly.utr.ribosome_binding_site  # type: ignore[attr-defined]
+        construct: Construct = assembly.construct  # type: ignore[attr-defined]
+        assert moved is not None
+        assert construct.slice(moved) == bb.slice(rbs), (
+            "comparing coordinates would pass here even when the frames disagree"
+        )
+
+    def test_the_rbs_stays_in_the_backbone(self, backbone: VectorBackbone) -> None:
+        """It must not land inside the designed CDS, which BT5 rewrites."""
+        bb, _ = self.with_rbs(backbone)
+        assembly, _, _ = build(bb)
+        construct: Construct = assembly.construct  # type: ignore[attr-defined]
+        moved = assembly.utr.ribosome_binding_site  # type: ignore[attr-defined]
+        assert moved is not None
+        assert not construct.is_editable(moved)
+
+    def test_the_spacing_is_unchanged_by_assembly(self, backbone: VectorBackbone) -> None:
+        """A longer insert moves the downstream half of the plasmid, not the SD."""
+        bb, _ = self.with_rbs(backbone)
+        before = bb.utr_context(bb.find_insertion_site()).rbs_spacing
+        after = build(bb, n_codons=SHORTER)[0].utr.rbs_spacing  # type: ignore[attr-defined]
+        assert before == after == 7
+
+    def reverse_backbone(self) -> tuple[VectorBackbone, Interval, Interval]:
+        """A minus-strand cassette, where the SD sits at HIGHER coordinates.
+
+        This is the orientation that makes the remap observable at all. On a
+        forward cassette the SD is upstream, so it is before the replaced span
+        and its coordinates do not move however the insert is resized -- which
+        makes a forward-only test of the remap vacuous, passing just as happily
+        when the remap is skipped entirely.
+        """
+        sd = "TTTGTTTAACTTTAAGAAGGAGA"
+        cds, _ = make_cds(100)
+        # Reading order on the sense strand: SD, spacer, then the ORF. Flipping
+        # the whole molecule puts the SD at the HIGH end, which is where a
+        # reverse-oriented cassette's 5' side actually lives.
+        forward = "AC" * 60 + sd + "T" * 7 + cds + "GC" * 60
+        n = len(forward)
+        rbs_fwd = Interval(120, 120 + len(sd), 1)
+        cds_fwd = Interval(120 + len(sd) + 7, 120 + len(sd) + 7 + len(cds), 1)
+
+        def flip(iv: Interval) -> Interval:
+            return Interval(n - iv.end, n - iv.start, -1)
+
+        cds_iv, rbs_iv = flip(cds_fwd), flip(rbs_fwd)
+        assert rbs_iv.start >= cds_iv.end, "the SD must be downstream in construct coordinates"
+        bb = VectorBackbone(
+            sequence=reverse_complement(forward),
+            topology=Topology.CIRCULAR,
+            features=(
+                Feature(
+                    interval=cds_iv,
+                    kind="CDS",
+                    qualifiers={"label": ("transgene",), "transl_table": ("1",)},
+                    uid="cds0",
+                ),
+                Feature(interval=rbs_iv, kind="RBS", qualifiers={"label": ("SD",)}, uid="rbs"),
+            ),
+            name="reverse pET",
+        )
+        return bb, cds_iv, rbs_iv
+
+    def test_a_reverse_cassette_shifts_its_rbs_by_delta(self) -> None:
+        bb, _, rbs = self.reverse_backbone()
+        assembly, _, _ = build(bb, n_codons=160)
+        construct: Construct = assembly.construct  # type: ignore[attr-defined]
+        moved = assembly.utr.ribosome_binding_site  # type: ignore[attr-defined]
+        delta = assembly.remapper.delta  # type: ignore[attr-defined]
+        assert delta != 0, "the insert must change length or this proves nothing"
+        assert moved is not None
+        assert moved == Interval(rbs.start + delta, rbs.end + delta, -1)
+        assert construct.slice(moved) == bb.slice(rbs)
+        assert construct.slice(moved).endswith("AAGGAGA")
+
+    def test_a_reverse_cassette_keeps_its_sd_spacing(self) -> None:
+        """Resizing the insert must not appear to move the SD relative to the start."""
+        bb, _, _ = self.reverse_backbone()
+        before = bb.utr_context(bb.find_insertion_site()).rbs_spacing
+        after = build(bb, n_codons=160)[0].utr.rbs_spacing  # type: ignore[attr-defined]
+        assert before == after == 7

@@ -286,14 +286,28 @@ class TestRibosomeBindingSite:
         assert utr.rbs_spacing == 6
         assert bb.slice(spans["rbs"]).endswith("AAGGAGA")
 
-    def test_the_insdc_regulatory_spelling_is_equivalent(self) -> None:
-        """SnapGene writes `RBS`; NCBI writes `regulatory` plus a class."""
+    @pytest.mark.parametrize(
+        ("kind", "regulatory_class"),
+        [
+            # SnapGene, and every Addgene deposit that came through it.
+            ("RBS", None),
+            # INSDC, which deprecated the bare key in favour of a class.
+            ("regulatory", "ribosome_binding_site"),
+            ("regulatory", "shine_dalgarno_sequence"),
+            # Sequence Ontology type name, as a GFF3-derived import carries it.
+            ("ribosome_binding_site", None),
+        ],
+    )
+    def test_every_spelling_of_an_rbs_is_equivalent(
+        self, kind: str, regulatory_class: str | None
+    ) -> None:
+        """Which spelling a file uses is a fact about its exporter, not its biology."""
         snapgene, _ = self.backbone(rbs_kind="RBS")
-        insdc, _ = self.backbone(rbs_kind="regulatory", rbs_class="ribosome_binding_site")
-        a = snapgene.utr_context(snapgene.find_insertion_site())
-        b = insdc.utr_context(insdc.find_insertion_site())
-        assert b.ribosome_binding_site == a.ribosome_binding_site
-        assert b.rbs_spacing == a.rbs_spacing
+        other, _ = self.backbone(rbs_kind=kind, rbs_class=regulatory_class)
+        expected = snapgene.utr_context(snapgene.find_insertion_site())
+        got = other.utr_context(other.find_insertion_site())
+        assert got.ribosome_binding_site == expected.ribosome_binding_site
+        assert got.rbs_spacing == expected.rbs_spacing
 
     def test_an_untyped_regulatory_feature_is_not_an_rbs(self) -> None:
         """`regulatory` alone covers terminators and operators too."""
