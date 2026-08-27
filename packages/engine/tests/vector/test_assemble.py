@@ -228,7 +228,9 @@ class TestFeatureRemapping:
         assembly, _, _ = build(bb)
         construct: Construct = assembly.construct  # type: ignore[attr-defined]
         assert not any(f.uid == "overlap" for f in construct.features)
-        assert any("overlaps the replaced CDS" in d for d in assembly.degradations)  # type: ignore[attr-defined]
+        assert any(  # type: ignore[attr-defined]
+            n.kind == "change" and "overlaps the replaced CDS" in n.summary for n in assembly.notes
+        )
 
 
 class TestLengthChanges:
@@ -265,7 +267,7 @@ class TestOriginStraddlingSite:
 
     def test_the_rotation_is_reported(self, backbone: VectorBackbone) -> None:
         assembly, _, _ = build(backbone.rotated(1000))
-        assert any("rotated" in d for d in assembly.degradations)  # type: ignore[attr-defined]
+        assert any("rotated" in n.summary for n in assembly.notes)  # type: ignore[attr-defined]
 
 
 class TestValidation:

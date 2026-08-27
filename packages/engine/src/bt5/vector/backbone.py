@@ -21,6 +21,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from bt5.core.types import Feature, Interval, SegmentKind, Strand, Topology
+from bt5.vector.notes import DesignNote
 
 #: GenBank feature keys that mark an immutable, scan-exempt region. Introns are
 #: exempt because a deliberately placed chimeric intron is one of the most
@@ -74,7 +75,7 @@ class UtrContext:
     five_prime: Interval | None = None
     three_prime: Interval | None = None
     five_prime_source: UtrSource = "absent"
-    degradations: tuple[str, ...] = ()
+    notes: tuple[DesignNote, ...] = ()
 
     @property
     def has_five_prime(self) -> bool:
@@ -105,7 +106,7 @@ class VectorBackbone:
     #: discontiguous (not an origin wrap). Kept so export rebuilds them exactly
     #: instead of flattening a two-exon feature into one span.
     compound_parts: Mapping[str, tuple[Interval, ...]] = field(default_factory=dict)
-    degradations: tuple[str, ...] = ()
+    notes: tuple[DesignNote, ...] = ()
 
     @property
     def length(self) -> int:
@@ -183,45 +184,80 @@ class VectorBackbone:
         span derived from the nearest upstream promoter, then nothing. The source
         travels with the answer so the report can say which it was.
         """
-        degradations: list[str] = []
-        five, source = self._five_prime_utr(site, max_derived_utr, degradations)
+        notes: list[DesignNote] = []
+        five, source = self._five_prime_utr(site, max_derived_utr, notes)
         three = self._three_prime_utr(site)
 
         if five is None:
-            degradations.append(
-                "no annotated 5'UTR and no upstream promoter: the 5' folding "
-                "objective is unavailable for this vector"
+            notes.append(
+                DesignNote(
+                    kind="unavailable",
+                    summary=(
+                        "no annotated 5'UTR and no upstream promoter, so the 5' "
+                        "folding objective cannot be evaluated for this vector"
+                    ),
+                    bears_on="protein expression",
+                    action=("annotate the 5'UTR or the promoter in your map and re-run"),
+                )
             )
         elif source == "derived_from_promoter":
-            degradations.append(
-                "5'UTR derived from the upstream promoter rather than annotated; "
-                "the transcription start site is an assumption, not a measurement"
+            notes.append(
+                DesignNote(
+                    kind="assumption",
+                    summary=(
+                        "5'UTR inferred from the upstream promoter, not annotated; "
+                        "the transcription start is assumed, not measured"
+                    ),
+                    interval=five,
+                    bears_on="protein expression",
+                    action="annotate the real 5'UTR if you know it",
+                )
             )
             if self._overlaps_intron(five):
-                degradations.append(
-                    "the derived 5'UTR contains an annotated intron, so the mature "
-                    "5'UTR after splicing is shorter than the span used here"
+                notes.append(
+                    DesignNote(
+                        kind="assumption",
+                        summary=(
+                            "the inferred 5'UTR contains an annotated intron, so the "
+                            "mature 5'UTR after splicing is shorter than this span"
+                        ),
+                        interval=five,
+                        bears_on="protein expression",
+                    )
                 )
         if three is None:
-            degradations.append("no annotated 3'UTR or polyA signal downstream of the insert")
+            notes.append(
+                DesignNote(
+                    kind="unavailable",
+                    summary="no annotated 3'UTR or polyA signal downstream of the insert",
+                    bears_on="protein expression",
+                )
+            )
 
         return UtrContext(
             five_prime=five,
             three_prime=three,
             five_prime_source=source,
-            degradations=tuple(degradations),
+            notes=tuple(notes),
         )
 
     def _five_prime_utr(
-        self, site: InsertionSite, max_derived: int, degradations: list[str]
+        self, site: InsertionSite, max_derived: int, notes: list[DesignNote]
     ) -> tuple[Interval | None, UtrSource]:
         annotated = self._nearest_upstream(site, ("5'UTR", "five_prime_UTR"))
         if annotated is not None:
             gap = self._gap_to_site(annotated.interval, site)
             if gap > 0:
-                degradations.append(
-                    f"the annotated 5'UTR stops {gap} nt short of the start codon; "
-                    f"the gap is treated as backbone, not as UTR"
+                notes.append(
+                    DesignNote(
+                        kind="assumption",
+                        summary=(
+                            f"the annotated 5'UTR stops {gap} nt short of the start "
+                            f"codon; that gap is treated as backbone, not as UTR"
+                        ),
+                        interval=annotated.interval,
+                        bears_on="protein expression",
+                    )
                 )
             return annotated.interval, "annotated_feature"
 
@@ -231,9 +267,15 @@ class VectorBackbone:
             if derived is not None and derived.length <= max_derived:
                 return derived, "derived_from_promoter"
             if derived is not None:
-                degradations.append(
-                    f"the span from the promoter to the start codon is {derived.length} nt, "
-                    f"longer than max_derived_utr={max_derived}; not treated as a 5'UTR"
+                notes.append(
+                    DesignNote(
+                        kind="unavailable",
+                        summary=(
+                            f"the promoter sits {derived.length} nt from the start codon, "
+                            f"beyond max_derived_utr={max_derived}, so no 5'UTR was inferred"
+                        ),
+                        bears_on="protein expression",
+                    )
                 )
         return None, "absent"
 
@@ -367,9 +409,23 @@ class VectorBackbone:
             sequence=self.sequence[by:] + self.sequence[:by],
             features=rotated_features,
             compound_parts=rotated_parts,
-            degradations=(
-                *self.degradations,
-                f"origin rotated by {by} bp so the insert is contiguous",
+            notes=(
+                # Existing note intervals are in the OLD frame and must move too,
+                # or a located warning ends up pointing at unrelated sequence.
+                *(
+                    replace(note, interval=rotate_interval(note.interval, by=by, length=n))
+                    if note.interval is not None
+                    else note
+                    for note in self.notes
+                ),
+                DesignNote(
+                    kind="change",
+                    summary=(
+                        f"the origin was rotated by {by} bp so the insert is contiguous; "
+                        f"coordinates in this map differ from your input file"
+                    ),
+                    bears_on="map fidelity",
+                ),
             ),
         )
 

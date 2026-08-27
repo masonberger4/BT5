@@ -36,6 +36,7 @@ from bt5.vector.backbone import (
     VectorError,
     rotate_interval,
 )
+from bt5.vector.notes import DesignNote
 from bt5.vector.remap import IntervalRemapper
 
 #: Filler for the CDS span of the I9 reference construct. Never compared -- I9
@@ -56,7 +57,7 @@ class Assembly:
     utr: UtrContext
     rotation: int
     compound_parts: Mapping[str, tuple[Interval, ...]]
-    degradations: tuple[str, ...] = ()
+    notes: tuple[DesignNote, ...] = ()
 
     @property
     def cds_interval(self) -> Interval:
@@ -138,7 +139,7 @@ def assemble(
         starts_at_initiator=True,
     )
 
-    degradations = (*backbone.degradations, *utr.degradations, *dropped)
+    notes = (*backbone.notes, *utr.notes, *dropped)
     construct = Construct(
         sequence=sequence,
         topology=backbone.topology,
@@ -165,7 +166,7 @@ def assemble(
         utr=_remap_utr(utr, remapper),
         rotation=rotation,
         compound_parts=compound_parts,
-        degradations=degradations,
+        notes=notes,
     )
 
 
@@ -239,7 +240,7 @@ def _check_cds(cds: str) -> None:
 
 def _remap_features(
     backbone: VectorBackbone, remapper: IntervalRemapper, site: InsertionSite
-) -> tuple[tuple[Feature, ...], dict[str, tuple[Interval, ...]], tuple[str, ...]]:
+) -> tuple[tuple[Feature, ...], dict[str, tuple[Interval, ...]], tuple[DesignNote, ...]]:
     """Move every backbone feature into assembled coordinates.
 
     The `source` feature is rewritten to span the new length; the old CDS feature
@@ -249,7 +250,7 @@ def _remap_features(
     """
     out: list[Feature] = []
     parts: dict[str, tuple[Interval, ...]] = {}
-    dropped: list[str] = []
+    dropped: list[DesignNote] = []
 
     for feature in backbone.features:
         if feature.interval == site.interval and feature.kind.upper() == "CDS":
@@ -261,8 +262,15 @@ def _remap_features(
         moved = remapper.interval(feature.interval)
         if moved is None:
             dropped.append(
-                f"dropped feature {backbone.label_of(feature)!r} ({feature.kind}): it overlaps "
-                f"the replaced CDS, so its coordinates no longer describe anything"
+                DesignNote(
+                    kind="change",
+                    summary=(
+                        f"dropped feature {backbone.label_of(feature)!r} ({feature.kind}): it "
+                        f"overlaps the replaced CDS, so its coordinates no longer describe "
+                        f"anything"
+                    ),
+                    bears_on="map fidelity",
+                )
             )
             continue
 
@@ -271,8 +279,14 @@ def _remap_features(
             moved_parts = [remapper.interval(p) for p in original_parts]
             if any(p is None for p in moved_parts):
                 dropped.append(
-                    f"dropped multi-part feature {backbone.label_of(feature)!r}: one of its "
-                    f"parts overlaps the replaced CDS"
+                    DesignNote(
+                        kind="change",
+                        summary=(
+                            f"dropped multi-part feature {backbone.label_of(feature)!r}: one "
+                            f"of its parts overlaps the replaced CDS"
+                        ),
+                        bears_on="map fidelity",
+                    )
                 )
                 continue
             parts[feature.uid] = tuple(p for p in moved_parts if p is not None)

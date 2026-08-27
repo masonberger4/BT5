@@ -81,13 +81,15 @@ class TestFivePrimeUtr:
         utr = stripped.utr_context(stripped.find_insertion_site())
         assert utr.five_prime == Interval(720, 860, 1)
         assert utr.five_prime_source == "derived_from_promoter"
-        assert any("assumption" in d for d in utr.degradations)
+        assumed = [n for n in utr.notes if n.kind == "assumption"]
+        assert assumed, "inferring a transcription start must be stated, not silent"
+        assert all(n.bears_on == "protein expression" for n in assumed)
 
     def test_a_derived_utr_containing_an_intron_says_so(self, backbone: VectorBackbone) -> None:
         """The mature 5'UTR after splicing is shorter than the span used."""
         stripped = without(backbone, "5'UTR")
         utr = stripped.utr_context(stripped.find_insertion_site())
-        assert any("intron" in d and "shorter" in d for d in utr.degradations)
+        assert any("intron" in n.summary and "shorter" in n.summary for n in utr.notes)
 
     def test_absent_utr_degrades_instead_of_guessing(self, backbone: VectorBackbone) -> None:
         """G6: with no UTR the objective is unavailable, not silently CDS-only."""
@@ -96,13 +98,17 @@ class TestFivePrimeUtr:
         assert utr.five_prime is None
         assert not utr.has_five_prime
         assert utr.five_prime_source == "absent"
-        assert any("unavailable" in d for d in utr.degradations)
+        unavailable = [n for n in utr.notes if n.kind == "unavailable"]
+        assert any("5' folding objective" in n.summary for n in unavailable)
+        assert all(n.action for n in unavailable if "5' folding" in n.summary), (
+            "telling the user an objective is unavailable is only useful with a way out"
+        )
 
     def test_an_implausibly_long_derived_utr_is_rejected(self, backbone: VectorBackbone) -> None:
         stripped = without(backbone, "5'UTR")
         utr = stripped.utr_context(stripped.find_insertion_site(), max_derived_utr=10)
         assert utr.five_prime is None
-        assert any("longer than max_derived_utr" in d for d in utr.degradations)
+        assert any("max_derived_utr=10" in n.summary for n in utr.notes)
 
 
 class TestReverseStrandCassette:
@@ -162,7 +168,22 @@ class TestRotation:
             assert rotated.slice(after.interval) == backbone.slice(before.interval)
 
     def test_rotation_is_recorded_not_silent(self, backbone: VectorBackbone) -> None:
-        assert any("rotated" in d for d in backbone.rotated(1000).degradations)
+        notes = backbone.rotated(1000).notes
+        assert any(n.kind == "change" and "rotated" in n.summary for n in notes)
+
+    def test_rotation_moves_existing_note_intervals(self) -> None:
+        """A located note must not end up pointing at unrelated sequence."""
+        from bt5.vector.notes import DesignNote
+
+        bb = VectorBackbone(
+            sequence="ACGT" * 150,
+            topology=Topology.CIRCULAR,
+            features=(feature("CDS", 200, 500),),
+            notes=(DesignNote(kind="liability", summary="x", interval=Interval(10, 40)),),
+        )
+        moved = next(n for n in bb.rotated(100).notes if n.summary == "x")
+        assert moved.interval is not None
+        assert bb.rotated(100).slice(moved.interval) == bb.slice(Interval(10, 40))
 
     def test_rotating_by_zero_is_the_same_object(self, backbone: VectorBackbone) -> None:
         assert backbone.rotated(0) is backbone
