@@ -28,6 +28,7 @@ from textwrap import wrap
 
 from bt5.core.types import Construct, Feature, Interval, SegmentKind
 from bt5.vector.assemble import Assembly
+from bt5.vector.kmers import ConstructKmerIndex, RepeatPair
 from bt5.vector.notes import DesignNote, format_span
 
 #: Biopython re-wraps a COMMENT line longer than this, which turns one logical
@@ -128,6 +129,7 @@ def annotate(
     findings = (
         *assembly.notes,
         *_identical_exempt_repeats(construct),
+        *_repeat_liabilities(construct),
         *_upstream_start_codons(construct, assembly),
         *extra_notes,
     )
@@ -242,6 +244,81 @@ def _identical_exempt_repeats(construct: Construct) -> tuple[DesignNote, ...]:
                 )
             )
     return tuple(out)
+
+
+def _repeat_liabilities(construct: Construct, *, min_len: int = 20) -> tuple[DesignNote, ...]:
+    """Exact repeats anywhere in the assembled construct, clustered by region.
+
+    Scoped to the whole construct on purpose: a repeat between the insert and the
+    backbone is exactly as destabilising as one inside either, and it is only
+    visible once they are assembled. Whitelisted ITR/LTR regions are excluded --
+    they are an accepted design feature reported separately, not a finding.
+
+    Overlapping pairs are CLUSTERED. A tandem array such as a Gal4 UAS or a TetO
+    operator block yields one exact-repeat pair per offset -- fourteen of them on
+    a real BiTE vector -- and fourteen near-identical notes bury the finding they
+    are trying to deliver. One note per repetitive region, carrying the worst
+    risk and the longest identity in it, is what a user can act on.
+    """
+    pairs = [
+        p
+        for p in ConstructKmerIndex.of(construct, min_len).repeat_pairs(
+            min_len, exclude=construct.exempt
+        )
+        if p.risk != "low"
+    ]
+    out: list[DesignNote] = []
+    for cluster in _cluster(pairs):
+        worst = max(cluster, key=lambda p: (p.risk == "high", p.length))
+        longest = max(p.length for p in cluster)
+        lo = min(p.first.start for p in cluster)
+        hi = max(p.first.end for p in cluster)
+        tandem = any(p.tandem for p in cluster)
+        if len(cluster) == 1:
+            where = "in tandem" if worst.tandem else f"{worst.spacer} bp apart"
+            summary = (
+                f"{worst.length} bp exact repeat, {where} "
+                f"(copies at {worst.first.start + 1} and {worst.second.start + 1})"
+            )
+        else:
+            summary = (
+                f"repetitive region of {hi - lo} bp containing {len(cluster)} exact "
+                f"repeats up to {longest} bp" + (", some in tandem" if tandem else "")
+            )
+        out.append(
+            DesignNote(
+                kind="liability",
+                summary=f"{summary}; {worst.risk} risk",
+                interval=Interval(lo, hi),
+                bears_on="plasmid stability and DNA synthesis",
+                action=(
+                    "a recA- strain such as Stbl3 suppresses this length class"
+                    if worst.reca_strain_helps
+                    else "a recA- strain does NOT help here: below about 200 bp, "
+                    "deletion is RecA-independent"
+                ),
+            )
+        )
+    return tuple(out)
+
+
+def _cluster(pairs: Sequence[RepeatPair]) -> list[list[RepeatPair]]:
+    """Group pairs whose copies fall in the same stretch of sequence."""
+    clusters: list[list[RepeatPair]] = []
+    for pair in sorted(pairs, key=lambda p: p.first.start):
+        # Cluster on the FIRST copy only. Two copies far apart are two regions;
+        # spanning them would report the whole distance between them as
+        # "repetitive", which on a lentiviral vector means the entire payload.
+        span = pair.first
+        for cluster in clusters:
+            lo = min(p.first.start for p in cluster)
+            hi = max(p.first.end for p in cluster)
+            if span.start < hi and lo < span.end:
+                cluster.append(pair)
+                break
+        else:
+            clusters.append([pair])
+    return clusters
 
 
 def _upstream_start_codons(construct: Construct, assembly: Assembly) -> tuple[DesignNote, ...]:
