@@ -7,6 +7,12 @@ topology, genetic code, and the 5'UTR are all required-or-reported, never
 defaulted.
 """
 
+from bt5.vector.annotate import (
+    COMMENT_WIDTH,
+    ORIGIN_QUALIFIER,
+    DesignReport,
+    annotate,
+)
 from bt5.vector.assemble import Assembly, assemble
 from bt5.vector.backbone import (
     DEFAULT_EXEMPT_KINDS,
@@ -35,12 +41,18 @@ from bt5.vector.locations import (
     location_to_interval,
     parts_to_location,
 )
+from bt5.vector.notes import DesignNote, NoteKind, format_span
 from bt5.vector.remap import IntervalRemapper
 
 __all__ = [
+    "COMMENT_WIDTH",
     "DEFAULT_EXEMPT_KINDS",
     "DEFAULT_EXEMPT_LABELS",
+    "ORIGIN_QUALIFIER",
     "Assembly",
+    "DesignNote",
+    "DesignReport",
+    "NoteKind",
     "InsertionSite",
     "IntervalRemapper",
     "LocationError",
@@ -48,11 +60,13 @@ __all__ = [
     "UtrContext",
     "VectorBackbone",
     "VectorError",
+    "annotate",
     "assemble",
     "backbone_from_record",
     "backbone_to_record",
     "construct_to_record",
     "insertion_site_from_interval",
+    "format_span",
     "interval_to_location",
     "location_to_interval",
     "parts_to_location",

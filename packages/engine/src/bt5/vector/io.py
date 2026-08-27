@@ -33,14 +33,33 @@ from Bio.SeqRecord import SeqRecord
 from bt5.core.types import Construct, Feature, Interval, Topology
 from bt5.vector.backbone import VectorBackbone, VectorError
 from bt5.vector.locations import interval_to_location, location_to_interval, parts_to_location
+from bt5.vector.notes import DesignNote
 
-#: Scalar annotation keys Biopython needs on the way out, mirrored into
-#: `Construct.annotations` on the way in so a round trip does not lose them.
+#: Record-level annotations carried through a round trip. Biopython preserves
+#: all of these on read; anything left off this list is silently dropped on
+#: export, which is how a user's plasmid map comes back with an empty ORGANISM
+#: and a 1980 date. `date` and `data_file_division` populate the LOCUS line.
+_SCALAR_ANNOTATIONS = (
+    "molecule_type",
+    "topology",
+    "data_file_division",
+    "date",
+    "source",
+    "organism",
+    "definition",
+    "comment",
+)
+
 #: `Construct.annotations` is a Mapping[str, str], so GenBank's list-valued
-#: KEYWORDS is joined on read and split again on write -- stringifying the list
-#: instead makes the writer non-idempotent, each pass re-quoting the last.
-_CARRIED_ANNOTATIONS = ("molecule_type", "topology", "definition", "accession")
-_KEYWORD_SEPARATOR = "; "
+#: fields are joined on read and split again on write. "; " is GenBank's own
+#: separator for all three. Stringifying the list instead makes the writer
+#: non-idempotent, each pass re-quoting the last.
+_LIST_ANNOTATIONS = ("keywords", "taxonomy", "accessions")
+_LIST_SEPARATOR = "; "
+
+#: Values GenBank uses to mean "absent"; carrying them forward would turn a
+#: blank field into a literal dot on the next pass.
+_EMPTY_VALUES = frozenset({"", "."})
 
 
 def _seqfeature(location: Any, kind: str, qualifiers: dict[str, list[str]]) -> SeqFeature:
@@ -53,6 +72,37 @@ def _annotations(record: SeqRecord) -> dict[str, Any]:
     lists at runtime (KEYWORDS, REFERENCES). One accessor keeps that discrepancy
     from leaking into the rest of the lane."""
     return cast("dict[str, Any]", record.annotations)
+
+
+def _carry_annotations(source: Mapping[str, Any]) -> dict[str, str]:
+    """Flatten a SeqRecord's record-level annotations into strings."""
+    out: dict[str, str] = {}
+    for key in _SCALAR_ANNOTATIONS:
+        value = source.get(key)
+        if value is not None and str(value) not in _EMPTY_VALUES:
+            out[key] = str(value)
+    for key in _LIST_ANNOTATIONS:
+        value = source.get(key)
+        parts = value if isinstance(value, list) else [value]
+        joined = _LIST_SEPARATOR.join(
+            str(v) for v in parts if v is not None and str(v) not in _EMPTY_VALUES
+        )
+        if joined:
+            out[key] = joined
+    return out
+
+
+def _restore_annotations(record: SeqRecord, annotations: Mapping[str, str]) -> None:
+    """The inverse of `_carry_annotations`, onto a record being written."""
+    out = _annotations(record)
+    for key in _SCALAR_ANNOTATIONS:
+        if key == "definition":
+            continue  # travels as SeqRecord.description
+        if annotations.get(key):
+            out[key] = annotations[key]
+    for key in _LIST_ANNOTATIONS:
+        if annotations.get(key):
+            out[key] = annotations[key].split(_LIST_SEPARATOR)
 
 
 def _read(handle: Any, fmt: str) -> SeqRecord:
@@ -92,17 +142,29 @@ def backbone_from_record(record: SeqRecord, *, topology: Topology | None = None)
     circular = topo is Topology.CIRCULAR
     features: list[Feature] = []
     compound: dict[str, tuple[Interval, ...]] = {}
-    degradations: list[str] = []
+    notes: list[DesignNote] = []
 
     for index, feature in enumerate(record.features):
         uid = f"f{index:04d}"
         if feature.location is None:
-            degradations.append(f"dropped feature {index} ({feature.type}): no location")
+            notes.append(
+                DesignNote(
+                    kind="change",
+                    summary=f"dropped feature {index} ({feature.type}): it has no location",
+                    bears_on="map fidelity",
+                )
+            )
             continue
         try:
             parsed = location_to_interval(feature.location, length=length, circular=circular)
         except ValueError as exc:
-            degradations.append(f"dropped feature {index} ({feature.type}): {exc}")
+            notes.append(
+                DesignNote(
+                    kind="change",
+                    summary=f"dropped feature {index} ({feature.type}): {exc}",
+                    bears_on="map fidelity",
+                )
+            )
             continue
         qualifiers = {
             key: tuple(str(v) for v in values)
@@ -116,17 +178,7 @@ def backbone_from_record(record: SeqRecord, *, topology: Topology | None = None)
         if parsed.is_compound:
             compound[uid] = parsed.parts
 
-    source_annotations = _annotations(record)
-    annotations = {
-        key: str(source_annotations[key])
-        for key in _CARRIED_ANNOTATIONS
-        if key in source_annotations
-    }
-    keywords = source_annotations.get("keywords")
-    if isinstance(keywords, list):
-        joined = _KEYWORD_SEPARATOR.join(str(k) for k in keywords if str(k) not in ("", "."))
-        if joined:
-            annotations["keywords"] = joined
+    annotations = _carry_annotations(_annotations(record))
     annotations.setdefault("molecule_type", "DNA")
     annotations["topology"] = topo.value
     if record.description:
@@ -139,7 +191,7 @@ def backbone_from_record(record: SeqRecord, *, topology: Topology | None = None)
         annotations=annotations,
         name=record.name or record.id or "vector",
         compound_parts=compound,
-        degradations=tuple(degradations),
+        notes=tuple(notes),
     )
 
 
@@ -209,17 +261,17 @@ def _record_from(
     name: str,
 ) -> SeqRecord:
     length = len(sequence)
+    accessions = annotations.get("accessions", "")
     record = SeqRecord(
         Seq(sequence),
-        id=annotations.get("accession", "."),
+        id=accessions.split(_LIST_SEPARATOR)[0] if accessions else ".",
         name=name[:16] or "vector",
         description=annotations.get("definition", ""),
     )
+    _restore_annotations(record, annotations)
     out_annotations = _annotations(record)
     out_annotations["molecule_type"] = annotations.get("molecule_type", "DNA")
     out_annotations["topology"] = topology.value
-    if annotations.get("keywords"):
-        out_annotations["keywords"] = annotations["keywords"].split(_KEYWORD_SEPARATOR)
 
     out: list[SeqFeature] = []
     for feature in features:
