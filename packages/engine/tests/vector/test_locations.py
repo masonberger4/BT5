@@ -101,3 +101,39 @@ class TestRoundTrip:
         parts = (Interval(10, 20, 1), Interval(30, 40, 1))
         parsed = location_to_interval(parts_to_location(parts), length=100, circular=True)
         assert parsed.parts == parts
+
+
+class TestPartOrderIsBiological:
+    """`complement(join(A,B))` concatenates A then B and THEN reverse-complements.
+
+    So the order of the parts is part of the meaning, not presentation. Sorting
+    them ascending on read and re-emitting them that way describes a different
+    sequence -- a two-segment AmpR comes back translating from its signal peptide
+    instead of its start codon, silently, in the user's exported map.
+    """
+
+    def test_minus_strand_part_order_is_preserved(self) -> None:
+        loc = CompoundLocation(
+            [SimpleLocation(30, 45, -1), SimpleLocation(3, 30, -1)]  # biological order
+        )
+        parsed = location_to_interval(loc, length=60, circular=True)
+        assert [(p.start, p.end) for p in parsed.parts] == [(30, 45), (3, 30)]
+
+    def test_plus_strand_part_order_is_preserved(self) -> None:
+        loc = CompoundLocation([SimpleLocation(3, 30, 1), SimpleLocation(30, 45, 1)])
+        parsed = location_to_interval(loc, length=60, circular=True)
+        assert [(p.start, p.end) for p in parsed.parts] == [(3, 30), (30, 45)]
+
+    def test_the_outer_interval_still_bounds_all_parts(self) -> None:
+        """Order is preserved, but the summary interval is still lowest to highest."""
+        loc = CompoundLocation([SimpleLocation(30, 45, -1), SimpleLocation(3, 30, -1)])
+        parsed = location_to_interval(loc, length=60, circular=True)
+        assert parsed.interval == Interval(3, 45, -1)
+
+    def test_a_reversed_round_trip_changes_the_sequence(self) -> None:
+        """The property that makes order load-bearing, stated directly."""
+        forward = parts_to_location((Interval(30, 45, -1), Interval(3, 30, -1)))
+        reversed_ = parts_to_location((Interval(3, 30, -1), Interval(30, 45, -1)))
+        assert [(int(p.start), int(p.end)) for p in forward.parts] != [
+            (int(p.start), int(p.end)) for p in reversed_.parts
+        ]
