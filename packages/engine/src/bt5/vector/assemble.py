@@ -408,10 +408,16 @@ def _cds_feature(interval: Interval, site: InsertionSite, table_id: int) -> Feat
 
 
 def _remap_utr(utr: UtrContext, remapper: IntervalRemapper) -> UtrContext:
+    rbs = utr.ribosome_binding_site
     return replace(
         utr,
         five_prime=remapper.interval(utr.five_prime) if utr.five_prime else None,
         three_prime=remapper.interval(utr.three_prime) if utr.three_prime else None,
+        # The RBS is upstream of the insert, so it survives; remapping it here
+        # keeps every interval on the context in ONE frame. A caller that had to
+        # remember which of them were still in vector coordinates would get it
+        # wrong on the first reverse-oriented cassette.
+        ribosome_binding_site=remapper.interval(rbs) if rbs else None,
     )
 
 

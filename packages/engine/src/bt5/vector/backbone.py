@@ -12,6 +12,16 @@ Everything here is strand-aware. For a reverse-oriented cassette the 5' side of
 the CDS is at HIGHER construct coordinates, and a detector that assumes otherwise
 finds the 3'UTR and calls it the 5'UTR -- silently, on exactly the lentiviral
 layouts this tool exists to serve.
+
+It is also host-shaped in two directions rather than one. Cap-dependent scanning
+makes the transcription start the 5' anchor in a eukaryote, so a promoter is the
+right thing to derive a leader from. Bacteria do not scan: the ribosome is
+recruited by the Shine-Dalgarno sequence, which is annotated as `RBS` (SnapGene)
+or as `regulatory` with `/regulatory_class="ribosome_binding_site"` (INSDC). A
+detector that knows only about promoters reports "the transcription start is
+assumed" on a pET vector whose initiation element is annotated 30 nt from the
+start codon -- true, but it buries the fact that the element that actually
+matters is right there and known.
 """
 
 from __future__ import annotations
@@ -39,7 +49,27 @@ DEFAULT_EXEMPT_KINDS: Mapping[str, SegmentKind] = {
 #: not. AAV ITRs are routinely annotated as `misc_feature`.
 DEFAULT_EXEMPT_LABELS: tuple[str, ...] = ("itr", "ltr", "inverted terminal repeat")
 
-UtrSource = Literal["annotated_feature", "derived_from_promoter", "absent"]
+#: INSDC deprecated the standalone feature keys below in favour of `regulatory`
+#: plus a `/regulatory_class`, but the deprecated keys are what SnapGene writes
+#: and what every Addgene deposit therefore carries. Both spellings are matched,
+#: and `regulatory` is matched BY CLASS: an untyped `regulatory` match would let
+#: a downstream terminator be read as a polyA signal.
+RBS_KINDS: tuple[str, ...] = ("RBS", "ribosome_binding_site")
+RBS_CLASSES: tuple[str, ...] = ("ribosome_binding_site", "shine_dalgarno_sequence")
+POLYA_KINDS: tuple[str, ...] = ("polyA_signal", "polyA_site")
+POLYA_CLASSES: tuple[str, ...] = ("polya_signal_sequence", "polya_site")
+PROMOTER_KINDS: tuple[str, ...] = ("promoter",)
+PROMOTER_CLASSES: tuple[str, ...] = ("promoter",)
+
+#: A Shine-Dalgarno sits roughly 5-13 nt from the start codon; the 16S contact
+#: and the P-site cannot be much further apart than that. An annotated RBS well
+#: outside that range is not a scoring question, it is evidence that the start
+#: codon BT5 picked is not the one the ribosome uses -- which is this module's
+#: business, since choosing the insertion site is what it does. Generous, so
+#: that it fires on a real disagreement rather than on a spacing preference.
+MAX_RBS_TO_START_BP = 30
+
+UtrSource = Literal["annotated_feature", "derived_from_promoter", "derived_from_rbs", "absent"]
 SiteSource = Literal["annotated_cds", "explicit"]
 
 
@@ -69,18 +99,34 @@ class InsertionSite:
 class UtrContext:
     """Untranslated context around the insertion site.
 
-    Both fields are honestly optional. A missing 5'UTR disables an objective; it
+    Every field is honestly optional. A missing 5'UTR disables an objective; it
     does not get substituted with a guess.
+
+    `ribosome_binding_site` is reported whenever one is annotated upstream, no
+    matter which path produced `five_prime`. A bacterial initiation-rate model
+    needs the Shine-Dalgarno position itself, not just a leader that happens to
+    contain it, and re-deriving it downstream by re-scanning the features would
+    mean two places that have to agree about strand and origin-wrap arithmetic.
     """
 
     five_prime: Interval | None = None
     three_prime: Interval | None = None
     five_prime_source: UtrSource = "absent"
+    #: The annotated Shine-Dalgarno, in the same coordinate frame as the rest.
+    ribosome_binding_site: Interval | None = None
+    #: Bases between the 3' end of that RBS and the start codon, or None when no
+    #: RBS is annotated. Reported, never scored -- the band is a rule, not a
+    #: property of the vector.
+    rbs_spacing: int | None = None
     notes: tuple[DesignNote, ...] = ()
 
     @property
     def has_five_prime(self) -> bool:
         return self.five_prime is not None
+
+    @property
+    def has_ribosome_binding_site(self) -> bool:
+        return self.ribosome_binding_site is not None
 
 
 def rotate_interval(iv: Interval, *, by: int, length: int) -> Interval:
@@ -186,8 +232,13 @@ class VectorBackbone:
         travels with the answer so the report can say which it was.
         """
         notes: list[DesignNote] = []
-        five, source = self._five_prime_utr(site, max_derived_utr, notes)
+        rbs = self._nearest_upstream(site, RBS_KINDS, classes=RBS_CLASSES)
+        rbs_iv = rbs.interval if rbs is not None else None
+        spacing = self._distance_upstream(rbs_iv, site) if rbs_iv is not None else None
+        five, source = self._five_prime_utr(site, max_derived_utr, notes, rbs_iv)
         three = self._three_prime_utr(site)
+
+        notes.extend(self._rbs_notes(rbs_iv, spacing, five, source))
 
         if five is None:
             notes.append(
@@ -202,12 +253,29 @@ class VectorBackbone:
                 )
             )
         elif source == "derived_from_promoter":
+            covers_rbs = (
+                rbs_iv is not None
+                and five is not None
+                and self._contains(five, rbs_iv)
+                # A Shine-Dalgarno too far away to reach this start codon is
+                # not evidence about this start codon, however neatly it falls
+                # inside the derived span.
+                and spacing is not None
+                and spacing <= MAX_RBS_TO_START_BP
+            )
             notes.append(
                 DesignNote(
                     kind="assumption",
                     summary=(
                         "5'UTR inferred from the upstream promoter, not annotated; "
                         "the transcription start is assumed, not measured"
+                        + (
+                            "; the annotated ribosome binding site lies inside "
+                            "this span, so the initiation element is known even "
+                            "though the leader's 5' end is not"
+                            if covers_rbs
+                            else ""
+                        )
                     ),
                     interval=five,
                     bears_on="protein expression",
@@ -239,11 +307,17 @@ class VectorBackbone:
             five_prime=five,
             three_prime=three,
             five_prime_source=source,
+            ribosome_binding_site=rbs_iv,
+            rbs_spacing=spacing,
             notes=tuple(notes),
         )
 
     def _five_prime_utr(
-        self, site: InsertionSite, max_derived: int, notes: list[DesignNote]
+        self,
+        site: InsertionSite,
+        max_derived: int,
+        notes: list[DesignNote],
+        rbs: Interval | None,
     ) -> tuple[Interval | None, UtrSource]:
         annotated = self._nearest_upstream(site, ("5'UTR", "five_prime_UTR"))
         if annotated is not None:
@@ -262,7 +336,9 @@ class VectorBackbone:
                 )
             return annotated.interval, "annotated_feature"
 
-        promoter = self._nearest_upstream(site, ("promoter",), skip_markers=True)
+        promoter = self._nearest_upstream(
+            site, PROMOTER_KINDS, classes=PROMOTER_CLASSES, skip_markers=True
+        )
         if promoter is not None:
             derived = self._span_between(promoter.interval, site)
             if derived is not None and derived.length <= max_derived:
@@ -280,13 +356,25 @@ class VectorBackbone:
                         bears_on="protein expression",
                     )
                 )
+
+        # No promoter, or one too far to be this transcript's. In a bacterium
+        # that is not the end of the road: the ribosome is recruited by the
+        # Shine-Dalgarno, not by the transcription start, so an annotated RBS
+        # anchors a leader that is short but entirely real. Reporting "no 5'UTR"
+        # while an annotated initiation element sits 30 nt from the start codon
+        # throws away the better part of the one window that carries the
+        # published signal.
+        if rbs is not None:
+            anchored = self._span_between(rbs, site, include_other=True)
+            if anchored is not None and anchored.length <= max_derived:
+                return anchored, "derived_from_rbs"
         return None, "absent"
 
     def _three_prime_utr(self, site: InsertionSite) -> Interval | None:
         annotated = self._nearest_downstream(site, ("3'UTR", "three_prime_UTR"))
         if annotated is not None:
             return annotated.interval
-        polya = self._nearest_downstream(site, ("polyA_signal", "polyA_site", "regulatory"))
+        polya = self._nearest_downstream(site, POLYA_KINDS, classes=POLYA_CLASSES)
         if polya is None:
             return None
         return self._span_between(polya.interval, site, downstream=True)
@@ -331,12 +419,21 @@ class VectorBackbone:
         return self._distance_upstream(iv, site) or 0
 
     def _nearest_upstream(
-        self, site: InsertionSite, kinds: Sequence[str], *, skip_markers: bool = False
+        self,
+        site: InsertionSite,
+        kinds: Sequence[str],
+        *,
+        classes: Sequence[str] = (),
+        skip_markers: bool = False,
     ) -> Feature | None:
-        return self._nearest(site, kinds, self._distance_upstream, skip_markers=skip_markers)
+        return self._nearest(
+            site, kinds, self._distance_upstream, classes=classes, skip_markers=skip_markers
+        )
 
-    def _nearest_downstream(self, site: InsertionSite, kinds: Sequence[str]) -> Feature | None:
-        return self._nearest(site, kinds, self._distance_downstream)
+    def _nearest_downstream(
+        self, site: InsertionSite, kinds: Sequence[str], *, classes: Sequence[str] = ()
+    ) -> Feature | None:
+        return self._nearest(site, kinds, self._distance_downstream, classes=classes)
 
     def _nearest(
         self,
@@ -344,13 +441,15 @@ class VectorBackbone:
         kinds: Sequence[str],
         measure: Callable[[Interval, InsertionSite], int | None],
         *,
+        classes: Sequence[str] = (),
         skip_markers: bool = False,
     ) -> Feature | None:
         wanted = {k.lower() for k in kinds}
+        wanted_classes = {c.lower() for c in classes}
         best: Feature | None = None
         best_d: int | None = None
         for f in self.features:
-            if f.kind.lower() not in wanted or f.interval.strand != site.strand:
+            if not _is_element(f, wanted, wanted_classes) or f.interval.strand != site.strand:
                 continue
             if skip_markers and is_marker(
                 f"{self.label_of(f)} {' '.join(f.qualifiers.get('note', ()))}"
@@ -365,20 +464,35 @@ class VectorBackbone:
         return best
 
     def _span_between(
-        self, other: Interval, site: InsertionSite, *, downstream: bool = False
+        self,
+        other: Interval,
+        site: InsertionSite,
+        *,
+        downstream: bool = False,
+        include_other: bool = False,
     ) -> Interval | None:
-        """The untranslated span between a flanking feature and the insert."""
+        """The untranslated span between a flanking feature and the insert.
+
+        `include_other` extends the span over the flanking feature itself. A
+        promoter is transcribed from its 3' end, so the leader starts where the
+        promoter stops; a Shine-Dalgarno is IN the leader and is the part of it
+        that does the work, so anchoring on one has to take it in.
+        """
         if downstream:
+            far = other.end if include_other else other.start
+            near = other.start if include_other else other.end
             lo, hi = (
-                (self._downstream_edge(site), other.start)
+                (self._downstream_edge(site), far)
                 if self._forward(site)
-                else (other.end, self._downstream_edge(site))
+                else (near, self._downstream_edge(site))
             )
         else:
+            near = other.start if include_other else other.end
+            far = other.end if include_other else other.start
             lo, hi = (
-                (other.end, self._upstream_edge(site))
+                (near, self._upstream_edge(site))
                 if self._forward(site)
-                else (self._upstream_edge(site), other.start)
+                else (self._upstream_edge(site), far)
             )
         if hi <= lo:
             if not self.is_circular:
@@ -389,6 +503,79 @@ class VectorBackbone:
             if hi <= lo:
                 return None
         return Interval(lo, hi, site.strand)
+
+    def _contains(self, outer: Interval, inner: Interval) -> bool:
+        """Wrap-aware containment; both intervals live in this vector's frame.
+
+        A leader derived across the origin is stored with `end > length`, while
+        the RBS inside it is stored plainly, so plain comparison says no. Trying
+        the inner interval shifted a full turn is what makes the two agree.
+        """
+        shifts = (0, self.length) if self.is_circular else (0,)
+        return any(
+            outer.start <= inner.start + shift and inner.end + shift <= outer.end
+            for shift in shifts
+        )
+
+    def _rbs_notes(
+        self,
+        rbs: Interval | None,
+        spacing: int | None,
+        five: Interval | None,
+        source: UtrSource,
+    ) -> tuple[DesignNote, ...]:
+        """What an annotated Shine-Dalgarno says about the site BT5 picked."""
+        if rbs is None:
+            return ()
+        out: list[DesignNote] = []
+        if source == "derived_from_rbs":
+            out.append(
+                DesignNote(
+                    kind="assumption",
+                    summary=(
+                        "no annotated 5'UTR and no promoter within range, so the 5' "
+                        "leader was anchored on the annotated ribosome binding site; "
+                        "it covers the initiation element but stops there, not at "
+                        "the real transcription start"
+                    ),
+                    interval=five,
+                    bears_on="protein expression",
+                    action="annotate the 5'UTR or the promoter for the full leader",
+                )
+            )
+        elif five is not None and not self._contains(five, rbs):
+            # The two 5' anchors disagree. Either the leader is not this
+            # transcript's or the RBS is not -- and following the wrong one puts
+            # the highest-weight objective on the wrong bases.
+            out.append(
+                DesignNote(
+                    kind="liability",
+                    summary=(
+                        "an annotated ribosome binding site sits outside the 5'UTR "
+                        "used here, so the two 5' annotations describe different "
+                        "transcripts"
+                    ),
+                    interval=rbs,
+                    bears_on="protein expression",
+                    action="check that the insertion site is the ORF this RBS serves",
+                )
+            )
+        if spacing is not None and spacing > MAX_RBS_TO_START_BP:
+            out.append(
+                DesignNote(
+                    kind="liability",
+                    summary=(
+                        f"the annotated ribosome binding site stops {spacing} nt "
+                        f"before the start codon, further than the {MAX_RBS_TO_START_BP} nt "
+                        f"a Shine-Dalgarno reaches; the ribosome probably initiates "
+                        f"at a different codon than the one BT5 is designing from"
+                    ),
+                    interval=rbs,
+                    bears_on="protein expression",
+                    action="check for an upstream in-frame start codon between the two",
+                )
+            )
+        return tuple(out)
 
     def _overlaps_intron(self, iv: Interval) -> bool:
         return any(f.interval.overlaps(iv) for f in self.features_of("intron"))
@@ -449,6 +636,22 @@ def insertion_site_from_interval(
     return InsertionSite(
         interval=interval, label=label, source="explicit", detected_table_id=table_id
     )
+
+
+def _is_element(feature: Feature, kinds: set[str], classes: set[str]) -> bool:
+    """Match a feature by its key, or by `/regulatory_class` under `regulatory`.
+
+    `regulatory` is deliberately never matched on the key alone. It is a
+    catch-all covering terminators, attenuators, operators and polyA signals
+    alike, so an untyped match reads whichever of them happens to be nearest as
+    the element being looked for.
+    """
+    kind = feature.kind.lower()
+    if kind in kinds:
+        return True
+    if kind != "regulatory" or not classes:
+        return False
+    return any(v.lower() in classes for v in feature.qualifiers.get("regulatory_class", ()))
 
 
 def _transl_table(feature: Feature) -> int | None:

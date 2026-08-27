@@ -11,16 +11,23 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from bt5.core.types import Feature, Interval, Topology
+from bt5.core.types import Feature, Interval, Topology, reverse_complement
 from bt5.vector import VectorBackbone, VectorError, insertion_site_from_interval
 from bt5.vector.backbone import rotate_interval
 
 
-def feature(kind: str, start: int, end: int, strand: int = 1, label: str = "") -> Feature:
+def feature(
+    kind: str,
+    start: int,
+    end: int,
+    strand: int = 1,
+    label: str = "",
+    **extra: tuple[str, ...],
+) -> Feature:
     return Feature(
         interval=Interval(start, end, strand),  # type: ignore[arg-type]
         kind=kind,
-        qualifiers={"label": (label or kind,)},
+        qualifiers={"label": (label or kind,), **extra},
         uid=f"{kind}{start}",
     )
 
@@ -202,3 +209,232 @@ class TestExplicitSite:
         site = insertion_site_from_interval(Interval(10, 40), label="manual")
         assert site.source == "explicit"
         assert site.detected_table_id is None
+
+
+class TestRibosomeBindingSite:
+    """Bacteria do not scan, so the promoter is the wrong 5' anchor for them.
+
+    Cap-dependent scanning makes the transcription start the thing that defines a
+    eukaryotic leader. A bacterial ribosome is recruited by the Shine-Dalgarno,
+    and pET vectors annotate it. A detector that knows only about promoters
+    reports "the transcription start is assumed" on a vector whose initiation
+    element is annotated 30 nt from the start codon -- true, and beside the point.
+    """
+
+    #: T7 gene 10 leader, as pET28a carries it. The SD is the trailing AAGGAGA.
+    SD = "TTTGTTTAACTTTAAGAAGGAGA"
+    PROMOTER = "TAATACGACTCACTATAGG"
+
+    def backbone(
+        self,
+        *,
+        spacer: int = 6,
+        with_promoter: bool = True,
+        strand: int = 1,
+        rbs_kind: str = "RBS",
+        rbs_class: str | None = None,
+    ) -> tuple[VectorBackbone, dict[str, Interval]]:
+        """A minimal bacterial cassette, with every offset derived not counted."""
+        lead = "AC" * 30
+        gap = "CTAG" * 20
+        cds = "ATG" + "GCT" * 40 + "TAA"
+        parts = [lead, self.PROMOTER, gap, self.SD, "T" * spacer, cds]
+        forward = "".join(parts) + "GC" * 40
+
+        starts: list[int] = []
+        at = 0
+        for part in parts:
+            starts.append(at)
+            at += len(part)
+        promoter_iv = Interval(starts[1], starts[1] + len(self.PROMOTER), strand)
+        rbs_iv = Interval(starts[3], starts[3] + len(self.SD), strand)
+        cds_iv = Interval(starts[5], starts[5] + len(cds), strand)
+
+        if strand == -1:
+            # Rebuild on the other strand: every span mirrors, so a detector that
+            # is right by accident on the forward layout is caught here.
+            n = len(forward)
+            sequence = reverse_complement(forward)
+            flip = lambda iv: Interval(n - iv.end, n - iv.start, -1)  # noqa: E731
+            promoter_iv, rbs_iv, cds_iv = flip(promoter_iv), flip(rbs_iv), flip(cds_iv)
+        else:
+            sequence = forward
+
+        extra = {"regulatory_class": (rbs_class,)} if rbs_class else {}
+        features = [
+            feature(rbs_kind, rbs_iv.start, rbs_iv.end, strand, "T7 g10 RBS", **extra),
+            feature("CDS", cds_iv.start, cds_iv.end, strand, "transgene"),
+        ]
+        if with_promoter:
+            features.insert(
+                0,
+                feature("promoter", promoter_iv.start, promoter_iv.end, strand, "T7 promoter"),
+            )
+        bb = VectorBackbone(
+            sequence=sequence,
+            topology=Topology.CIRCULAR,
+            features=tuple(features),
+            name="synthetic pET",
+        )
+        return bb, {"promoter": promoter_iv, "rbs": rbs_iv, "cds": cds_iv}
+
+    def test_an_annotated_rbs_is_reported_with_its_spacing(self) -> None:
+        bb, spans = self.backbone(spacer=6)
+        utr = bb.utr_context(bb.find_insertion_site())
+        assert utr.ribosome_binding_site == spans["rbs"]
+        assert utr.has_ribosome_binding_site
+        assert utr.rbs_spacing == 6
+        assert bb.slice(spans["rbs"]).endswith("AAGGAGA")
+
+    def test_the_insdc_regulatory_spelling_is_equivalent(self) -> None:
+        """SnapGene writes `RBS`; NCBI writes `regulatory` plus a class."""
+        snapgene, _ = self.backbone(rbs_kind="RBS")
+        insdc, _ = self.backbone(rbs_kind="regulatory", rbs_class="ribosome_binding_site")
+        a = snapgene.utr_context(snapgene.find_insertion_site())
+        b = insdc.utr_context(insdc.find_insertion_site())
+        assert b.ribosome_binding_site == a.ribosome_binding_site
+        assert b.rbs_spacing == a.rbs_spacing
+
+    def test_an_untyped_regulatory_feature_is_not_an_rbs(self) -> None:
+        """`regulatory` alone covers terminators and operators too."""
+        bb, _ = self.backbone(rbs_kind="regulatory", rbs_class=None)
+        assert bb.utr_context(bb.find_insertion_site()).ribosome_binding_site is None
+
+    def test_the_rbs_anchors_a_leader_when_no_promoter_is_annotated(self) -> None:
+        """Without this the whole objective is dropped over a missing promoter."""
+        bb, spans = self.backbone(with_promoter=False, spacer=6)
+        utr = bb.utr_context(bb.find_insertion_site())
+        assert utr.five_prime_source == "derived_from_rbs"
+        assert utr.five_prime is not None
+        assert bb.slice(utr.five_prime).startswith(self.SD), (
+            "an anchored leader that starts AFTER the SD drops the 7 bases that "
+            "recruit the ribosome -- the whole reason for anchoring on it"
+        )
+        assert utr.five_prime.length == len(self.SD) + 6
+
+    def test_an_anchored_leader_says_it_stops_at_the_sd(self) -> None:
+        bb, _ = self.backbone(with_promoter=False)
+        notes = bb.utr_context(bb.find_insertion_site()).notes
+        assert any(
+            n.kind == "assumption"
+            and "anchored on the annotated ribosome binding site" in n.summary
+            for n in notes
+        )
+
+    def test_no_rbs_and_no_promoter_still_degrades(self) -> None:
+        """The fallback must not paper over a vector that really has nothing."""
+        bb, _ = self.backbone(with_promoter=False)
+        bare = without(bb, "RBS")
+        utr = bare.utr_context(bare.find_insertion_site())
+        assert utr.five_prime is None
+        assert utr.five_prime_source == "absent"
+        assert utr.ribosome_binding_site is None
+
+    def test_a_promoter_leader_wins_but_names_the_rbs_inside_it(self) -> None:
+        """The longer real leader is better; the flat 'assumed' wording was not."""
+        bb, spans = self.backbone(with_promoter=True)
+        utr = bb.utr_context(bb.find_insertion_site())
+        assert utr.five_prime_source == "derived_from_promoter"
+        assert utr.five_prime is not None
+        assert utr.five_prime.start == spans["promoter"].end
+        assert utr.ribosome_binding_site == spans["rbs"]
+        assert any("ribosome binding site lies inside this span" in n.summary for n in utr.notes), (
+            "reporting only 'the transcription start is assumed' buries the known element"
+        )
+
+    def test_an_rbs_out_of_reach_of_the_start_codon_is_a_liability(self) -> None:
+        """pET28a annotates a CDS 66 nt past its SD: that CDS is not the real ORF."""
+        bb, _ = self.backbone(spacer=80)
+        utr = bb.utr_context(bb.find_insertion_site())
+        assert utr.rbs_spacing == 80
+        liabilities = [n for n in utr.notes if n.kind == "liability"]
+        assert any("80 nt" in n.summary and "initiates" in n.summary for n in liabilities)
+        assert all(n.action for n in liabilities)
+
+    def test_an_unreachable_rbs_does_not_corroborate_the_start_codon(self) -> None:
+        """It still falls inside the derived span, which is not the same thing."""
+        bb, _ = self.backbone(spacer=80)
+        utr = bb.utr_context(bb.find_insertion_site())
+        assert not any("lies inside this span" in n.summary for n in utr.notes)
+
+    def test_an_rbs_outside_the_leader_is_a_liability(self) -> None:
+        """Two 5' annotations describing different transcripts is worth saying."""
+        bb, spans = self.backbone(with_promoter=False)
+        annotated = replace(
+            bb,
+            features=(
+                *bb.features,
+                feature("5'UTR", spans["rbs"].end, spans["cds"].start, 1, "short leader"),
+            ),
+        )
+        utr = annotated.utr_context(annotated.find_insertion_site())
+        assert utr.five_prime_source == "annotated_feature"
+        assert any(n.kind == "liability" and "outside the 5'UTR" in n.summary for n in utr.notes)
+
+    def test_a_reverse_cassette_finds_its_rbs_at_higher_coordinates(self) -> None:
+        """Mirror the layout: a strand-blind search finds nothing, or the wrong thing."""
+        bb, spans = self.backbone(strand=-1, spacer=6)
+        site = bb.find_insertion_site()
+        assert site.strand == -1
+        utr = bb.utr_context(site)
+        assert utr.ribosome_binding_site == spans["rbs"]
+        assert utr.rbs_spacing == 6
+        assert utr.ribosome_binding_site is not None
+        assert utr.ribosome_binding_site.start >= site.interval.end
+        assert bb.slice(utr.ribosome_binding_site).endswith("AAGGAGA")
+
+    def test_a_forward_rbs_is_not_used_for_a_reverse_cassette(self) -> None:
+        bb, spans = self.backbone(strand=-1)
+        forward_rbs = replace(
+            bb,
+            features=tuple(
+                feature("RBS", f.interval.start, f.interval.end, 1) if f.kind == "RBS" else f
+                for f in bb.features
+            ),
+        )
+        utr = forward_rbs.utr_context(forward_rbs.find_insertion_site())
+        assert utr.ribosome_binding_site is None
+
+    def test_an_rbs_across_the_origin_is_found(self) -> None:
+        """Circular adjacency: the SD may sit the other side of position 0."""
+        bb, spans = self.backbone(with_promoter=False, spacer=6)
+        # Rotate so the origin lands between the SD and the start codon.
+        rotated = bb.rotated(spans["cds"].start - 2)
+        site = rotated.find_insertion_site()
+        utr = rotated.utr_context(site)
+        assert utr.rbs_spacing == 6, "linear arithmetic loses an SD across the origin"
+        assert utr.five_prime_source == "derived_from_rbs"
+        assert utr.five_prime is not None
+        assert utr.five_prime.end > rotated.length, "the anchored leader wraps"
+        assert rotated.slice(utr.five_prime).startswith(self.SD)
+
+
+class TestDownstreamRegulatoryClass:
+    """`regulatory` is a catch-all, so matching it on the key alone reads
+    whichever of terminator, attenuator or operator happens to be nearest as the
+    polyA signal -- and then hands back a 3'UTR that is not one."""
+
+    def backbone(self, downstream_class: str | None) -> VectorBackbone:
+        extra = {"regulatory_class": (downstream_class,)} if downstream_class else {}
+        return VectorBackbone(
+            sequence="ACGT" * 200,
+            topology=Topology.CIRCULAR,
+            features=(
+                feature("CDS", 100, 400, 1, "transgene"),
+                feature("regulatory", 500, 540, 1, "downstream element", **extra),
+            ),
+            name="regulatory",
+        )
+
+    def test_a_polya_class_regulatory_feature_bounds_the_three_prime_utr(self) -> None:
+        bb = self.backbone("polyA_signal_sequence")
+        utr = bb.utr_context(bb.find_insertion_site())
+        assert utr.three_prime == Interval(400, 500, 1)
+
+    def test_a_terminator_is_not_read_as_a_polya_signal(self) -> None:
+        bb = self.backbone("terminator")
+        assert bb.utr_context(bb.find_insertion_site()).three_prime is None
+
+    def test_an_untyped_regulatory_feature_is_not_read_as_a_polya_signal(self) -> None:
+        bb = self.backbone(None)
+        assert bb.utr_context(bb.find_insertion_site()).three_prime is None
