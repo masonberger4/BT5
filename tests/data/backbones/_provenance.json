@@ -1,0 +1,24 @@
+{
+  "synthetic_lenti_ef1a.gb": {
+    "kind": "synthetic fixture",
+    "source": "Generated for BT5 by a seeded script (numpy default_rng(20260827)); not derived from any real plasmid or third-party map, so it carries no upstream licence.",
+    "created": "2026-08-27",
+    "sha256": "59c148e35a400e1fb2a1c56e01d5dc282ec676d09f15f9e5d4fabd0199b28ad4",
+    "why_not_a_real_addgene_map": "The fixture must exercise specific geometry -- an origin-spanning join(), an annotated 5'UTR, an intron outside the CDS, and two identical LTRs -- and must be an INDEPENDENT parse target rather than something bt5.vector's own writer produced. A hand-specified file gives all of that with no redistribution question.",
+    "layout": {
+      "length": 2000,
+      "topology": "circular",
+      "rep_origin": "join(1801..2000,1..80) -- deliberately spans the origin",
+      "5' LTR": "81..330",
+      "psi": "331..380",
+      "RRE": "381..500",
+      "promoter": "501..720",
+      "intron": "721..800 -- inside the 5' region, NOT inside the CDS",
+      "5'UTR": "801..860",
+      "CDS": "861..1280 (140 codons, /transl_table=1) -- the insertion target",
+      "WPRE": "1281..1520",
+      "3' LTR": "1521..1770 -- byte-identical to the 5' LTR, a genuine 250 bp direct repeat"
+    },
+    "notes": "The two LTRs are the same 250 bp on purpose: they are what SegmentKind.WHITELISTED_REPEAT exists for, and no codon choice can remove them."
+  }
+}
