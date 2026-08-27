@@ -40,6 +40,7 @@ from bt5.vector.io import (
     read_vector,
     write_genbank,
 )
+from bt5.vector.kmers import ConstructKmerIndex, RepeatPair, RiskBand, repeat_risk
 from bt5.vector.locations import (
     LocationError,
     ParsedLocation,
@@ -57,6 +58,7 @@ __all__ = [
     "DEFAULT_EXEMPT_LABELS",
     "ORIGIN_QUALIFIER",
     "Assembly",
+    "ConstructKmerIndex",
     "DesignNote",
     "DesignReport",
     "NoteKind",
@@ -65,6 +67,8 @@ __all__ = [
     "IntervalRemapper",
     "LocationError",
     "ParsedLocation",
+    "RepeatPair",
+    "RiskBand",
     "UtrContext",
     "VectorBackbone",
     "VectorError",
@@ -86,6 +90,7 @@ __all__ = [
     "read_genbank",
     "read_snapgene",
     "read_vector",
+    "repeat_risk",
     "rotate_interval",
     "suggest_insertion_sites",
     "write_genbank",
