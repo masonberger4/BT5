@@ -86,10 +86,20 @@ class Interval:
 
     def extended(self, by: int, construct_length: int, circular: bool) -> Interval:
         """Widen by `by` on both sides. This is how localisation policies turn a
-        breach into a repair window."""
+        breach into a repair window.
+
+        On a circular construct an extension that runs off the front wraps into
+        the canonical representation (start inside the sequence, end past the
+        end) rather than going negative -- a breach near the origin must still
+        produce a usable repair window.
+        """
         start = self.start - by
         end = self.end + by
-        if not circular:
+        if circular:
+            if start < 0:
+                start += construct_length
+                end += construct_length
+        else:
             start = max(0, start)
             end = min(construct_length, end)
         return Interval(start, end, self.strand)
