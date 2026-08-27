@@ -255,6 +255,13 @@ def _downstream_polya(backbone: VectorBackbone, orf: Interval) -> str | None:
     for feature in backbone.features:
         if feature.kind.lower() not in ("polya_signal", "polya_site"):
             continue
+        if feature.interval.strand != orf.strand:
+            # AATAAA is directional: a plus-strand polyA signal cannot terminate
+            # a minus-strand transcript. A reverse-oriented lentiviral cassette
+            # is polyadenylated by its 3' LTR, not by the vector's own SV40
+            # signal, and crediting the wrong one puts a false reason in front
+            # of the user.
+            continue
         gap = (
             feature.interval.start - orf.end
             if orf.strand == 1
