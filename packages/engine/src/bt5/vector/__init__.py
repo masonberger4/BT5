@@ -24,6 +24,12 @@ from bt5.vector.backbone import (
     insertion_site_from_interval,
     rotate_interval,
 )
+from bt5.vector.candidates import (
+    SiteCandidate,
+    cloning_sites,
+    find_orfs,
+    suggest_insertion_sites,
+)
 from bt5.vector.io import (
     backbone_from_record,
     backbone_to_record,
@@ -41,6 +47,7 @@ from bt5.vector.locations import (
     location_to_interval,
     parts_to_location,
 )
+from bt5.vector.markers import is_marker, is_recombination_site
 from bt5.vector.notes import DesignNote, NoteKind, format_span
 from bt5.vector.remap import IntervalRemapper
 
@@ -53,6 +60,7 @@ __all__ = [
     "DesignNote",
     "DesignReport",
     "NoteKind",
+    "SiteCandidate",
     "InsertionSite",
     "IntervalRemapper",
     "LocationError",
@@ -62,12 +70,16 @@ __all__ = [
     "VectorError",
     "annotate",
     "assemble",
+    "cloning_sites",
     "backbone_from_record",
     "backbone_to_record",
     "construct_to_record",
     "insertion_site_from_interval",
+    "find_orfs",
     "format_span",
     "interval_to_location",
+    "is_marker",
+    "is_recombination_site",
     "location_to_interval",
     "parts_to_location",
     "read_fasta",
@@ -75,5 +87,6 @@ __all__ = [
     "read_snapgene",
     "read_vector",
     "rotate_interval",
+    "suggest_insertion_sites",
     "write_genbank",
 ]
