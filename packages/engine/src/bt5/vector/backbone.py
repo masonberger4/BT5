@@ -21,6 +21,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from bt5.core.types import Feature, Interval, SegmentKind, Strand, Topology
+from bt5.vector.markers import is_marker
 from bt5.vector.notes import DesignNote
 
 #: GenBank feature keys that mark an immutable, scan-exempt region. Introns are
@@ -261,7 +262,7 @@ class VectorBackbone:
                 )
             return annotated.interval, "annotated_feature"
 
-        promoter = self._nearest_upstream(site, ("promoter",))
+        promoter = self._nearest_upstream(site, ("promoter",), skip_markers=True)
         if promoter is not None:
             derived = self._span_between(promoter.interval, site)
             if derived is not None and derived.length <= max_derived:
@@ -271,8 +272,10 @@ class VectorBackbone:
                     DesignNote(
                         kind="unavailable",
                         summary=(
-                            f"the promoter sits {derived.length} nt from the start codon, "
-                            f"beyond max_derived_utr={max_derived}, so no 5'UTR was inferred"
+                            f"the nearest promoter, {self.label_of(promoter)!r}, sits "
+                            f"{derived.length} nt from the start codon, beyond "
+                            f"max_derived_utr={max_derived}; it is probably driving a "
+                            f"different transcript, so no 5'UTR was inferred"
                         ),
                         bears_on="protein expression",
                     )
@@ -327,8 +330,10 @@ class VectorBackbone:
     def _gap_to_site(self, iv: Interval, site: InsertionSite) -> int:
         return self._distance_upstream(iv, site) or 0
 
-    def _nearest_upstream(self, site: InsertionSite, kinds: Sequence[str]) -> Feature | None:
-        return self._nearest(site, kinds, self._distance_upstream)
+    def _nearest_upstream(
+        self, site: InsertionSite, kinds: Sequence[str], *, skip_markers: bool = False
+    ) -> Feature | None:
+        return self._nearest(site, kinds, self._distance_upstream, skip_markers=skip_markers)
 
     def _nearest_downstream(self, site: InsertionSite, kinds: Sequence[str]) -> Feature | None:
         return self._nearest(site, kinds, self._distance_downstream)
@@ -338,12 +343,19 @@ class VectorBackbone:
         site: InsertionSite,
         kinds: Sequence[str],
         measure: Callable[[Interval, InsertionSite], int | None],
+        *,
+        skip_markers: bool = False,
     ) -> Feature | None:
         wanted = {k.lower() for k in kinds}
         best: Feature | None = None
         best_d: int | None = None
         for f in self.features:
             if f.kind.lower() not in wanted or f.interval.strand != site.strand:
+                continue
+            if skip_markers and is_marker(
+                f"{self.label_of(f)} {' '.join(f.qualifiers.get('note', ()))}"
+            ):
+                # An AmpR promoter is not this transcript's promoter.
                 continue
             d = measure(f.interval, site)
             if d is None:

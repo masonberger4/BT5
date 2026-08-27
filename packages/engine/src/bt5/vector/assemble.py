@@ -38,6 +38,7 @@ from bt5.vector.backbone import (
     VectorError,
     rotate_interval,
 )
+from bt5.vector.markers import is_recombination_site
 from bt5.vector.notes import DesignNote
 from bt5.vector.remap import IntervalRemapper
 
@@ -339,13 +340,31 @@ def _remap_features(
             if protein_preserved and _is_in_frame_inside(feature, site):
                 out.append(feature)
                 continue
+            label = backbone.label_of(feature)
+            if is_recombination_site(f"{label} {' '.join(feature.qualifiers.get('note', ()))}"):
+                dropped.append(
+                    DesignNote(
+                        kind="liability",
+                        summary=(
+                            f"{label!r} is a recombination site inside the CDS being "
+                            f"redesigned; back-translation changes those bases and the "
+                            f"site will no longer function"
+                        ),
+                        interval=feature.interval,
+                        bears_on="downstream cloning",
+                        action=(
+                            "exclude this span from the design, or expect a subsequent "
+                            "recombination reaction using it to fail"
+                        ),
+                    )
+                )
+                continue
             dropped.append(
                 DesignNote(
                     kind="change",
                     summary=(
-                        f"dropped feature {backbone.label_of(feature)!r} ({feature.kind}): it "
-                        f"overlaps the redesigned CDS, so its coordinates no longer describe "
-                        f"anything"
+                        f"dropped feature {label!r} ({feature.kind}): it overlaps the "
+                        f"redesigned CDS, so its coordinates no longer describe anything"
                     ),
                     bears_on="map fidelity",
                 )
