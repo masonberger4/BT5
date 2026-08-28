@@ -81,10 +81,40 @@ TWIST_GENE_FRAGMENT = Adapters(vendor="twist_gene_fragment")
 #: The adapter-on option. Only this one carries the adapters.
 TWIST_ADAPTER_ON = Adapters(TWIST_FIVE_PRIME, TWIST_THREE_PRIME, "twist_gene_fragment_adapter_on")
 
+#: IDT ships gene fragments without adapters, so these carry only a vendor name.
+#: They exist so that there is ONE registry of orderable configurations: a second
+#: namespace is what let a run be spec'd for IDT limits and Twist adapters at the
+#: same time, and nothing caught it because each dict validated its own keys.
+IDT_EBLOCKS = Adapters(vendor="idt_eblocks")
+IDT_GBLOCKS = Adapters(vendor="idt_gblocks")
+
 VENDOR_ADAPTERS: dict[str, Adapters] = {
     "none": NO_ADAPTERS,
     "twist_gene_fragment": TWIST_GENE_FRAGMENT,
     "twist_gene_fragment_adapter_on": TWIST_ADAPTER_ON,
+    "idt_eblocks": IDT_EBLOCKS,
+    "idt_gblocks": IDT_GBLOCKS,
+}
+
+#: Orderable length range per configuration, as (min, max) bp of ORDERED DNA --
+#: the insert, not the insert plus adapters. See `e9_length_tiers` for why that
+#: distinction is currently an assumption rather than a verified fact.
+#:
+#: VENDOR_ASSERTED, verified 2026-08-28. Lives here rather than in the rule so
+#: that adapters and lengths cannot describe different sets of configurations;
+#: `test_registries_describe_the_same_configurations` holds them together.
+#:
+#: The MINIMUM is the surprising bound. Everyone remembers a maximum; almost
+#: nobody remembers that a 250 bp insert cannot be ordered as a gene fragment
+#: from Twist or as an eBlock at all.
+VENDOR_LENGTHS: dict[str, tuple[int, int]] = {
+    # https://www.twistbioscience.com/faq/gene-synthesis/are-there-any-sequence-limitationsdesign-guidelines-genes-which-i-should-follow
+    "twist_gene_fragment": (300, 5000),
+    "twist_gene_fragment_adapter_on": (300, 5000),
+    # https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/eblocks-gene-fragments
+    "idt_eblocks": (300, 1500),
+    # https://www.idtdna.com/pages/support/faqs/what-is-the-length-of-gblocks-gene-fragments-that-idt-can-synthesize
+    "idt_gblocks": (125, 3000),
 }
 
 
