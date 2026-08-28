@@ -115,16 +115,19 @@ slots, ~12 per Python PR, so at most 5 open non-draft PRs at a time).
 Head branches are auto-deleted on merge, so after every merge the local
 remote-tracking ref for your branch points at a commit that no longer exists on
 the remote. Anything comparing HEAD against it then reports phantom unpushed
-commits. Always fetch with `--prune`:
+commits.
+
+**`git fetch --prune origin main` does NOT fix this.** Pruning is scoped to the
+refspec being fetched, so naming `main` prunes only `refs/remotes/origin/main`
+and leaves your branch's dead ref exactly where it was. The same limitation
+applies to `git config remote.origin.prune true`: it is still bounded by the
+refspec. Prune the whole remote instead:
 
 ```bash
-git fetch --prune origin main
+git remote prune origin            # or: git fetch --prune origin   (no refspec)
+git fetch -q origin main
 git checkout -B <your-branch> origin/main
 ```
-
-`git config remote.origin.prune true` makes every fetch do it, but the setting
-is per-clone and does not survive a fresh checkout, so the flag is the reliable
-form.
 
 ## 8. Before you push
 
