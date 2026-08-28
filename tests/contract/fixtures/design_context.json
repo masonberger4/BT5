@@ -1,0 +1,50 @@
+{
+  "recorded_as": "bt5.core.context.DesignContext",
+  "value": {
+    "__type__": "bt5.core.context.DesignContext",
+    "fields": {
+      "cassette_orientation": -1,
+      "engine_versions": {
+        "__map__": {
+          "viennarna": "2.7.2"
+        }
+      },
+      "screen": {
+        "__type__": "bt5.core.context.BiosecurityVerdict",
+        "fields": {
+          "database_version": null,
+          "detail": "screening did not run",
+          "status": "not_run"
+        }
+      },
+      "seed": 42,
+      "slots": {
+        "__tuple__": [
+          {
+            "__type__": "bt5.core.context.ContextSlot",
+            "fields": {
+              "enabled": true,
+              "host": {
+                "__enum__": "bt5.core.context.HostId",
+                "name": "HEK293"
+              },
+              "modality": {
+                "__enum__": "bt5.core.context.Modality",
+                "name": "LENTIVIRAL"
+              },
+              "role": "producer",
+              "strand_of_interest": -1,
+              "table_id": 1
+            }
+          }
+        ]
+      },
+      "strict_biosecurity": true,
+      "weights": {
+        "__map__": {
+          "c1_cai": 0.2
+        }
+      }
+    }
+  }
+}

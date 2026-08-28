@@ -1,0 +1,32 @@
+{
+  "recorded_as": "bt5.core.result.InfeasibilityCertificate",
+  "value": {
+    "__type__": "bt5.core.result.InfeasibilityCertificate",
+    "fields": {
+      "interval": {
+        "__type__": "bt5.core.types.Interval",
+        "fields": {
+          "end": 60,
+          "start": 48,
+          "strand": 1
+        }
+      },
+      "minimal_conflicting_specs": {
+        "__tuple__": [
+          "d1_restriction_sites",
+          "e2_gc_band"
+        ]
+      },
+      "proof": "empty_mutation_space",
+      "protein_span": {
+        "__tuple__": [
+          0,
+          4
+        ]
+      },
+      "relaxations": {
+        "__tuple__": []
+      }
+    }
+  }
+}

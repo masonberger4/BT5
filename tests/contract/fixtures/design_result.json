@@ -1,0 +1,584 @@
+{
+  "recorded_as": "bt5.core.result.DesignResult",
+  "value": {
+    "__type__": "bt5.core.result.DesignResult",
+    "fields": {
+      "candidates": {
+        "__tuple__": [
+          {
+            "__type__": "bt5.core.result.Candidate",
+            "fields": {
+              "cds": "ATGAAATAA",
+              "codon_distance_to": {
+                "__map__": {
+                  "native_baseline": 0.31
+                }
+              },
+              "construct": {
+                "__type__": "bt5.core.types.Construct",
+                "fields": {
+                  "annotations": {
+                    "__map__": {
+                      "molecule_type": "ds-DNA",
+                      "topology": "circular"
+                    }
+                  },
+                  "features": {
+                    "__tuple__": [
+                      {
+                        "__type__": "bt5.core.types.Feature",
+                        "fields": {
+                          "interval": {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 30,
+                              "start": 12,
+                              "strand": 1
+                            }
+                          },
+                          "kind": "LTR",
+                          "qualifiers": {
+                            "__map__": {
+                              "label": {
+                                "__tuple__": [
+                                  "5'LTR"
+                                ]
+                              }
+                            }
+                          },
+                          "uid": "ltr5"
+                        }
+                      },
+                      {
+                        "__type__": "bt5.core.types.Feature",
+                        "fields": {
+                          "interval": {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 66,
+                              "start": 48,
+                              "strand": 1
+                            }
+                          },
+                          "kind": "CDS",
+                          "qualifiers": {
+                            "__map__": {
+                              "transl_table": {
+                                "__tuple__": [
+                                  "11"
+                                ]
+                              }
+                            }
+                          },
+                          "uid": "cds"
+                        }
+                      }
+                    ]
+                  },
+                  "provenance": {
+                    "__type__": "bt5.core.types.Provenance",
+                    "fields": {
+                      "app_version": "0.1.0",
+                      "codon_table_name": "ncbi_11",
+                      "constraint_set_hash": "deadbeef",
+                      "degradations": {
+                        "__tuple__": [
+                          "no folding engine installed"
+                        ]
+                      },
+                      "engine_versions": {
+                        "__map__": {
+                          "viennarna": "2.7.2"
+                        }
+                      },
+                      "seed": 42
+                    }
+                  },
+                  "segments": {
+                    "__tuple__": [
+                      {
+                        "__type__": "bt5.core.types.Segment",
+                        "fields": {
+                          "interval": {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 66,
+                              "start": 48,
+                              "strand": 1
+                            }
+                          },
+                          "kind": {
+                            "__enum__": "bt5.core.types.SegmentKind",
+                            "name": "DESIGNABLE_CDS"
+                          },
+                          "label": "cds across origin"
+                        }
+                      },
+                      {
+                        "__type__": "bt5.core.types.Segment",
+                        "fields": {
+                          "interval": {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 30,
+                              "start": 12,
+                              "strand": 1
+                            }
+                          },
+                          "kind": {
+                            "__enum__": "bt5.core.types.SegmentKind",
+                            "name": "WHITELISTED_REPEAT"
+                          },
+                          "label": "ltr"
+                        }
+                      },
+                      {
+                        "__type__": "bt5.core.types.Segment",
+                        "fields": {
+                          "interval": {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 48,
+                              "start": 30,
+                              "strand": 1
+                            }
+                          },
+                          "kind": {
+                            "__enum__": "bt5.core.types.SegmentKind",
+                            "name": "BACKBONE"
+                          },
+                          "label": "vector"
+                        }
+                      }
+                    ]
+                  },
+                  "sequence": "ATGAAACCCGGGTTTACGTACGTACGTAAGCTTGGGCCCAAATTTCCCGGGTAA",
+                  "topology": {
+                    "__enum__": "bt5.core.types.Topology",
+                    "name": "CIRCULAR"
+                  },
+                  "translation_units": {
+                    "__tuple__": [
+                      {
+                        "__type__": "bt5.core.types.TranslationUnit",
+                        "fields": {
+                          "codon_map": {
+                            "__tuple__": [
+                              {
+                                "__type__": "bt5.core.types.Interval",
+                                "fields": {
+                                  "end": 51,
+                                  "start": 48,
+                                  "strand": 1
+                                }
+                              },
+                              {
+                                "__type__": "bt5.core.types.Interval",
+                                "fields": {
+                                  "end": 54,
+                                  "start": 51,
+                                  "strand": 1
+                                }
+                              },
+                              {
+                                "__type__": "bt5.core.types.Interval",
+                                "fields": {
+                                  "end": 57,
+                                  "start": 54,
+                                  "strand": 1
+                                }
+                              }
+                            ]
+                          },
+                          "has_terminal_stop": true,
+                          "protein": "MK",
+                          "starts_at_initiator": true,
+                          "table_id": 11
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "design_hash": "a1b2c3d4e5f6",
+              "label": "candidate_1",
+              "scorecard": {
+                "__type__": "bt5.core.result.ScoreCard",
+                "fields": {
+                  "hard_checks": {
+                    "__tuple__": [
+                      {
+                        "__type__": "bt5.core.spec.Breach",
+                        "fields": {
+                          "detail": {
+                            "__map__": {
+                              "enzyme": "HindIII",
+                              "motif": "AAGCTT"
+                            }
+                          },
+                          "fixable_by_codon_choice": true,
+                          "interval": {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 56,
+                              "start": 50,
+                              "strand": 1
+                            }
+                          },
+                          "magnitude": 1.0,
+                          "message": "HindIII site 'AAGCTT' at 50",
+                          "slot_role": "producer",
+                          "spec_id": "d1_restriction_sites"
+                        }
+                      }
+                    ]
+                  },
+                  "scores": {
+                    "__tuple__": [
+                      {
+                        "__type__": "bt5.core.result.ObjectiveScore",
+                        "fields": {
+                          "null_kind": "host_frequency",
+                          "null_mean": 0.71,
+                          "null_n": 200,
+                          "null_sd": 0.04,
+                          "percentile": 0.82,
+                          "raw": 0.78,
+                          "spec_id": "c1_cai",
+                          "unavailable_reason": "",
+                          "unit": "au",
+                          "windowed_fold_only": true
+                        }
+                      },
+                      {
+                        "__type__": "bt5.core.result.ObjectiveScore",
+                        "fields": {
+                          "null_kind": "host_frequency",
+                          "null_mean": {
+                            "__float__": "nan"
+                          },
+                          "null_n": 0,
+                          "null_sd": {
+                            "__float__": "nan"
+                          },
+                          "percentile": {
+                            "__float__": "nan"
+                          },
+                          "raw": {
+                            "__float__": "nan"
+                          },
+                          "spec_id": "b1_five_prime",
+                          "unavailable_reason": "no folding engine",
+                          "unit": "kcal/mol",
+                          "windowed_fold_only": true
+                        }
+                      }
+                    ]
+                  },
+                  "total": 0.82
+                }
+              }
+            }
+          }
+        ]
+      },
+      "conflicts": {
+        "__tuple__": []
+      },
+      "native_baseline": {
+        "__type__": "bt5.core.result.Candidate",
+        "fields": {
+          "cds": "ATGAAATAA",
+          "codon_distance_to": {
+            "__map__": {
+              "native_baseline": 0.31
+            }
+          },
+          "construct": {
+            "__type__": "bt5.core.types.Construct",
+            "fields": {
+              "annotations": {
+                "__map__": {
+                  "molecule_type": "ds-DNA",
+                  "topology": "circular"
+                }
+              },
+              "features": {
+                "__tuple__": [
+                  {
+                    "__type__": "bt5.core.types.Feature",
+                    "fields": {
+                      "interval": {
+                        "__type__": "bt5.core.types.Interval",
+                        "fields": {
+                          "end": 30,
+                          "start": 12,
+                          "strand": 1
+                        }
+                      },
+                      "kind": "LTR",
+                      "qualifiers": {
+                        "__map__": {
+                          "label": {
+                            "__tuple__": [
+                              "5'LTR"
+                            ]
+                          }
+                        }
+                      },
+                      "uid": "ltr5"
+                    }
+                  },
+                  {
+                    "__type__": "bt5.core.types.Feature",
+                    "fields": {
+                      "interval": {
+                        "__type__": "bt5.core.types.Interval",
+                        "fields": {
+                          "end": 66,
+                          "start": 48,
+                          "strand": 1
+                        }
+                      },
+                      "kind": "CDS",
+                      "qualifiers": {
+                        "__map__": {
+                          "transl_table": {
+                            "__tuple__": [
+                              "11"
+                            ]
+                          }
+                        }
+                      },
+                      "uid": "cds"
+                    }
+                  }
+                ]
+              },
+              "provenance": {
+                "__type__": "bt5.core.types.Provenance",
+                "fields": {
+                  "app_version": "0.1.0",
+                  "codon_table_name": "ncbi_11",
+                  "constraint_set_hash": "deadbeef",
+                  "degradations": {
+                    "__tuple__": [
+                      "no folding engine installed"
+                    ]
+                  },
+                  "engine_versions": {
+                    "__map__": {
+                      "viennarna": "2.7.2"
+                    }
+                  },
+                  "seed": 42
+                }
+              },
+              "segments": {
+                "__tuple__": [
+                  {
+                    "__type__": "bt5.core.types.Segment",
+                    "fields": {
+                      "interval": {
+                        "__type__": "bt5.core.types.Interval",
+                        "fields": {
+                          "end": 66,
+                          "start": 48,
+                          "strand": 1
+                        }
+                      },
+                      "kind": {
+                        "__enum__": "bt5.core.types.SegmentKind",
+                        "name": "DESIGNABLE_CDS"
+                      },
+                      "label": "cds across origin"
+                    }
+                  },
+                  {
+                    "__type__": "bt5.core.types.Segment",
+                    "fields": {
+                      "interval": {
+                        "__type__": "bt5.core.types.Interval",
+                        "fields": {
+                          "end": 30,
+                          "start": 12,
+                          "strand": 1
+                        }
+                      },
+                      "kind": {
+                        "__enum__": "bt5.core.types.SegmentKind",
+                        "name": "WHITELISTED_REPEAT"
+                      },
+                      "label": "ltr"
+                    }
+                  },
+                  {
+                    "__type__": "bt5.core.types.Segment",
+                    "fields": {
+                      "interval": {
+                        "__type__": "bt5.core.types.Interval",
+                        "fields": {
+                          "end": 48,
+                          "start": 30,
+                          "strand": 1
+                        }
+                      },
+                      "kind": {
+                        "__enum__": "bt5.core.types.SegmentKind",
+                        "name": "BACKBONE"
+                      },
+                      "label": "vector"
+                    }
+                  }
+                ]
+              },
+              "sequence": "ATGAAACCCGGGTTTACGTACGTACGTAAGCTTGGGCCCAAATTTCCCGGGTAA",
+              "topology": {
+                "__enum__": "bt5.core.types.Topology",
+                "name": "CIRCULAR"
+              },
+              "translation_units": {
+                "__tuple__": [
+                  {
+                    "__type__": "bt5.core.types.TranslationUnit",
+                    "fields": {
+                      "codon_map": {
+                        "__tuple__": [
+                          {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 51,
+                              "start": 48,
+                              "strand": 1
+                            }
+                          },
+                          {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 54,
+                              "start": 51,
+                              "strand": 1
+                            }
+                          },
+                          {
+                            "__type__": "bt5.core.types.Interval",
+                            "fields": {
+                              "end": 57,
+                              "start": 54,
+                              "strand": 1
+                            }
+                          }
+                        ]
+                      },
+                      "has_terminal_stop": true,
+                      "protein": "MK",
+                      "starts_at_initiator": true,
+                      "table_id": 11
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "design_hash": "a1b2c3d4e5f6",
+          "label": "candidate_1",
+          "scorecard": {
+            "__type__": "bt5.core.result.ScoreCard",
+            "fields": {
+              "hard_checks": {
+                "__tuple__": [
+                  {
+                    "__type__": "bt5.core.spec.Breach",
+                    "fields": {
+                      "detail": {
+                        "__map__": {
+                          "enzyme": "HindIII",
+                          "motif": "AAGCTT"
+                        }
+                      },
+                      "fixable_by_codon_choice": true,
+                      "interval": {
+                        "__type__": "bt5.core.types.Interval",
+                        "fields": {
+                          "end": 56,
+                          "start": 50,
+                          "strand": 1
+                        }
+                      },
+                      "magnitude": 1.0,
+                      "message": "HindIII site 'AAGCTT' at 50",
+                      "slot_role": "producer",
+                      "spec_id": "d1_restriction_sites"
+                    }
+                  }
+                ]
+              },
+              "scores": {
+                "__tuple__": [
+                  {
+                    "__type__": "bt5.core.result.ObjectiveScore",
+                    "fields": {
+                      "null_kind": "host_frequency",
+                      "null_mean": 0.71,
+                      "null_n": 200,
+                      "null_sd": 0.04,
+                      "percentile": 0.82,
+                      "raw": 0.78,
+                      "spec_id": "c1_cai",
+                      "unavailable_reason": "",
+                      "unit": "au",
+                      "windowed_fold_only": true
+                    }
+                  },
+                  {
+                    "__type__": "bt5.core.result.ObjectiveScore",
+                    "fields": {
+                      "null_kind": "host_frequency",
+                      "null_mean": {
+                        "__float__": "nan"
+                      },
+                      "null_n": 0,
+                      "null_sd": {
+                        "__float__": "nan"
+                      },
+                      "percentile": {
+                        "__float__": "nan"
+                      },
+                      "raw": {
+                        "__float__": "nan"
+                      },
+                      "spec_id": "b1_five_prime",
+                      "unavailable_reason": "no folding engine",
+                      "unit": "kcal/mol",
+                      "windowed_fold_only": true
+                    }
+                  }
+                ]
+              },
+              "total": 0.82
+            }
+          }
+        }
+      },
+      "provenance": {
+        "__type__": "bt5.core.types.Provenance",
+        "fields": {
+          "app_version": "0.1.0",
+          "codon_table_name": "ncbi_11",
+          "constraint_set_hash": "deadbeef",
+          "degradations": {
+            "__tuple__": [
+              "no folding engine installed"
+            ]
+          },
+          "engine_versions": {
+            "__map__": {
+              "viennarna": "2.7.2"
+            }
+          },
+          "seed": 42
+        }
+      }
+    }
+  }
+}

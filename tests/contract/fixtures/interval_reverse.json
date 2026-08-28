@@ -1,0 +1,11 @@
+{
+  "recorded_as": "bt5.core.types.Interval",
+  "value": {
+    "__type__": "bt5.core.types.Interval",
+    "fields": {
+      "end": 40,
+      "start": 10,
+      "strand": -1
+    }
+  }
+}

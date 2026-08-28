@@ -1,0 +1,18 @@
+{
+  "recorded_as": "bt5.core.result.ObjectiveScore",
+  "value": {
+    "__type__": "bt5.core.result.ObjectiveScore",
+    "fields": {
+      "null_kind": "host_frequency",
+      "null_mean": 0.71,
+      "null_n": 200,
+      "null_sd": 0.04,
+      "percentile": 0.82,
+      "raw": 0.78,
+      "spec_id": "c1_cai",
+      "unavailable_reason": "",
+      "unit": "au",
+      "windowed_fold_only": true
+    }
+  }
+}

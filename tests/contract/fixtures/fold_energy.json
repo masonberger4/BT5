@@ -1,0 +1,16 @@
+{
+  "recorded_as": "bt5.core.services.FoldEnergy",
+  "value": {
+    "__type__": "bt5.core.services.FoldEnergy",
+    "fields": {
+      "dangles": 2,
+      "dg_kcal_mol": -12.3,
+      "duplex_split": null,
+      "engine": "viennarna",
+      "engine_version": "2.7.2",
+      "param_set": "rna_turner2004",
+      "structure": "((((....))))",
+      "temperature_c": 37.0
+    }
+  }
+}

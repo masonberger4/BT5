@@ -1,0 +1,20 @@
+{
+  "recorded_as": "bt5.core.context.ContextSlot",
+  "value": {
+    "__type__": "bt5.core.context.ContextSlot",
+    "fields": {
+      "enabled": true,
+      "host": {
+        "__enum__": "bt5.core.context.HostId",
+        "name": "HEK293"
+      },
+      "modality": {
+        "__enum__": "bt5.core.context.Modality",
+        "name": "LENTIVIRAL"
+      },
+      "role": "producer",
+      "strand_of_interest": -1,
+      "table_id": 1
+    }
+  }
+}

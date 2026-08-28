@@ -1,0 +1,26 @@
+{
+  "recorded_as": "bt5.core.result.ObjectiveScore",
+  "value": {
+    "__type__": "bt5.core.result.ObjectiveScore",
+    "fields": {
+      "null_kind": "host_frequency",
+      "null_mean": {
+        "__float__": "nan"
+      },
+      "null_n": 0,
+      "null_sd": {
+        "__float__": "nan"
+      },
+      "percentile": {
+        "__float__": "nan"
+      },
+      "raw": {
+        "__float__": "nan"
+      },
+      "spec_id": "b1_five_prime",
+      "unavailable_reason": "no folding engine",
+      "unit": "kcal/mol",
+      "windowed_fold_only": true
+    }
+  }
+}
