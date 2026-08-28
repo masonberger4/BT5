@@ -1,6 +1,6 @@
 # Vendor GC calibration — measured, not read off a webpage
 
-Status: IDT complete, Twist pending. Measured 2026-08-28.
+Status: **complete — both vendors, all 18 probes**. Measured 2026-08-28.
 
 `docs/PLAN.md` schedules a **vendor-complexity oracle** — "paste designs into the
 Twist/IDT complexity checkers and record accept/complex/reject", as *manual
@@ -123,28 +123,109 @@ scored twice, under two window sizes.
 
 ---
 
-## What this says about E2 as shipped
+## Twist — "Analyze your gene sequences for manufacturability"
 
-`e2_gc_band` ships **40–60% GC over a 50 bp window at `HARD_REPAIR`**, so the
-validator refuses to emit outside it. Against measurement that is wrong in four
-independent ways:
-
-| | E2 as shipped | measured reality |
+| probe | GC | verdict |
 |---|---|---|
-| window | 50 bp | IDT uses **100 bp** (Twist 50 bp — they differ) |
-| shape | two-sided band | IDT enforces a **floor only**, no windowed ceiling |
-| bound | 40–60% | IDT targets **32–62%**, denies only below ~25% / above **77%** |
-| enforcement | **HARD** — refuses to emit | IDT **accepts** 70% and 75% GC as moderate |
+| LOC_w50_gc05 … gc95 (all 8) | one 50 bp window at 4–96% | **all Standard** |
+| GLB_gc20 | 20% | **Not Accepted** |
+| GLB_gc25 | 25% | **Not Accepted** |
+| GLB_gc30 … gc80 (all 8) | 30–80% | **all Standard** |
 
-E2 is simultaneously **tighter than any vendor requires** and **applied at the
-wrong window**, while being the one GC rule hard enough to block emission. That
-is the substance of issue #45's X7.
+Twist accepts **80% GC as Standard** — not "complex", Standard — where IDT
+denies the same sequence. Its upper bound was never reached by this panel.
 
-**Not yet actioned**, deliberately: Twist's ladder is still outstanding, and
-their published geometry is 50 bp where IDT's is 100 bp. Encoding IDT's numbers
-now would mean revising immediately when Twist's arrive.
+### Stated rules
+
+- low GC: *"Increasing GC to **> 25%** will be optimal for success"*
+- repeat density: *"More than **15%** of your sequence is composed of small
+  repeats (**9bp or longer**)… break up repeats, perhaps by varying your codon
+  usage"* — independent corroboration of E6's `KMER_BP = 9`
+- positional: "Problematic area" spans, *"repeats or extreme high/low GC"*
+
+### Two things the data refused to confirm
+
+**The repeat metric is not what I reconstructed.** Reading "15% of your sequence
+composed of repeats" as *positions covered by any 9-mer occurring twice* gives
+25.2% for `GLB_gc20` (flagged) but **19.0% for `GLB_gc80`, which passed as
+Standard**. So that is not their metric. The data bounds it only loosely — the
+trigger sits between 19.0% and 25.2% *in those units*, or the definition differs
+entirely. Recorded as unresolved rather than guessed.
+
+**The "Problematic area" detector is not a windowed GC threshold.** For
+`GLB_gc25` the flagged spans were lower-GC than the rest (16.7% / 24.3% against
+26.5%), which fits. For `GLB_gc20` it **inverts**: the *unflagged* remainder was
+lower-GC (17.0%) and far more repetitive (45%) than the flagged spans. Sliding
+50 bp windows do not separate them either (flagged 18–30%, unflagged 16–30%).
+Two probes cannot resolve it, and it is not reducible to a windowed bound.
 
 ---
+
+## The combined result
+
+| global GC | Twist | IDT |
+|---|---|---|
+| 20% | Not Accepted | Denied (64.6) |
+| 25% | Not Accepted | Denied (27.7) |
+| 30 – 65% | Standard | clean |
+| 70% | Standard | Moderate (14.2) |
+| 75% | Standard | Moderate (21.2) |
+| 80% | **Standard** | **Denied** (28.2) |
+| **one 50 bp window, 4–96% GC** | **Standard ×8** | **green ×8** |
+
+Three conclusions, each resting on all 18 probes at both vendors:
+
+**1. A single extreme 50 bp window is irrelevant to both vendors.** Sixteen of
+sixteen passed, spanning 4% to 96% local GC. Neither vendor's verdict moved.
+
+**2. Global GC is what gates, and both reject the same low end.** ≤25% is
+refused by both; ≥30% is accepted by both.
+
+**3. The vendors diverge at the high end, sharply.** Twist ships 80% as
+Standard; IDT denies above ~77%. A single GC ceiling cannot serve both, which is
+[#43](https://github.com/masonberger4/BT5/issues/43) V3 (per-vendor evaluation)
+arriving as a measurement rather than an argument.
+
+---
+
+## What this says about E2 as shipped — X7, settled
+
+`e2_gc_band` ships **40–60% GC over a 50 bp window at `HARD_REPAIR`**, so the
+validator refuses to emit outside it. Against 18 probes at two vendors that is
+wrong in every dimension at once:
+
+| | E2 as shipped | measured |
+|---|---|---|
+| **quantity** | windowed GC | **global GC** — the windowed probes all passed |
+| **window** | 50 bp | **no vendor gates on a 50 bp window at all** |
+| **shape** | two-sided band | asymmetric, and vendor-specific at the top |
+| **bound** | 40–60% | both accept **30–65%** clean; Twist to **80%** |
+| **enforcement** | **HARD**, refuses to emit | Twist calls 80% *Standard* |
+
+E2 refuses to emit sequences **both vendors would manufacture without comment**.
+Its 60% ceiling is 20 points below Twist's demonstrated tolerance, applied to a
+geometry neither vendor uses, at the one enforcement level that blocks output.
+
+### The proposal
+
+Split the number into the two things it is doing:
+
+- **Hard bound → global GC, per vendor.** Reject below **28%** (both vendors
+  refuse 25%, accept 30%). Ceiling is vendor-specific: **77%** for IDT (from the
+  fitted denial threshold), none demonstrated for Twist. This belongs in the
+  vendor profile of
+  [#43](https://github.com/masonberger4/BT5/issues/43) V1, not in a module
+  constant.
+- **40–60% → steering target only.** It stays a design preference and keeps
+  pulling on codon choice through `steering_weight = 0.5`, which is what
+  actually selects codons. It stops being a gate.
+- **Keep a windowed floor, at IDT's geometry.** IDT states one: **100 bp window,
+  GC > 30%**. That is the only windowed rule any vendor was observed to apply,
+  and it is a floor with no ceiling — so the two-sided windowed band goes.
+
+That change makes a `(GGGGS)₆` construct emittable, which is the failure X1
+surfaced: its 62% window floor is inside every measured vendor tolerance and
+outside only E2's invented one.
 
 ## Caveats
 
