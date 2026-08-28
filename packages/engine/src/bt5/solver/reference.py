@@ -144,16 +144,44 @@ def cai_scorer(w: Mapping[str, float]) -> CodonScorer:
 
 
 def longest_repeat(seq: str, min_len: int = 8) -> tuple[str, int, int] | None:
-    """Longest exact substring occurring at least twice: (kmer, first, second)."""
+    """Longest exact substring occurring at least twice: (kmer, first, second).
+
+    Copies MAY overlap, which is the whole point on the sequences this exists to
+    measure. One-codon-per-amino-acid back-translation of a repetitive protein
+    produces a tandem array, and in a tandem array of period p the copies sit p
+    apart and overlap whenever the repeat is longer than p. Bounding the search
+    at n // 2 -- as though two copies had to be disjoint -- silently reports the
+    bound instead of the answer: max-CAI on a (G4S)3 linker gives a true 30 bp
+    repeat in 45 bp, and a n // 2 search calls it 22.
+
+    Searched by bisection rather than by counting down. "A repeat of length L
+    exists" is monotone -- a prefix of a repeat is a repeat at the same two
+    starts -- so bisection finds the largest true L in O(n log n) probes instead
+    of walking every length from n down, which is what the old ceiling was
+    really buying. This is the reference implementation, so it is allowed to be
+    slow; it is not allowed to be wrong.
+    """
     n = len(seq)
-    best: tuple[str, int, int] | None = None
-    for size in range(min(n // 2, 40), min_len - 1, -1):
+
+    def occurring_twice(size: int) -> tuple[str, int, int] | None:
         seen: dict[str, int] = {}
         for i in range(n - size + 1):
             k = seq[i : i + size]
             if k in seen:
                 return (k, seen[k], i)
             seen[k] = i
+        return None
+
+    best: tuple[str, int, int] | None = None
+    lo, hi = min_len, n - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        hit = occurring_twice(mid)
+        if hit is None:
+            hi = mid - 1
+        else:
+            best = hit
+            lo = mid + 1
     return best
 
 
