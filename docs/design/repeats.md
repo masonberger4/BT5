@@ -185,17 +185,25 @@ Hard rules: homopolymers ≥14 bp, no CcdB. Recommended GC 25–65%. Separately,
 Twist's design guidance recommends **avoiding direct repeats longer than 12–16
 bp** and **avoiding clusters of short repeats at 8–9 bp**.
 
-**IDT**: GC below 25% or above 75% is problematic; homopolymers of ≥10 A/T or
-≥6 G/C; and IDT publishes a numeric **complexity score with a hard cutoff — any
-sequence scoring above 10 cannot be synthesised**
-([IDT gBlocks FAQ](https://www.idtdna.com/pages/support/faqs/what-types-of-sequence-motifs-should-be-avoided-when-ordering-gblocks-gene-fragments-)).
+**IDT**: homopolymers of ≥10 A/T or ≥6 G/C, and a numeric **complexity score**
+gating the order. The cutoff is **≥24 = Denied**, with **12–24 accepted as
+"Moderate Complexity"** and below 12 clean — measured directly from the gBlocks
+plate-entry checker on 2026-08-28, not from published copy. See
+`docs/design/vendor-gc-calibration.md`.
+
+> ~~any sequence scoring above 10 cannot be synthesised~~ — **corrected
+> 2026-08-28.** That figure came from
+> [PMC10949351](https://pmc.ncbi.nlm.nih.gov/articles/PMC10949351/) and is wrong
+> against the live checker, whether because it was misreported or because IDT
+> has since moved it. The paper's *conclusion* is untouched: its constructs
+> scored 30–139, denied under either threshold.
 
 ### The gap that matters
 
 Read literally, Twist's published trigger tolerates a **200 bp** direct repeat.
 Actual behaviour is nothing like that. Eight constructs whose repeated elements
 ran **20 bp to 81 bp** were *all* rejected by IDT, with complexity scores of
-**30 to 139** against a cutoff of 10 — a 133 bp construct with a 2× repeat
+**30 to 139** against a denial cutoff of 24 — a 133 bp construct with a 2× repeat
 scored 30.2, and a 280 bp construct with an 8× repeat scored 139.2. Several also
 failed Twist's screen. The authors had to abandon commercial synthesis and
 assemble from ≤80 bp synthons by Golden Gate
@@ -213,10 +221,13 @@ current role — the *severe* tier, not the constraint. It also means:
   now backed by measured vendor *outcomes* (PMC10949351, and the 1,076-outcome
   random forest already cited at 2.E6), not just vendor copy. The badge should
   say which of the two a number rests on.
-- **The IDT complexity score is a published, thresholded, vendor-authoritative
-  scalar.** BT5 cannot compute it (proprietary), but it is the right shape for
-  the manual calibration loop the plan already schedules under
-  "vendor-complexity oracle".
+- **The IDT complexity score is a thresholded, vendor-authoritative scalar, and
+  it is partly reverse-engineerable.** BT5 cannot compute it in general, but the
+  checker states its own rules in its remediation text, and its global-GC
+  component has been solved exactly:
+  `score = 1.40 × GC% − 83.8`. That is the manual calibration loop the plan
+  schedules under "vendor-complexity oracle", actually run — see
+  `docs/design/vendor-gc-calibration.md`.
 
 ---
 
