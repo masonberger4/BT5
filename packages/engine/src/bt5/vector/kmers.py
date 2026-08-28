@@ -210,11 +210,25 @@ class ConstructKmerIndex:
 
         seen: set[tuple[int, int]] = set()
         out: list[RepeatPair] = []
+        # Every seed of one match shares the diagonal `b - a`, which neither
+        # extension direction changes. Remembering the span already grown on
+        # each diagonal turns the redundant seeds into a lookup instead of a
+        # re-walk -- the same device `inverted_repeats` uses below, and for the
+        # same reason. Without it a 6 kb tandem array walks the full text once
+        # per seed: 5,974 calls and 35.7M character comparisons, 1.9 seconds, to
+        # return a single pair. See `_grow`.
+        grown: dict[int, tuple[int, int]] = {}
         for positions in seeds.values():
             if len(positions) < 2:
                 continue
             for a, b in zip(positions, positions[1:], strict=False):
-                pair = self._extend(a, b, min_len)
+                diagonal = b - a
+                span = grown.get(diagonal)
+                if span is not None and span[0] <= a and a + min_len <= span[1]:
+                    continue  # already grown, from a seed of the same match
+                start_a, end_a = self._grow(a, b, min_len)
+                grown[diagonal] = (start_a, end_a)
+                pair = self._pair(start_a, end_a, diagonal, min_len)
                 if pair is None:
                     continue
                 key = (pair.first.start, pair.second.start)
@@ -227,15 +241,25 @@ class ConstructKmerIndex:
         out.sort(key=lambda p: (-p.length, p.first.start))
         return _drop_contained(out)[:MAX_PAIRS]
 
-    def _extend(self, a: int, b: int, min_len: int) -> RepeatPair | None:
-        """Grow a seeded match maximally in both directions.
+    def _grow(self, a: int, b: int, min_len: int) -> tuple[int, int]:
+        """The maximal match around a seed, as (start, end) of the FIRST copy.
 
-        On a circular construct the scan runs over the doubled sequence, so every
-        position trivially matches itself one full length away. Those pairs are
-        artefacts of the doubling, not repeats, and are dropped -- without that
-        check every k-mer in the plasmid reports as a repeat.
+        The second copy is recoverable as `start + (b - a)`: both walks move the
+        two positions together, so the diagonal is invariant. That is what lets
+        the caller memoise by diagonal, and it is why this is split out from
+        `_pair` -- the raw extent has to be recorded even when the pair is
+        rejected, or a tandem array whose period is under `min_len` re-walks the
+        whole text for every one of its thousands of seeds.
+
+        Both walks are unbounded on purpose. Bounding the rightward one by the
+        period looks safe, since `_pair` clamps a tandem match back to its period
+        anyway, but it is only half the cost -- measured on a 6 kb tandem array
+        the two directions are symmetric at 17.8M steps each -- and it would
+        shorten the recorded span and so defeat the memo that fixes the other
+        half. The leftward walk cannot be bounded at all without moving the
+        reported start, which is what deduplicates the array down to one finding.
         """
-        text, n = self._text, self._n
+        text = self._text
         start_a, start_b = a, b
         end_a, end_b = a + min_len, b + min_len
         while start_a > 0 and start_b > start_a and text[start_a - 1] == text[start_b - 1]:
@@ -244,17 +268,29 @@ class ConstructKmerIndex:
         while end_b < len(text) and text[end_a] == text[end_b]:
             end_a += 1
             end_b += 1
+        return start_a, end_a
+
+    def _pair(self, start_a: int, end_a: int, diagonal: int, min_len: int) -> RepeatPair | None:
+        """Turn a grown extent into a reportable pair, or reject it.
+
+        On a circular construct the scan runs over the doubled sequence, so every
+        position trivially matches itself one full length away. Those pairs are
+        artefacts of the doubling, not repeats, and are dropped -- without that
+        check every k-mer in the plasmid reports as a repeat.
+        """
+        n = self._n
+        start_b = start_a + diagonal
         length = end_a - start_a
         if length < min_len:
             return None
         if start_a >= n:
             return None  # both copies live in the doubled tail
-        if self._construct.is_circular and start_b - start_a == n:
+        if self._construct.is_circular and diagonal == n:
             return None  # the periodicity artefact
-        if start_b - start_a < length:
+        if diagonal < length:
             # Overlapping copies: a tandem array. Report the period, not the
             # smeared extension, so the geometry stays interpretable.
-            length = start_b - start_a
+            length = diagonal
             if length < min_len:
                 return None
         return RepeatPair(

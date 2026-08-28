@@ -69,6 +69,35 @@ class TestDuplicates:
         assert best.tandem
         assert best.length == 30, "the period is interpretable; a smeared extension is not"
 
+    def test_two_matches_on_the_same_diagonal_are_both_found(self) -> None:
+        """The memo holds one grown span per diagonal `b - a`, so two unrelated
+        repeat pairs that happen to share an offset must not shadow each other.
+
+        This is the one way the memo could lose a finding, so it is the one case
+        worth pinning: both pairs are 40 bp with their copies 140 bp apart, in
+        different parts of the construct.
+        """
+        first, second = dna(40, seed=61), dna(40, seed=67)
+        seq = (
+            first
+            + dna(100, seed=71)
+            + first
+            + dna(220, seed=73)
+            + second
+            + dna(100, seed=79)
+            + second
+            + dna(100, seed=83)
+        )
+        pairs = ConstructKmerIndex.of(construct(seq), 20).repeat_pairs(20)
+        starts = {p.first.start for p in pairs if p.length >= 40}
+        assert starts == {0, 400}, f"expected both diagonal-140 pairs, got {sorted(starts)}"
+
+    def test_a_kmer_at_three_sites_reports_every_adjacent_pair(self) -> None:
+        unit = dna(30, seed=89)
+        seq = unit + dna(90, seed=97) + unit + dna(90, seed=101) + unit
+        pairs = ConstructKmerIndex.of(construct(seq, circular=False), 20).repeat_pairs(20)
+        assert {p.first.start for p in pairs if p.length >= 30} == {0, 120}
+
     def test_whitelisted_regions_can_be_excluded(self) -> None:
         """ITRs and LTRs are an accepted design feature, reported separately."""
         unit = dna(60, seed=23)
@@ -256,6 +285,69 @@ class TestBiosecurity:
 
         params = list(inspect.signature(ConstructKmerIndex.of).parameters)
         assert params == ["c", "k"]
+
+
+class TestDirectRepeatCost:
+    """A tandem array must not cost a second per scan.
+
+    Every seed of one match lies on the same diagonal `b - a`, and both walks
+    move the two positions together, so without a memo each of thousands of
+    seeds re-walks the whole text. Measured on 6 kb of a 15 bp tandem unit:
+    5,974 calls, 35.7M character comparisons, 1.9 seconds -- to return one pair.
+    That is the workload BT5 exists for (antibodies, scFv/CAR, (GGGGS)n,
+    duplicate 2A peptides), and three repeat rules each paid it, against a 10 s
+    end-to-end budget.
+
+    The bounds are generous on purpose: they exist to catch a return to
+    re-walking every seed, not to police milliseconds on a shared runner.
+    """
+
+    def test_a_tandem_array_stays_affordable(self) -> None:
+        import time
+
+        seq = "GGTGGTGGTGGTAGC" * 400
+        start = time.perf_counter()
+        found = ConstructKmerIndex.of(construct(seq, circular=False), 12).repeat_pairs(12)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, f"6 kb tandem array took {elapsed:.2f}s (was 1.9s per seed-walk)"
+        assert found, "and it must still find the repeat it was always finding"
+
+    def test_a_period_under_min_len_is_also_memoised(self) -> None:
+        """(CAG)n is rejected on every seed because its period is under
+        `min_len`, so the extent has to be recorded even when the pair is not --
+        otherwise the rejected path re-walks the text thousands of times."""
+        import time
+
+        start = time.perf_counter()
+        found = ConstructKmerIndex.of(construct("CAG" * 2000, circular=False), 12).repeat_pairs(12)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, f"(CAG)x2000 took {elapsed:.2f}s"
+        assert found == [], "a 3 bp period is below min_len and is e7's finding, not this one"
+
+    def test_seeds_on_one_diagonal_are_grown_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The invariant itself, counted rather than timed.
+
+        A wall-clock bound loose enough not to flake on a shared runner is too
+        loose to catch this case -- 3 kb of tandem inside a 9 kb plasmid ran in
+        0.49s even while re-walking every seed. Counting the extensions is
+        exact: one maximal match on one diagonal is one walk, however many
+        thousands of seeds land inside it.
+        """
+        seq = dna(3000, seed=163) + "GGTGGTGGTGGTAGC" * 200 + dna(3000, seed=167)
+        calls = 0
+        original = ConstructKmerIndex._grow
+
+        def counted(self: ConstructKmerIndex, a: int, b: int, min_len: int) -> tuple[int, int]:
+            nonlocal calls
+            calls += 1
+            return original(self, a, b, min_len)
+
+        monkeypatch.setattr(ConstructKmerIndex, "_grow", counted)
+        ConstructKmerIndex.of(construct(seq), 15).repeat_pairs(15)
+        assert calls < 20, (
+            f"{calls} extensions for one tandem region: the diagonal memo is not holding, "
+            f"and the cost is back to O(seeds x text)"
+        )
 
 
 class TestInvertedRepeatCost:
