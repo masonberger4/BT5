@@ -243,31 +243,45 @@ class ConstructKmerIndex:
     ) -> list[InvertedRepeat]:
         """Maximal inverted repeats: a stem of at least `min_stem` within `max_loop`.
 
-        Maximal, like the direct-repeat scan and for the same reason. Seeding at
-        a fixed width and reporting the seed says a 60 bp stem is 20 bp, once per
-        offset -- 26 near-identical findings for one hairpin, each understating
-        it threefold. How long the stem actually is IS the finding.
+        Maximal, like the direct-repeat scan and for the same reason: seeding at
+        a fixed width and reporting the seed calls a 60 bp stem a 20 bp one, once
+        per offset.
+
+        The candidate window is what keeps that affordable. Indexing every k-mer
+        and pairing every occurrence is quadratic, and it degrades exactly where
+        a plasmid is most likely to need the answer: 800 bp of alternating AT
+        produced 464,799 raw pairs, of which 1,180 survived, and took 26 seconds.
+        Instead, for each 5' arm only the `max_loop` positions that could hold
+        the matching 3' arm are tested -- O(n x max_loop), and 0.02s on the same
+        input. The window is sound because a stem's INNERMOST seed already has
+        the final loop, so it always falls inside; growing outward from there
+        recovers the rest. That is what the outward pass in `_extend_stem` buys,
+        and why it is not the redundant half it looks like.
         """
         text = self._text
-        n, limit = self._n, len(self._text) - min_stem + 1
-        seeds: dict[str, list[int]] = {}
-        # Indexed over the WHOLE doubled text, not just the first turn: the 3'
-        # arm of a stem-loop straddling the origin lives past position n, and
-        # indexing only [0, n) drops every origin-spanning hairpin silently.
-        for i in range(max(0, limit)):
-            seeds.setdefault(text[i : i + min_stem], []).append(i)
-
+        n, end = self._n, len(self._text) - min_stem + 1
         seen: set[tuple[int, int]] = set()
+        # Every seed of one stem shares the value `a_start + b_end`, which both
+        # extension directions leave untouched. Remembering the span already
+        # grown on each such diagonal turns the redundant seeds into a lookup
+        # instead of a re-walk: without it, 4 kb of alternating AT re-extends
+        # across the whole run for every candidate and takes 27 seconds.
+        grown: dict[int, tuple[int, int]] = {}
         out: list[InvertedRepeat] = []
         probe_limit = n if self._construct.is_circular else max(0, n - min_stem + 1)
         for i in range(probe_limit):
             probe = reverse_complement(text[i : i + min_stem])
-            for j in seeds.get(probe, ()):
-                if j < i + min_stem:
-                    continue  # the arms would overlap
+            lo = i + min_stem  # closer than this and the arms would overlap
+            for j in range(lo, min(lo + max_loop + 1, end)):
+                if text[j : j + min_stem] != probe:
+                    continue
+                span = grown.get(i + j)
+                if span is not None and span[0] <= i and j + min_stem <= span[1]:
+                    continue  # already grown, from a seed of the same stem
                 stem = self._extend_stem(i, j, min_stem, max_loop)
                 if stem is None:
                     continue
+                grown[i + j] = (stem.first.start, stem.second.end)
                 key = (stem.first.start, stem.second.end)
                 if key in seen:
                     continue
@@ -279,26 +293,24 @@ class ConstructKmerIndex:
         return _drop_contained_stems(out)[:MAX_PAIRS]
 
     def _extend_stem(self, i: int, j: int, min_stem: int, max_loop: int) -> InvertedRepeat | None:
-        """Grow a seeded stem inward until the arms stop pairing.
+        """Grow a seeded stem to its full length, outward and then inward.
 
         A stem grows differently from a direct repeat. Its arms pair END TO END,
-        so they close on each other and eat the loop two bases at a time, rather
-        than sliding in the same direction. Comparing `text[a_end]` against
-        `text[b_start]`, as the direct-repeat extension does, would be checking
-        the wrong two bases.
+        so the 5' arm extends LEFT exactly when the 3' arm extends RIGHT, and
+        they can also close on each other, eating the loop two bases at a time.
+        Sliding both in the same direction, as the direct-repeat extension does,
+        would compare the wrong two bases.
 
-        Inward only, deliberately. Every seed position is indexed, so the
-        OUTERMOST seed of a stem is always among them, and from there closing
-        inward recovers the whole stem -- an outward pass as well changes no
-        result on any input (hairpin, perfect palindrome, homopolymer arm,
-        origin-spanning, linear, or a stem at position 0). Inner seeds yield
-        shorter nested stems instead of converging, which is what
-        `_drop_contained_stems` is for. If seed enumeration ever becomes sparse,
-        that invariant goes with it and this needs an outward pass again.
+        Both directions are load-bearing given the windowed search above. The
+        seed that falls inside the window is the innermost one, whose loop is
+        already final; outward is the only way from there to the full stem.
         """
         text, n = self._text, self._n
         a_start, a_end = i, i + min_stem
         b_start, b_end = j, j + min_stem
+        while a_start > 0 and b_end < len(text) and _complementary(text[a_start - 1], text[b_end]):
+            a_start -= 1
+            b_end += 1
         while b_start - a_end >= 2 and _complementary(text[a_end], text[b_start - 1]):
             a_end += 1
             b_start -= 1
@@ -325,10 +337,21 @@ def _complementary(x: str, y: str) -> bool:
     return _COMPLEMENT.get(x) == y
 
 
-def _drop_contained_stems(stems: list[InvertedRepeat]) -> list[InvertedRepeat]:
-    """Keep only maximal stems: one hairpin otherwise reports once per seed offset."""
+def _drop_contained_stems(
+    stems: list[InvertedRepeat], limit: int = MAX_PAIRS
+) -> list[InvertedRepeat]:
+    """Keep only maximal stems: one hairpin otherwise reports once per seed offset.
+
+    Stops at `limit`, which is also all the caller returns. The comparison is
+    against everything kept so far, so an unbounded pass is quadratic in the
+    number of findings -- 3.3 of the 9 seconds a 10 kb pure-AT sequence used to
+    cost. Input arrives sorted longest-first, so the stems that survive the cap
+    are the ones that would have survived anyway.
+    """
     kept: list[InvertedRepeat] = []
     for stem in stems:
+        if len(kept) >= limit:
+            break
         if any(
             k.first.start <= stem.first.start
             and stem.first.end <= k.first.end

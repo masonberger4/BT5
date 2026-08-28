@@ -253,3 +253,33 @@ class TestBiosecurity:
 
         params = list(inspect.signature(ConstructKmerIndex.of).parameters)
         assert params == ["c", "k"]
+
+
+class TestInvertedRepeatCost:
+    """A plasmid is allowed to be AT-rich, and the scan has to survive it.
+
+    Pairing every occurrence of every k-mer is quadratic, and it degrades
+    exactly where a user most wants the answer: an 800 bp alternating-AT run
+    produced 464,799 raw pairs and took 26 seconds. The bound is generous on
+    purpose -- it exists to catch a return to quadratic, not to police
+    milliseconds on a shared runner.
+    """
+
+    def test_a_pathological_at_run_stays_affordable(self) -> None:
+        import time
+
+        start = time.perf_counter()
+        found = ConstructKmerIndex.of(construct("AT" * 2000), 20).revcomp_pairs(20, 60)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 10.0, (
+            f"4 kb of alternating AT took {elapsed:.1f}s (was 27s when quadratic)"
+        )
+        assert len(found) <= 200, "the report must stay bounded however repetitive the input"
+
+    def test_a_long_at_region_inside_a_normal_plasmid_is_cheap(self) -> None:
+        seq = dna(3500, seed=151) + "AT" * 500 + dna(3500, seed=157)
+        import time
+
+        start = time.perf_counter()
+        ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        assert time.perf_counter() - start < 5.0
