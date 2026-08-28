@@ -35,6 +35,19 @@ from bt5.score.null import (
     percentile_of,
     synonymous_variant,
 )
+from bt5.score.order import (
+    DEFAULT_PLATE_NAME,
+    IDT_HEADERS,
+    PLATE_SIZE,
+    OrderEntry,
+    OrderError,
+    entry_name,
+    order_entries,
+    plates,
+    wells,
+    write_csv,
+    write_idt_plate,
+)
 from bt5.score.presets import (
     AAV,
     BACTERIAL,
@@ -58,6 +71,17 @@ from bt5.score.report import (
 )
 
 __all__ = [
+    "write_idt_plate",
+    "write_csv",
+    "wells",
+    "plates",
+    "order_entries",
+    "entry_name",
+    "OrderError",
+    "OrderEntry",
+    "PLATE_SIZE",
+    "IDT_HEADERS",
+    "DEFAULT_PLATE_NAME",
     "screening_burden",
     "render",
     "build_report",
