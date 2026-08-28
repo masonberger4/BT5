@@ -17,9 +17,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege, and verified rather than assumed: nothing in this workflow
+# uses the token -- no `gh`, no API call, no GITHUB_TOKEN reference. The write
+# scope was standing over-grant inherited by every third-party action in the
+# chain, and with it a compromised action could resolve review threads, which
+# silently clears the ruleset's `required_review_thread_resolution` -- the one
+# conversation gate a zero-approval solo-owner repo actually relies on.
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
 
 env:
   PYTHONHASHSEED: "0"   # set/dict iteration order must not vary between runs
@@ -67,12 +73,13 @@ jobs:
             echo "::error::Use np.random.default_rng(seed); global RNG breaks reproducibility"
             exit 1
           fi
-      - name: Ban paths filters on workflows owning a required check
-        run: |
-          if awk '/^on:/,/^jobs:/' .github/workflows/ci.yml | grep -qE '^\s+paths:'; then
-            echo "::error::ci.yml owns a required check and must not filter on paths"
-            exit 1
-          fi
+      # Two of docs/PLAN.md's eight silent killers, both properties of the
+      # workflow files: a path filter on a workflow owning a required check, and
+      # a job missing from the gate's `needs`. Parser-based rather than grep --
+      # the shell version this replaced passed `paths-ignore:`, flow-style
+      # filters and a quoted `"on":` key, each of which deadlocks identically.
+      - name: Guard the merge gate
+        run: .venv/bin/python .github/scripts/check-workflow-gate.py
 
   invariants:
     name: invariants
