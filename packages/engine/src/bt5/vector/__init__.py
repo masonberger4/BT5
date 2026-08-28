@@ -53,7 +53,13 @@ from bt5.vector.io import (
     read_vector,
     write_genbank,
 )
-from bt5.vector.kmers import ConstructKmerIndex, RepeatPair, RiskBand, repeat_risk
+from bt5.vector.kmers import (
+    ConstructKmerIndex,
+    InvertedRepeat,
+    RepeatPair,
+    RiskBand,
+    repeat_risk,
+)
 from bt5.vector.locations import (
     LocationError,
     ParsedLocation,
@@ -82,6 +88,7 @@ __all__ = [
     "NoteKind",
     "SiteCandidate",
     "InsertionSite",
+    "InvertedRepeat",
     "IntervalRemapper",
     "LocationError",
     "ParsedLocation",
