@@ -194,6 +194,16 @@ _REPEAT_NOTE = (
     "carries more weight here than in a preset with no packaging step."
 )
 
+_POLYA_NOTE = (
+    "Above the rule's own default, because in a packaged modality this is not a "
+    "preference. An internal polyA signal raised expression 3-6.5x and cut "
+    "FUNCTIONAL TITER 8-9x with CMV or EF1a (PubMed 18627247): the genome is "
+    "truncated before packaging, so the assay a user runs says the construct got "
+    "BETTER while the thing they need collapsed. d4's own default weight has to "
+    "cover the plasmid case too, where the same hexamer costs a little "
+    "expression and nothing else."
+)
+
 _NATIVE_NOTE = (
     "Weighted below the mechanical objectives on purpose. Nine benchmarked "
     "optimizers were a coin flip against native sequence (Ranaghan 2021), and an "
@@ -217,7 +227,7 @@ LENTIVIRAL: Preset = Preset(
     modality=Modality.LENTIVIRAL,
     entries=(
         WeightEntry("2.F2", 1.0, _REPEAT_NOTE),
-        WeightEntry("2.G1", 1.0, _REPEAT_NOTE),
+        WeightEntry("2.D4", 1.0, _POLYA_NOTE),
         WeightEntry("2.C1", 0.2, _NATIVE_NOTE),
         WeightEntry("2.C3", 0.3, _NATIVE_NOTE),
     ),
@@ -244,7 +254,7 @@ AAV: Preset = Preset(
     modality=Modality.AAV,
     entries=(
         WeightEntry("2.F2", 1.0, _REPEAT_NOTE),
-        WeightEntry("2.G1", 1.0, _REPEAT_NOTE),
+        WeightEntry("2.D4", 1.0, _POLYA_NOTE),
         WeightEntry("2.C1", 0.2, _NATIVE_NOTE),
         WeightEntry("2.C3", 0.3, _NATIVE_NOTE),
     ),
