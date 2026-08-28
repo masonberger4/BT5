@@ -76,7 +76,8 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
-from bt5.rules.fragment import VENDOR_ADAPTERS, Fragment, fragments
+from bt5.rules.fragment import Fragment, fragments
+from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
 
 #: SD of GC is taken over 100 bp windows -- the window the feature was ranked at.
 DGC_WINDOW_BP = 100
@@ -92,7 +93,6 @@ WARN_RATIO = 1.5
 HARD_RATIO = 2.0
 
 MAX_FINDINGS = 200
-DEFAULT_VENDOR = "twist_gene_fragment"
 
 
 def gc_windows(seq: str, window: int) -> list[float]:
@@ -266,7 +266,7 @@ class GCExtent:
             "vendor": {
                 "type": "string",
                 "default": DEFAULT_VENDOR,
-                "enum": sorted(VENDOR_ADAPTERS),
+                "enum": list(all_keys()),
                 "description": (
                     "Which vendor configuration the fragment is ordered as. Only "
                     "the adapter-on options carry adapters, and adapter GC counts "
@@ -294,8 +294,7 @@ class GCExtent:
                 f"warn_ratio {warn_ratio} is at or below chance (1.0), which would "
                 f"report every sequence including a perfectly uniform one"
             )
-        if vendor not in VENDOR_ADAPTERS:
-            raise ValueError(f"unknown vendor {vendor!r}; have {sorted(VENDOR_ADAPTERS)}")
+        profile(vendor)  # raises on an unknown key, with the real ones listed
         self.dgc_window = dgc_window
         self.extent_window = extent_window
         self.warn_ratio = warn_ratio
@@ -315,7 +314,7 @@ class GCExtent:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = VENDOR_ADAPTERS[self.vendor]
+        adapters = profile(self.vendor).adapters
         breaches: list[Breach] = []
         windows: list[tuple[Interval, float]] = []
         worst = 0.0

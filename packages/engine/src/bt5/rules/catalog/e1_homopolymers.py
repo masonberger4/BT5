@@ -37,16 +37,12 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
+from bt5.rules.vendors import DEFAULT_VENDOR, PROFILES, orderable, orderable_keys
 
-#: Longest run each vendor accepts without complaint, as (A/T, G/C).
-#: VENDOR_ASSERTED and dated: Twist moved its homopolymer limit from 14 to 30 bp
-#: between 2023 and 2026, so these are the numbers most likely to be stale.
-VENDOR_LIMITS: Mapping[str, tuple[int, int]] = {
-    "idt_gblocks": (9, 5),
-    "twist_standard": (13, 13),
-    "genscript": (15, 15),
-}
-DEFAULT_VENDOR = "idt_gblocks"
+#: The limits the default configuration carries, for the schema's advertised
+#: defaults. Read from the profile rather than restated, so a corrected vendor
+#: number cannot leave the documented default disagreeing with the enforced one.
+_DEFAULT = PROFILES[DEFAULT_VENDOR]
 
 
 def _maximal_runs(seq: str, circular: bool) -> Iterator[tuple[int, int, str]]:
@@ -129,12 +125,22 @@ class Homopolymers:
     param_schema: ClassVar[Mapping[str, object]] = {
         "type": "object",
         "properties": {
-            "max_at_run": {"type": "integer", "default": 9, "minimum": 3},
-            "max_gc_run": {"type": "integer", "default": 5, "minimum": 3},
+            "max_at_run": {
+                "type": "integer",
+                "default": _DEFAULT.homopolymer_at,
+                "minimum": 3,
+            },
+            "max_gc_run": {
+                "type": "integer",
+                "default": _DEFAULT.homopolymer_gc,
+                "minimum": 3,
+            },
             "vendor": {
                 "type": "string",
                 "default": DEFAULT_VENDOR,
-                "enum": sorted(VENDOR_LIMITS),
+                # Orderable only: "no vendor chosen" has no run limits to preset,
+                # and inventing some would be answering an unasked question.
+                "enum": list(orderable_keys()),
                 "description": "Preset limits. Explicit max_at_run/max_gc_run override it.",
             },
         },
@@ -146,12 +152,12 @@ class Homopolymers:
         max_gc_run: int | None = None,
         vendor: str = DEFAULT_VENDOR,
     ) -> None:
-        if vendor not in VENDOR_LIMITS:
-            raise ValueError(f"unknown vendor {vendor!r}; have {sorted(VENDOR_LIMITS)}")
-        at_limit, gc_limit = VENDOR_LIMITS[vendor]
+        p = orderable(vendor)
+        assert p.homopolymer_at is not None  # both guaranteed by `orderable`
+        assert p.homopolymer_gc is not None
         self.vendor = vendor
-        self.max_at_run = at_limit if max_at_run is None else max_at_run
-        self.max_gc_run = gc_limit if max_gc_run is None else max_gc_run
+        self.max_at_run = p.homopolymer_at if max_at_run is None else max_at_run
+        self.max_gc_run = p.homopolymer_gc if max_gc_run is None else max_gc_run
         if self.max_at_run < 3 or self.max_gc_run < 3:
             raise ValueError(
                 f"run limits below 3 forbid ordinary sequence: "

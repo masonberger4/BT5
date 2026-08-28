@@ -78,7 +78,8 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
-from bt5.rules.fragment import VENDOR_ADAPTERS, Fragment, fragments
+from bt5.rules.fragment import Fragment, fragments
+from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
 
 #: The model's k. Not tunable downward without leaving the cited feature behind.
 KMER_BP = 9
@@ -198,8 +199,8 @@ class RepeatDensity:
             },
             "vendor": {
                 "type": "string",
-                "default": "twist_gene_fragment",
-                "enum": sorted(VENDOR_ADAPTERS),
+                "default": DEFAULT_VENDOR,
+                "enum": list(all_keys()),
                 "description": (
                     "Which vendor product the fragment is ordered as. Only the "
                     "adapter-on options carry adapters; a plain Gene Fragment "
@@ -214,7 +215,7 @@ class RepeatDensity:
         k: int = KMER_BP,
         window: int = WINDOW_BP,
         window_flag: float = WINDOW_FLAG,
-        vendor: str = "twist_gene_fragment",
+        vendor: str = DEFAULT_VENDOR,
     ) -> None:
         if k < 6:
             raise ValueError(
@@ -225,8 +226,7 @@ class RepeatDensity:
             raise ValueError(f"window {window} must hold at least two {k}-mers")
         if not 0.0 < window_flag <= 1.0:
             raise ValueError(f"window_flag must be a fraction in (0, 1], got {window_flag}")
-        if vendor not in VENDOR_ADAPTERS:
-            raise ValueError(f"unknown vendor {vendor!r}; have {sorted(VENDOR_ADAPTERS)}")
+        profile(vendor)  # raises on an unknown key, with the real ones listed
         self.k = k
         self.window = window
         self.window_flag = window_flag
@@ -243,7 +243,7 @@ class RepeatDensity:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = VENDOR_ADAPTERS[self.vendor]
+        adapters = profile(self.vendor).adapters
         breaches: list[Breach] = []
         windows: list[tuple[Interval, float]] = []
         worst_density = 0.0

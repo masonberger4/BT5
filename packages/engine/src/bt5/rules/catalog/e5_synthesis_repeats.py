@@ -57,7 +57,8 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
-from bt5.rules.fragment import VENDOR_ADAPTERS, Fragment, fragments
+from bt5.rules.fragment import Fragment, fragments
+from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
 
 #: The shortest repeat that can reach a 60 C duplex at any composition
 #: (pure-GC 12-mer = 58.7 C, pure-GC 10-mer = 49.7 C). Also the brief's warn floor.
@@ -184,8 +185,8 @@ class SynthesisRepeats:
             "anneal_c": {"type": "number", "default": ANNEAL_C},
             "vendor": {
                 "type": "string",
-                "default": "twist_gene_fragment",
-                "enum": sorted(VENDOR_ADAPTERS),
+                "default": DEFAULT_VENDOR,
+                "enum": list(all_keys()),
                 "description": (
                     "Which vendor product the fragment is ordered as. Only the "
                     "adapter-on options carry adapters; a plain Gene Fragment "
@@ -200,7 +201,7 @@ class SynthesisRepeats:
         min_len: int = MIN_LENGTH_BP,
         hard_len: int = HARD_LENGTH_BP,
         anneal_c: float = ANNEAL_C,
-        vendor: str = "twist_gene_fragment",
+        vendor: str = DEFAULT_VENDOR,
     ) -> None:
         if min_len < MIN_LENGTH_BP:
             raise ValueError(
@@ -210,8 +211,7 @@ class SynthesisRepeats:
             )
         if hard_len < min_len:
             raise ValueError(f"hard_len {hard_len} must not be below min_len {min_len}")
-        if vendor not in VENDOR_ADAPTERS:
-            raise ValueError(f"unknown vendor {vendor!r}; have {sorted(VENDOR_ADAPTERS)}")
+        profile(vendor)  # raises on an unknown key, with the real ones listed
         if not 30.0 <= anneal_c <= 80.0:
             raise ValueError(f"anneal_c {anneal_c} is outside any real PCR protocol")
         self.min_len = min_len
@@ -233,7 +233,7 @@ class SynthesisRepeats:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = VENDOR_ADAPTERS[self.vendor]
+        adapters = profile(self.vendor).adapters
         breaches: list[Breach] = []
         worst = "warn"
         scanned = 0
