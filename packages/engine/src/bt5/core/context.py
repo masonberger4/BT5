@@ -73,6 +73,13 @@ class ContextSlot:
     host: HostId
     modality: Modality
     table_id: int  # EXPLICIT. Never defaulted. See TranslationUnit for why.
+    #: Which strand this slot's directional models read, RELATIVE TO THE
+    #: CASSETTE -- not to the plasmid. +1 is the cassette's own sense strand,
+    #: which is what a producer or target slot wants: an internal polyA signal
+    #: matters on the RNA that actually gets made. Resolve it into construct
+    #: coordinates with `spec.strand_for(ctx, slot)`, which composes it with
+    #: `DesignContext.cassette_orientation`; reading this field directly is the
+    #: bug that makes a reverse-cloned cassette's polyA analysis come back clean.
     strand_of_interest: Strand = 1
     enabled: bool = True
 

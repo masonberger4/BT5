@@ -77,6 +77,7 @@ def gc_breaches(c: Construct) -> tuple[Breach, ...]:
                 Interval(start, start + WIN),
                 dev,
                 f"GC {f:.1%} at {start} ({side})",
+                fixable_by_codon_choice=c.overlaps_editable(Interval(start, start + WIN)),
                 detail={"binding_side": side},
             )
         )
@@ -155,7 +156,7 @@ class TestGcSteering:
 
 class TestLocalization:
     def test_window_policy_extends_by_window_minus_one(self) -> None:
-        b = Breach("x", Interval(60, 90), 0.1, "")
+        b = Breach("x", Interval(60, 90), 0.1, "", fixable_by_codon_choice=True)
         iv = localize(
             b,
             LocalizationPolicy.WINDOW_MINUS_1,
@@ -168,7 +169,7 @@ class TestLocalization:
         assert iv.end == 90 + 29
 
     def test_motif_policy_extends_by_motif_len_minus_one(self) -> None:
-        b = Breach("x", Interval(60, 66), 1.0, "")
+        b = Breach("x", Interval(60, 66), 1.0, "", fixable_by_codon_choice=True)
         iv = localize(
             b,
             LocalizationPolicy.MOTIF_LEN_MINUS_1,
@@ -181,7 +182,7 @@ class TestLocalization:
         assert iv.end == 71
 
     def test_whole_scope_covers_the_construct(self) -> None:
-        b = Breach("x", Interval(10, 20), 1.0, "")
+        b = Breach("x", Interval(10, 20), 1.0, "", fixable_by_codon_choice=True)
         iv = localize(
             b,
             LocalizationPolicy.WHOLE_SCOPE,

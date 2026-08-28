@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bt5.core.registry import all_specs, discover, get
 from bt5.core.spec import Enforcement, Evidence
+from bt5.core.types import Interval
 
 
 def test_discovery_finds_the_reference_rules() -> None:
@@ -54,3 +55,50 @@ def test_restriction_rule_declares_forward_motifs_only() -> None:
                 f"{motif} and its reverse complement {rc} are both listed; the "
                 f"solver already closes the set under revcomp"
             )
+
+
+def test_a_backbone_site_is_reported_but_not_offered_to_the_solver() -> None:
+    """`fixable_by_codon_choice` has to be COMPUTED from where the hit landed.
+
+    Both reference rules scan the whole assembled construct, so they find things
+    in the user's own backbone. Those are worth reporting and impossible to
+    recode, and marking them fixable sends the solver after bases it may not
+    touch until the mutation space is empty -- which surfaces as an
+    infeasibility certificate for a design that was never infeasible.
+    """
+    from bt5.core.context import (
+        BiosecurityVerdict,
+        ContextSlot,
+        DesignContext,
+        HostId,
+        Modality,
+    )
+    from bt5.core.types import Construct, Segment, SegmentKind, Topology
+
+    discover()
+    # EcoRI in the CDS, BamHI out in the backbone. Lengths kept a multiple of 3
+    # so the CDS stays in frame.
+    cds = "ATGAAAGAATTCAAACCCTAA"  # 21 nt, GAATTC at 6
+    backbone = "TTTGGATCCTTT"  # GGATCC at 3 -> construct offset 24
+    c = Construct(
+        sequence=cds + backbone,
+        topology=Topology.CIRCULAR,
+        segments=(
+            Segment(Interval(0, len(cds)), SegmentKind.DESIGNABLE_CDS, "cds"),
+            Segment(Interval(len(cds), len(cds) + len(backbone)), SegmentKind.BACKBONE, "vector"),
+        ),
+    )
+    ctx = DesignContext(
+        slots=(ContextSlot("propagation", HostId.E_COLI_K12, Modality.PLASMID_TRANSIENT, 11),),
+        cassette_orientation=1,
+        seed=1,
+        screen=BiosecurityVerdict("not_run"),
+    )
+
+    breaches = get("d1_restriction_sites")(("EcoRI", "BamHI")).evaluate(c, ctx, None).breaches
+    by_enzyme = {b.detail["enzyme"]: b for b in breaches}
+    assert {"EcoRI", "BamHI"} <= by_enzyme.keys(), "both sites must still be REPORTED"
+    assert by_enzyme["EcoRI"].fixable_by_codon_choice, "inside the CDS: recode it"
+    assert not by_enzyme["BamHI"].fixable_by_codon_choice, (
+        "in the user's backbone: real, reported, and not the solver's to chase"
+    )

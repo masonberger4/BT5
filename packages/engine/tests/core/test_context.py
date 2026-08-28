@@ -10,6 +10,8 @@ from bt5.core.context import (
     HostId,
     Modality,
 )
+from bt5.core.spec import strand_for
+from bt5.core.types import Strand
 
 
 def slot(
@@ -82,6 +84,48 @@ class TestDesignContext:
         disabled = ContextSlot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1, enabled=False)
         ctx = self.ctx(slot("propagation"), disabled)
         assert len(ctx.active_slots) == 1
+
+
+class TestStrandFor:
+    """`cassette_orientation` was a required field nothing in BT5 read.
+
+    `strand_of_interest` is cassette-relative, so it only becomes a construct
+    strand once composed with how the cassette was cloned in. Reading it raw --
+    which is what `strand_for` used to do -- runs polyA and splice-donor
+    analysis on the wrong strand of a reverse-oriented cassette and returns
+    clean, which is the exact failure its own docstring warns about.
+    """
+
+    def ctx(self, orientation: Strand, *slots: ContextSlot) -> DesignContext:
+        return DesignContext(
+            slots=slots or (slot(),),
+            cassette_orientation=orientation,
+            seed=42,
+            screen=BiosecurityVerdict("not_run"),
+        )
+
+    def test_a_forward_cassette_is_unchanged(self) -> None:
+        s = slot()
+        assert strand_for(self.ctx(1, s), s) == 1
+
+    def test_a_reverse_cassette_flips_the_sense_strand(self) -> None:
+        producer = ContextSlot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)
+        assert producer.strand_of_interest == 1, "the slot still wants the cassette's sense"
+        assert strand_for(self.ctx(-1, producer), producer) == -1
+
+    def test_both_reversed_composes_back_to_forward(self) -> None:
+        antisense = ContextSlot("target", HostId.HUMAN, Modality.LENTIVIRAL, 1, -1)
+        assert strand_for(self.ctx(-1, antisense), antisense) == 1
+
+    def test_an_antisense_slot_on_a_forward_cassette_reads_reverse(self) -> None:
+        antisense = ContextSlot("target", HostId.HUMAN, Modality.LENTIVIRAL, 1, -1)
+        assert strand_for(self.ctx(1, antisense), antisense) == -1
+
+    def test_the_orientation_actually_reaches_the_answer(self) -> None:
+        """The regression guard: flipping only the cassette orientation, with
+        the slot untouched, must change what a directional model reads."""
+        s = slot()
+        assert strand_for(self.ctx(1, s), s) != strand_for(self.ctx(-1, s), s)
 
 
 class TestBiosecurityVerdict:
