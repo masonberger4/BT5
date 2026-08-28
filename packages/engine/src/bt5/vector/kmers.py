@@ -30,9 +30,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from bt5.core.types import Construct, Interval, reverse_complement
+
+if TYPE_CHECKING:
+    from bt5.core.services import KmerIndex
 
 RiskBand = Literal["low", "moderate", "high"]
 
@@ -162,10 +165,34 @@ class ConstructKmerIndex:
     def k(self) -> int:
         return self._k
 
+    # -- the two protocol methods ------------------------------------------
+    #
+    # `KmerIndex` in bt5.core is what a RULE sees, and it is deliberately
+    # narrow: two intervals per finding and nothing else. The rich forms below
+    # (`repeat_pairs`, `inverted_repeats`) carry this lane's own value types,
+    # which the frozen contract does not know about and should not have to.
+    #
+    # Both adapters are thin on purpose. The geometry a rule needs is
+    # recoverable from the pair -- a stem is the first arm's length, a loop is
+    # the gap between the arms -- so narrowing here costs a caller nothing and
+    # keeps `InvertedRepeat` out of a contract that would then have to freeze it.
+
     def duplicates(self, min_len: int) -> Iterator[tuple[Interval, Interval]]:
         """Direct repeat pairs at least `min_len` long, satisfying the protocol."""
         for pair in self.repeat_pairs(min_len):
             yield pair.first, pair.second
+
+    def revcomp_pairs(self, min_stem: int, max_loop: int) -> Iterator[tuple[Interval, Interval]]:
+        """Inverted repeat arm pairs, satisfying the protocol.
+
+        This name previously belonged to the rich form and returned
+        `list[InvertedRepeat]`, so `ConstructKmerIndex` did not in fact satisfy
+        `KmerIndex` -- a rule reaching through `Services.kmer` would have been
+        handed value objects where the contract promised tuples. Nothing caught
+        it because nothing had yet consumed the protocol.
+        """
+        for repeat in self.inverted_repeats(min_stem, max_loop):
+            yield repeat.first, repeat.second
 
     def repeat_pairs(self, min_len: int, *, exclude: Sequence[Interval] = ()) -> list[RepeatPair]:
         """Maximal exact direct repeats, longest first, with their geometry.
@@ -238,7 +265,7 @@ class ConstructKmerIndex:
             tandem=start_b - (start_a + length) <= 0,
         )
 
-    def revcomp_pairs(
+    def inverted_repeats(
         self, min_stem: int, max_loop: int, *, exclude: Sequence[Interval] = ()
     ) -> list[InvertedRepeat]:
         """Maximal inverted repeats: a stem of at least `min_stem` within `max_loop`.
@@ -382,3 +409,17 @@ def _drop_contained(pairs: list[RepeatPair]) -> list[RepeatPair]:
             continue
         kept.append(pair)
     return kept
+
+
+if TYPE_CHECKING:
+    # `ConstructKmerIndex` is the only implementation of the frozen `KmerIndex`
+    # protocol, and for a while it did not satisfy it: `revcomp_pairs` named the
+    # rich form and returned `list[InvertedRepeat]` where the contract promises
+    # `Iterator[tuple[Interval, Interval]]`. Nothing caught it because nothing
+    # had yet consumed the protocol.
+    #
+    # This assertion lives in src/ rather than in a test on purpose. mypy is
+    # configured over `packages/engine/src/bt5` only, so the same line written
+    # in a test file type-checks nowhere and proves nothing -- which is exactly
+    # the shape of the gap it exists to close.
+    _protocol_conformance: type[KmerIndex] = ConstructKmerIndex
