@@ -112,20 +112,27 @@ class RestrictionSites:
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
         hits = find_motifs(c, list(self.enzymes.values()))
         by_motif = {v: k for k, v in self.enzymes.items()}
-        breaches = tuple(
-            Breach(
-                spec_id=self.id,
-                interval=Interval(pos, pos + len(motif)),
-                magnitude=1.0,
-                message=f"{by_motif.get(motif, '?')} site {motif!r} at {pos}",
-                detail={"enzyme": by_motif.get(motif, "?"), "motif": motif},
+        breaches = []
+        for motif, pos in hits:
+            iv = Interval(pos, pos + len(motif))
+            breaches.append(
+                Breach(
+                    spec_id=self.id,
+                    interval=iv,
+                    magnitude=1.0,
+                    message=f"{by_motif.get(motif, '?')} site {motif!r} at {pos}",
+                    # A site the user's own backbone already carries is real and
+                    # worth reporting, but no codon can remove it. Saying so is
+                    # the difference between a line in the report and the solver
+                    # exhausting the mutation space over a base it may not touch.
+                    fixable_by_codon_choice=c.overlaps_editable(iv),
+                    detail={"enzyme": by_motif.get(motif, "?"), "motif": motif},
+                )
             )
-            for motif, pos in hits
-        )
         return Evaluation(
             spec_id=self.id,
             passes=not breaches,
             raw_score=float(len(breaches)),
-            breaches=breaches,
+            breaches=tuple(breaches),
             n_evaluated=c.length,
         )

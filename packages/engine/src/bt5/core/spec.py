@@ -149,8 +149,20 @@ class Breach:
     interval: Interval
     magnitude: float  # rule-native; > 0 means worse
     message: str  # must name the exact offending substring
+    #: Can the solver do anything about this by choosing different codons?
+    #:
+    #: REQUIRED, with no default, because both defaults are wrong. Defaulting
+    #: True sends the solver after a uAUG in the user's own 5'UTR, an AAV size
+    #: overflow or a toxic TM segment -- none of which any codon can move -- and
+    #: it exhausts the mutation space and reports infeasible on a design that
+    #: was fine. Defaulting False silently drops real, fixable motifs from the
+    #: solver until the independent validator refuses to emit at the very end.
+    #:
+    #: A rule author knows this about their own finding and nobody downstream
+    #: can recover it, so the contract makes them say it. False routes the
+    #: breach to the advisor instead of the solver.
+    fixable_by_codon_choice: bool
     slot_role: str | None = None  # "propagation" | "producer" | "target"
-    fixable_by_codon_choice: bool = True
     detail: Mapping[str, float | str] = field(default_factory=dict)
 
 
@@ -245,11 +257,32 @@ class Spec(Protocol):
 
 
 def strand_for(ctx: DesignContext, slot: ContextSlot) -> Strand:
-    """Resolve the strand a directional model must read.
+    """Resolve, in CONSTRUCT coordinates, the strand a directional model reads.
 
     For a reverse-oriented lentiviral cassette the packaged genome is the reverse
     complement of the cassette, so a rule that hard-codes the forward strand runs
     its polyA and splice-donor analysis exactly backwards and returns clean.
     Rules must call this rather than assuming.
+
+    Two independent facts compose here, which is the whole reason this is a
+    function and not an attribute read:
+
+    - `ctx.cassette_orientation` -- which strand of the PLASMID the cassette
+      reads on, decided by how the insert was cloned in.
+    - `slot.strand_of_interest` -- which strand relative to the CASSETTE this
+      slot's directional models care about. +1, the default, is the cassette's
+      own sense strand; that is what a producer or target slot wants, because
+      an internal polyA signal matters on the RNA that is actually made.
+
+    Composing them is the only way a cassette-relative preference survives being
+    cloned in backwards. `strand_of_interest` alone is meaningless without an
+    orientation to measure it against, and this function previously returned it
+    unchanged -- so `cassette_orientation` was a required field of the context
+    that nothing in BT5 read, and the failure the docstring above warns about
+    was live for every reverse-oriented cassette.
+
+    On the common forward cassette the product is the identity, so nothing about
+    a forward-oriented design changes.
     """
-    return slot.strand_of_interest
+    composed = ctx.cassette_orientation * slot.strand_of_interest
+    return 1 if composed == 1 else -1

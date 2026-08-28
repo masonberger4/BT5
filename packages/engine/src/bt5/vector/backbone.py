@@ -508,14 +508,10 @@ class VectorBackbone:
         """Wrap-aware containment; both intervals live in this vector's frame.
 
         A leader derived across the origin is stored with `end > length`, while
-        the RBS inside it is stored plainly, so plain comparison says no. Trying
-        the inner interval shifted a full turn is what makes the two agree.
+        the RBS inside it is stored plainly, so plain comparison says no. The
+        core predicate tries the extra turn that makes the two agree.
         """
-        shifts = (0, self.length) if self.is_circular else (0,)
-        return any(
-            outer.start <= inner.start + shift and inner.end + shift <= outer.end
-            for shift in shifts
-        )
+        return outer.contains(inner, self.length, self.is_circular)
 
     def _rbs_notes(
         self,
@@ -578,7 +574,19 @@ class VectorBackbone:
         return tuple(out)
 
     def _overlaps_intron(self, iv: Interval) -> bool:
-        return any(f.interval.overlaps(iv) for f in self.features_of("intron"))
+        """Does `iv` touch an annotated intron?
+
+        A false answer here is expensive in one direction: a 5'UTR that in fact
+        runs into an annotated intron gets treated as plain leader sequence, and
+        the intron -- one of the more reliable mammalian expression levers -- is
+        handed to the splice-site scanner as something to remove. This used the
+        linear predicate until the wrap-aware one existed, so an intron sitting
+        across the origin never registered at all.
+        """
+        return any(
+            f.interval.overlaps(iv, self.length, self.is_circular)
+            for f in self.features_of("intron")
+        )
 
     # -- transforms --------------------------------------------------------
 

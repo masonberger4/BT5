@@ -150,6 +150,10 @@ class GCBand:
                         f"GC {frac:.1%} in the {self.window}bp window at {start} is outside "
                         f"[{self.gc_min:.0%}, {self.gc_max:.0%}] ({side} bound binding)"
                     ),
+                    # A window lying wholly in the backbone is the user's vector
+                    # telling them something, not a target for the DP: no codon
+                    # in the CDS can move it.
+                    fixable_by_codon_choice=c.overlaps_editable(iv),
                     detail={"gc": frac, "binding_side": side},
                 )
             )

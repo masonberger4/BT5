@@ -36,8 +36,48 @@ class TestInterval:
         assert Interval(8, 14).wraps(10)
 
     def test_overlaps_is_half_open(self) -> None:
-        assert Interval(0, 5).overlaps(Interval(4, 9))
-        assert not Interval(0, 5).overlaps(Interval(5, 9)), "half-open ranges must not touch"
+        assert Interval(0, 5).overlaps(Interval(4, 9), 100, False)
+        assert not Interval(0, 5).overlaps(Interval(5, 9), 100, False), (
+            "half-open ranges must not touch"
+        )
+
+    def test_overlaps_finds_a_hit_across_the_origin(self) -> None:
+        """The case the linear predicate got wrong, in both argument orders.
+
+        A feature stored as [4900, 5100) on a 5000 bp plasmid and a hit at
+        [10, 40) occupy the same bases. Both are already in BT5's one canonical
+        representation, so nothing a caller could do before the comparison makes
+        plain [start, end) arithmetic say so.
+        """
+        wrapping = Interval(4900, 5100)
+        plain = Interval(10, 40)
+        assert wrapping.overlaps(plain, 5000, True)
+        assert plain.overlaps(wrapping, 5000, True), "the wrap may be on either side"
+        assert not wrapping.overlaps(plain, 5000, False), (
+            "a linear construct has no origin to span, so the same pair must not overlap"
+        )
+
+    def test_overlaps_does_not_invent_a_hit_a_full_turn_away(self) -> None:
+        wrapping = Interval(4900, 5100)
+        assert not wrapping.overlaps(Interval(200, 300), 5000, True)
+
+    def test_contains_is_wrap_aware_and_requires_the_whole_interval(self) -> None:
+        outer = Interval(4900, 5100)
+        assert outer.contains(Interval(10, 40), 5000, True)
+        assert outer.contains(Interval(4950, 4980), 5000, True)
+        assert not outer.contains(Interval(90, 110), 5000, True), (
+            "the tail past 5100 is outside, so this is not wholly contained"
+        )
+        assert not outer.contains(Interval(10, 40), 5000, False)
+
+    def test_the_predicates_ignore_strand(self) -> None:
+        """They answer 'which bases'. A rule that also cares compares .strand
+        itself -- folding it in here would hide a reverse-strand hit sitting
+        inside a forward-strand feature."""
+        fwd = Interval(10, 40, 1)
+        rev = Interval(20, 30, -1)
+        assert fwd.overlaps(rev, 100, False)
+        assert fwd.contains(rev, 100, False)
 
     def test_extended_clamps_at_the_ends_when_linear(self) -> None:
         assert Interval(2, 6).extended(5, 20, circular=False) == Interval(0, 11)
@@ -126,6 +166,38 @@ class TestConstruct:
         assert not c.is_editable(Interval(12, 15)), "backbone must never be editable"
         assert not c.is_editable(Interval(9, 15)), (
             "an interval straddling the junction is not editable"
+        )
+
+    def test_a_cds_spanning_the_origin_is_still_editable(self) -> None:
+        """The insert is cloned across the origin, so the CDS segment wraps.
+
+        Plain [start, end) comparison calls every codon past the origin backbone
+        and hands the solver a mutation space with a hole in it -- which reads
+        downstream as a design that cannot satisfy its own constraints rather
+        than as a coordinate bug.
+        """
+        seq = "ATGAAACCCTAAGGGCCC"  # length 18
+        c = Construct(
+            sequence=seq,
+            topology=Topology.CIRCULAR,
+            segments=(
+                # 15..18 then 0..6 -- six bases of CDS, straddling the origin.
+                Segment(Interval(15, 24), SegmentKind.DESIGNABLE_CDS, "cds"),
+                Segment(Interval(6, 15), SegmentKind.BACKBONE, "vector"),
+            ),
+        )
+        assert c.is_editable(Interval(16, 18)), "before the origin"
+        assert c.is_editable(Interval(0, 3)), "after the origin, the case that regressed"
+        assert c.is_editable(Interval(15, 24)), "the segment contains itself"
+        assert not c.is_editable(Interval(7, 10)), "the backbone is still off limits"
+
+    def test_overlaps_editable_is_the_fixable_by_codon_choice_question(self) -> None:
+        c = self.build()
+        assert c.overlaps_editable(Interval(3, 6))
+        assert not c.overlaps_editable(Interval(12, 15)), "wholly in the backbone"
+        assert c.overlaps_editable(Interval(9, 15)), (
+            "a hit straddling the junction IS partly recodable, which is exactly "
+            "where is_editable gives the wrong answer for fixability"
         )
 
     def test_exempt_collects_scan_exempt_segments(self) -> None:

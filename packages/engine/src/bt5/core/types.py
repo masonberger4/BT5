@@ -79,10 +79,51 @@ class Interval:
     def wraps(self, construct_length: int) -> bool:
         return self.end > construct_length
 
-    def overlaps(self, other: Interval) -> bool:
-        """Overlap in linear coordinates. Callers on circular constructs should
-        normalise both intervals first (see Construct.normalise)."""
-        return self.start < other.end and other.start < self.end
+    def _shifts(self, construct_length: int, circular: bool) -> tuple[int, ...]:
+        """Offsets to try when comparing this interval with another.
+
+        Either one may be the interval that wraps, so a circular comparison has
+        to try the other a full turn in both directions.
+        """
+        if not circular:
+            return (0,)
+        return (0, construct_length, -construct_length)
+
+    def overlaps(self, other: Interval, construct_length: int, circular: bool) -> bool:
+        """Do the two intervals share at least one base?
+
+        `construct_length` and `circular` are REQUIRED, not defaulted, because
+        the linear answer is wrong exactly where it matters most. A feature
+        stored as [4900, 5100) on a 5000 bp plasmid and a hit at [10, 40) sit on
+        the same bases, and plain half-open comparison says they do not.
+
+        There is no normalisation that would let the linear form work. Both of
+        those intervals are ALREADY in BT5's one canonical representation, so
+        the extra turn has to be tried at comparison time and cannot be
+        pre-applied at construction time. An earlier version of this docstring
+        told callers to normalise first via a `Construct.normalise` that was
+        never written and could not have helped, so three lanes each hand-rolled
+        the shift trial below instead -- and the one caller that trusted the
+        docstring and called this method directly, the intron-overlap check in
+        the vector lane, silently missed every origin-spanning intron.
+        """
+        return any(
+            self.start < other.end + shift and other.start + shift < self.end
+            for shift in self._shifts(construct_length, circular)
+        )
+
+    def contains(self, inner: Interval, construct_length: int, circular: bool) -> bool:
+        """Does `inner` lie WHOLLY inside this interval? Wrap-aware, as above.
+
+        Strand is deliberately ignored by both predicates: they answer "which
+        bases", and a caller that also cares which strand compares `.strand`
+        itself. Folding strand in here silently would make a reverse-strand hit
+        inside a forward-strand feature look like no hit at all.
+        """
+        return any(
+            self.start <= inner.start + shift and inner.end + shift <= self.end
+            for shift in self._shifts(construct_length, circular)
+        )
 
     def extended(self, by: int, construct_length: int, circular: bool) -> Interval:
         """Widen by `by` on both sides. This is how localisation policies turn a
@@ -241,9 +282,36 @@ class Construct:
         return self.sequence * 3, self.length
 
     def is_editable(self, iv: Interval) -> bool:
-        """True only if `iv` lies wholly inside a designable CDS segment."""
+        """True only if `iv` lies wholly inside a designable CDS segment.
+
+        Wrap-aware, and it has to be: an insert spanning the origin is stored as
+        one segment with `end > length`, and the plain comparison this used to
+        do called every codon PAST the origin backbone instead. It erred in the
+        safe direction -- I9 was never at risk -- but it hands the solver a
+        mutation space with a hole in it, which reads downstream as a design
+        that cannot satisfy its own constraints rather than as a coordinate bug.
+        The new answer is a strict superset of the old one, and identical on a
+        linear construct.
+        """
         return any(
-            s.interval.start <= iv.start and iv.end <= s.interval.end
+            s.interval.contains(iv, self.length, self.is_circular)
             for s in self.segments
             if s.is_editable
         )
+
+    def overlaps_editable(self, iv: Interval) -> bool:
+        """Does `iv` touch any designable CDS base?
+
+        This, not `is_editable`, is the honest answer to "can codon choice do
+        anything about a finding here", and it is what belongs in
+        `Breach.fixable_by_codon_choice`. A restriction site or a GC window that
+        straddles the CDS/backbone junction is only partly inside the CDS, so
+        `is_editable` says no -- yet recoding the codons on the CDS side really
+        does destroy the site or move the window, and calling such a breach
+        unfixable sends a repairable design to the advisor as a dead end.
+
+        It lives on the contract because every rule needs it and each of the ~45
+        of them hand-rolling the same wrap-aware scan is how they end up
+        disagreeing about what the junction means.
+        """
+        return any(e.overlaps(iv, self.length, self.is_circular) for e in self.editable)

@@ -98,6 +98,43 @@ class TestFivePrimeUtr:
         utr = stripped.utr_context(stripped.find_insertion_site())
         assert any("intron" in n.summary and "shorter" in n.summary for n in utr.notes)
 
+    def test_an_intron_is_found_when_the_derived_utr_spans_the_origin(
+        self, backbone: VectorBackbone
+    ) -> None:
+        """The intron check ran on the linear overlap predicate, so an intron on
+        the far side of the origin from its own 5'UTR did not register at all.
+
+        A missed intron is not a cosmetic note: the span is then treated as
+        plain leader sequence, and a deliberately placed intron -- one of the
+        more reliable mammalian expression levers -- is handed to the splice
+        scanner as something to remove.
+        """
+        moved = replace(
+            backbone,
+            features=tuple(
+                replace(f, interval=Interval(810, 850, 1)) if f.kind == "intron" else f
+                for f in backbone.features
+                if f.kind != "5'UTR"
+            ),
+        )
+        # Rotate so the origin falls between the promoter and the intron: the
+        # derived UTR then wraps and the intron does not.
+        rotated = moved.rotated(780)
+        site = rotated.find_insertion_site()
+        utr = rotated.utr_context(site)
+        intron = next(f.interval for f in rotated.features if f.kind == "intron")
+
+        assert utr.five_prime is not None
+        assert utr.five_prime.wraps(rotated.length), "the UTR must be the wrapping one here"
+        assert not intron.wraps(rotated.length), "and the intron the plain one"
+        assert not (intron.start < utr.five_prime.end and utr.five_prime.start < intron.end), (
+            "this test is only meaningful while the two intervals are arranged so "
+            "that plain linear comparison misses them; if this fires, the rotation "
+            "no longer reproduces the bug and the case below proves nothing"
+        )
+
+        assert any("intron" in n.summary and "shorter" in n.summary for n in utr.notes)
+
     def test_absent_utr_degrades_instead_of_guessing(self, backbone: VectorBackbone) -> None:
         """G6: with no UTR the objective is unavailable, not silently CDS-only."""
         stripped = without(backbone, "5'UTR", "promoter")

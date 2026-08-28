@@ -94,14 +94,4 @@ def windows_touching(
     valid, which is the whole reason a sweep is affordable inside a search loop.
     Recomputing everything instead is correct and roughly a hundred times slower.
     """
-    out: list[int] = []
-    for i, w in enumerate(plan):
-        if _overlaps(w, changed, length=length, circular=circular):
-            out.append(i)
-    return tuple(out)
-
-
-def _overlaps(a: Interval, b: Interval, *, length: int, circular: bool) -> bool:
-    """Wrap-aware overlap: either interval may run past the end of the sequence."""
-    shifts = (0, length, -length) if circular else (0,)
-    return any(a.start < b.end + s and b.start + s < a.end for s in shifts)
+    return tuple(i for i, w in enumerate(plan) if w.overlaps(changed, length, circular))
