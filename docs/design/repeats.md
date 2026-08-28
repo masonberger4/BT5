@@ -22,7 +22,7 @@ codon choice controls them at all.
 
 | # | Stage | Mechanism | Length that matters | Distance | Codon-controllable? |
 |---|---|---|---|---|---|
-| 1 | **Synthesis** | oligo mispriming, assembly-PCR misannealing | **8–100 bp**, clusters of 8–9 bp count | clustering matters, absolute distance does not | **Yes** |
+| 1 | **Synthesis** | misannealing across a five-step manufacturing chain — see §1a | **≥ the assembly overlap, 18–25 bp**; clusters of 8–9 bp below that | clustering matters, absolute distance does not | **Yes** |
 | 2 | **Plasmid propagation** | RecA-**independent** SSA / slipped-strand | **~14–100 bp** (sole contributor below ~100 bp) | **closer = worse** | **Yes** |
 | 2b | Plasmid propagation | RecA-**dependent** homologous recombination | **>200–300 bp** | farther = more recA-dependent | No — LTR/ITR scale |
 | 3 | **Packaging / reverse transcription** | RT template switching between the two co-packaged genomes | **≥~114 bp, steep above ~350 bp** | **farther = worse** | Only at architectural scale |
@@ -30,7 +30,77 @@ codon choice controls them at all.
 
 Rows 2 and 3 are the ones that matter, and they disagree with each other.
 
-### 1a. The sign reversal
+### 1a. Row 1 is a chain, not a step
+
+"Synthesis" is not one reaction. A gene fragment is built by synthesising short
+oligos, pooling them, assembling them into progressively longer pieces,
+amplifying the result and then proving it is correct. Repeats break **several**
+of those links, and only one of them is the PCR misannealing the row used to
+name.
+
+**1. Oligo synthesis on the chip.** Repeats mean near-identical oligos in one
+pool. Sequences drawn from a repetitive design come out at *elevated copy
+number* through non-specific hybridisation during synthesis, so the pool is
+already skewed before assembly starts.
+
+**2. Pool amplification.** Near-identical members cross-hybridise. The known
+mitigation is pre-amplifying subsets so members that could cross-react are never
+in the same tube.
+
+**3. Assembly — and this is where the 20 bp number actually comes from.**
+Oligos are joined by annealing their ends: in the worked example below, oligos
+of ≤60 nt overlapping by **18–25 bases at their 3′ ends**, chosen at that length
+specifically "to reduce misannealing"
+([bioRxiv 2022.11.23.517630](https://www.biorxiv.org/content/10.1101/2022.11.23.517630v1.full),
+published as [ACS Synth Biol](https://pubs.acs.org/doi/10.1021/acssynbio.3c00665)).
+
+> A repeat as long as the overlap is, to the assembly reaction, a second correct
+> place for an oligo to bind.
+
+That is the whole mechanism, and it makes the vendor threshold a property of the
+**manufacturing process rather than of biology**. It also explains two things
+about `e5_synthesis_repeats.py` that were previously justified only by vendor
+copy:
+
+- `HARD_LENGTH_BP = 20` sits inside the 18–25 bp overlap window. It is the right
+  number for the right reason.
+- The rule's second trigger — repeat unit duplex **Tm ≥ 60 °C** regardless of
+  length — is not a hedge. Annealing is a Tm phenomenon, so a short GC-rich
+  repeat anneals as well as a longer AT-rich one. A pure length rule misses
+  exactly the repeats that anneal best.
+
+**4. Nonspecific extension from assembly intermediates.** The error compounds:
+a partially assembled intermediate primes on the *wrong* copy of the repeat, so
+each added junction is another chance to go wrong. Measured directly — assembly
+fidelity fell monotonically with the number of pieces:
+
+| pieces | fidelity |
+|---|---|
+| 2 synthons | 87.5% |
+| 4 synthons | 20–87.5% |
+| 5 synthons | 25% |
+| 6 synthons | **12.5%** |
+
+**5. Sequence verification.** A repeat longer than the sequencing read makes the
+assembly ambiguous — the vendor cannot *prove* the product is correct, and a
+vendor that cannot prove it will not ship it. Treat this link as plausible but
+**unverified**: I could not load a vendor page stating it directly.
+
+#### Why this makes the published thresholds misleading
+
+The mitigation that demonstrably works is **spatial separation** — synthesise
+each piece in its own reaction so the repeated sequences never meet. The authors
+above did exactly that, and got 456 bp constructs with 20–81 bp repeats that
+both IDT and Twist had refused.
+
+A vendor running thousands of constructs through pooled, parallel workflows
+cannot do that per customer. So the question their screen asks is not "is this
+molecule makeable" but "is it makeable *in our standard flow*" — which is why
+the published complexity thresholds read permissively while the actual screen
+rejects an order of magnitude lower. §2 is that gap measured; this is why it
+exists.
+
+### 1b. The sign reversal
 
 In the plasmid, RecA-independent deletion is **proximity-sensitive in the
 ordinary direction**: putting sequence between two repeats suppresses it. Bi &
@@ -53,7 +123,7 @@ Intermolecular template switching between the two co-packaged genomes happens
 3000`, in the plasmid direction, and applies it in every modality. **On a
 lentiviral construct that term has the wrong sign.**
 
-### 1b. …but the lengths do not overlap, which defuses it
+### 1c. …but the lengths do not overlap, which defuses it
 
 The same J Virol study tested shorter repeats: 114 bp, 225 bp and 349 bp gave
 only **6–9% deletion regardless of distance**. Template switching needs
@@ -75,7 +145,7 @@ This matters for how the viral presets are justified. Today `_REPEAT_NOTE` in
 recA⁻/short-repeat argument — which is correct, and is a **propagation**
 argument. It should not acquire a packaging argument it cannot support.
 
-### 1c. Where the two regimes DO intersect — and it is a real case
+### 1d. Where the two regimes DO intersect — and it is a real case
 
 There is one overlap, and it is exactly the case `docs/PLAN.md` already names as
 a differentiator: **architectural repeats inside the ORF**. Two copies of the
@@ -262,6 +332,7 @@ Ordered. Lane owner in brackets; cross-lane items need an issue first per
 | **R6** | Slider + floor + cost curve in the UI. Depends on R4, R5. | M10 |
 | **R7** | Correct `_REPEAT_NOTE` in `bt5/score/presets.py` so the viral repeat weight is justified by propagation and synthesis only, and state plainly that codon-level repeat control does not protect the packaged genome. | M3 |
 | **R8** | Split the `vendor_asserted` badge so a number backed by measured vendor *outcomes* is distinguishable from one backed by vendor *copy*. The 12–20 bp synthesis thresholds are the former. | M4 + core |
+| **R9** | Make E5's `HARD_LENGTH_BP` a **vendor-profile** field rather than a module constant, defaulting to 20. It is the assembly overlap length (§1a), so it is a property of the vendor's process and belongs with the other per-vendor numbers that already carry a `last_verified` date. | M4 |
 
 ### Verification debt
 
@@ -273,5 +344,11 @@ enough to plan against and **not good enough to become rule constants**. Pull th
 PDFs before any of R1, R2 or R3 hard-codes a number, and record `last_verified`
 per `Spec.citations` when you do.
 
-The Twist and IDT thresholds in §2, and every figure from PMC10949351, PMC2775741
-and J Virol 73:7923, were read from the sources directly and are quotable as-is.
+Two further claims are unverified and marked as such in place: that a repeat longer
+than the sequencing read blocks vendor sequence verification (§1a step 5), and the
+oligo-pool copy-number skew (§1a step 1).
+
+Everything else is quotable as-is: the Twist and IDT thresholds in §2; every figure
+from PMC2775741 and J Virol 73:7923; and the oligo length, the 18–25 bp overlap, the
+complexity scores and the per-synthon fidelity table, all read from the bioRxiv
+full text of the repetitive-assembly paper rather than from a summary of it.
