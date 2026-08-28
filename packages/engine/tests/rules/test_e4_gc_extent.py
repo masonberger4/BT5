@@ -187,12 +187,13 @@ class TestWindowing:
 
 class TestAdapters:
     def test_an_adapter_can_never_be_the_reported_outlier(self, svc: Services) -> None:
-        """Documents why the adapter-fallback branch in `_extent` is defensive.
+        """A uniform fragment is silent however extreme its composition.
 
-        For an adapter window to set the extent, every insert window must sit
-        closer to the median than the adapter does -- and a fragment that uniform
-        does not reach the dispersion gate. A 200 bp insert at 97% GC with both
-        adapters reads BELOW chance, so nothing is reported at all.
+        This is the property that lets `_extent` map one window rather than try
+        both: for an adapter window to set the extent, every insert window must
+        sit closer to the median than the adapter does, and a fragment that
+        uniform does not reach the dispersion gate. A 200 bp insert at 97% GC
+        with both adapters reads BELOW chance.
         """
         ev = run(block(200, 0.97, 5), svc, vendor=ADAPTER_ON, extent_window=20)
         assert ev.raw_score < 1.0
