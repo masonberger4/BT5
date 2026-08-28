@@ -1,0 +1,27 @@
+{
+  "recorded_as": "bt5.core.spec.Breach",
+  "value": {
+    "__type__": "bt5.core.spec.Breach",
+    "fields": {
+      "detail": {
+        "__map__": {
+          "enzyme": "HindIII",
+          "motif": "AAGCTT"
+        }
+      },
+      "fixable_by_codon_choice": true,
+      "interval": {
+        "__type__": "bt5.core.types.Interval",
+        "fields": {
+          "end": 56,
+          "start": 50,
+          "strand": 1
+        }
+      },
+      "magnitude": 1.0,
+      "message": "HindIII site 'AAGCTT' at 50",
+      "slot_role": "producer",
+      "spec_id": "d1_restriction_sites"
+    }
+  }
+}

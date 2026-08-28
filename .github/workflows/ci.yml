@@ -99,6 +99,40 @@ jobs:
       - name: Rule contract, honesty and oracle-independence gates
         run: .venv/bin/pytest tests/data_integrity -q
 
+  # `core/` is frozen. Two halves, and neither can do the other's job.
+  #
+  # The pytest half proves the recorded manifest still describes the live code,
+  # and that every recorded fixture still constructs. It runs everywhere.
+  #
+  # The check_amendment half classifies this branch's changes MINOR vs MAJOR
+  # against MAIN's manifest, and demands an RFC for MAJOR. It can only run on a
+  # pull request, because after you regenerate the manifest the local copy and
+  # the live code agree by construction -- the severity of what you did is
+  # visible only against the version you started from.
+  contract-freeze:
+    name: contract-freeze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # Full history: the baseline is read out of main with `git show`, and a
+        # shallow clone does not have it.
+        with: { fetch-depth: 0 }
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv venv --python 3.11 .venv
+      - run: uv pip install --python .venv/bin/python -e ".[dev]"
+      - name: The recorded contract matches bt5.core, and fixtures still parse
+        run: .venv/bin/pytest tests/contract -q
+      - name: MAJOR contract changes carry an amendment
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          # Absent on the base branch until the freeze lands; an empty file is
+          # the signal for "this commit IS the freeze", handled by the script.
+          git show "origin/${GITHUB_BASE_REF}:tests/contract/manifest.json" \
+            > /tmp/baseline.json 2>/dev/null || : > /tmp/baseline.json
+          .venv/bin/python tests/contract/check_amendment.py /tmp/baseline.json
+
   python-tests:
     name: python-tests
     runs-on: ubuntu-latest
@@ -138,7 +172,8 @@ jobs:
   required-checks:
     name: required-checks
     if: always()
-    needs: [changes, python-quality, invariants, contract, python-tests, approvals]
+    needs:
+      [changes, python-quality, invariants, contract, contract-freeze, python-tests, approvals]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed

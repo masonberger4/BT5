@@ -1,0 +1,17 @@
+{
+  "recorded_as": "bt5.core.spec.LatticeTerms",
+  "value": {
+    "__type__": "bt5.core.spec.LatticeTerms",
+    "fields": {
+      "codon_pair_weights": null,
+      "codon_weights": null,
+      "forbidden": {
+        "__tuple__": [
+          "GAATTC",
+          "GGATCC"
+        ]
+      },
+      "positional": null
+    }
+  }
+}

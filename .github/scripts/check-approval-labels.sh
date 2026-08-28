@@ -49,7 +49,15 @@ echo "Protected-path approval check"
 require "approved:oracle-change" \
   '^packages/engine/src/bt5/verify\.py$' \
   '^tests/(invariants|data_integrity)/'
-require "approved:contract-change" '^packages/engine/src/bt5/core/'
+# tests/contract/ is the RECORD of the frozen contract -- the manifest CI
+# classifies against, and the fixtures that prove old values still construct.
+# It shares core/'s label rather than having its own: the two change together,
+# and demanding two labels for one coherent change is friction without signal.
+# Unprotected, a lane could re-record the manifest and make the freeze agree
+# with whatever it just broke.
+require "approved:contract-change" \
+  '^packages/engine/src/bt5/core/' \
+  '^tests/contract/'
 require "approved:algorithm-change" '^benchmarks/(baseline\.json|tolerances\.yaml)$'
 require "approved:data-change" '^data/(genetic_codes|codon_usage)/'
 require "approved:ci-change" '^\.github/'

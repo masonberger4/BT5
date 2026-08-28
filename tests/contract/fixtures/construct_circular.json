@@ -1,0 +1,189 @@
+{
+  "recorded_as": "bt5.core.types.Construct",
+  "value": {
+    "__type__": "bt5.core.types.Construct",
+    "fields": {
+      "annotations": {
+        "__map__": {
+          "molecule_type": "ds-DNA",
+          "topology": "circular"
+        }
+      },
+      "features": {
+        "__tuple__": [
+          {
+            "__type__": "bt5.core.types.Feature",
+            "fields": {
+              "interval": {
+                "__type__": "bt5.core.types.Interval",
+                "fields": {
+                  "end": 30,
+                  "start": 12,
+                  "strand": 1
+                }
+              },
+              "kind": "LTR",
+              "qualifiers": {
+                "__map__": {
+                  "label": {
+                    "__tuple__": [
+                      "5'LTR"
+                    ]
+                  }
+                }
+              },
+              "uid": "ltr5"
+            }
+          },
+          {
+            "__type__": "bt5.core.types.Feature",
+            "fields": {
+              "interval": {
+                "__type__": "bt5.core.types.Interval",
+                "fields": {
+                  "end": 66,
+                  "start": 48,
+                  "strand": 1
+                }
+              },
+              "kind": "CDS",
+              "qualifiers": {
+                "__map__": {
+                  "transl_table": {
+                    "__tuple__": [
+                      "11"
+                    ]
+                  }
+                }
+              },
+              "uid": "cds"
+            }
+          }
+        ]
+      },
+      "provenance": {
+        "__type__": "bt5.core.types.Provenance",
+        "fields": {
+          "app_version": "0.1.0",
+          "codon_table_name": "ncbi_11",
+          "constraint_set_hash": "deadbeef",
+          "degradations": {
+            "__tuple__": [
+              "no folding engine installed"
+            ]
+          },
+          "engine_versions": {
+            "__map__": {
+              "viennarna": "2.7.2"
+            }
+          },
+          "seed": 42
+        }
+      },
+      "segments": {
+        "__tuple__": [
+          {
+            "__type__": "bt5.core.types.Segment",
+            "fields": {
+              "interval": {
+                "__type__": "bt5.core.types.Interval",
+                "fields": {
+                  "end": 66,
+                  "start": 48,
+                  "strand": 1
+                }
+              },
+              "kind": {
+                "__enum__": "bt5.core.types.SegmentKind",
+                "name": "DESIGNABLE_CDS"
+              },
+              "label": "cds across origin"
+            }
+          },
+          {
+            "__type__": "bt5.core.types.Segment",
+            "fields": {
+              "interval": {
+                "__type__": "bt5.core.types.Interval",
+                "fields": {
+                  "end": 30,
+                  "start": 12,
+                  "strand": 1
+                }
+              },
+              "kind": {
+                "__enum__": "bt5.core.types.SegmentKind",
+                "name": "WHITELISTED_REPEAT"
+              },
+              "label": "ltr"
+            }
+          },
+          {
+            "__type__": "bt5.core.types.Segment",
+            "fields": {
+              "interval": {
+                "__type__": "bt5.core.types.Interval",
+                "fields": {
+                  "end": 48,
+                  "start": 30,
+                  "strand": 1
+                }
+              },
+              "kind": {
+                "__enum__": "bt5.core.types.SegmentKind",
+                "name": "BACKBONE"
+              },
+              "label": "vector"
+            }
+          }
+        ]
+      },
+      "sequence": "ATGAAACCCGGGTTTACGTACGTACGTAAGCTTGGGCCCAAATTTCCCGGGTAA",
+      "topology": {
+        "__enum__": "bt5.core.types.Topology",
+        "name": "CIRCULAR"
+      },
+      "translation_units": {
+        "__tuple__": [
+          {
+            "__type__": "bt5.core.types.TranslationUnit",
+            "fields": {
+              "codon_map": {
+                "__tuple__": [
+                  {
+                    "__type__": "bt5.core.types.Interval",
+                    "fields": {
+                      "end": 51,
+                      "start": 48,
+                      "strand": 1
+                    }
+                  },
+                  {
+                    "__type__": "bt5.core.types.Interval",
+                    "fields": {
+                      "end": 54,
+                      "start": 51,
+                      "strand": 1
+                    }
+                  },
+                  {
+                    "__type__": "bt5.core.types.Interval",
+                    "fields": {
+                      "end": 57,
+                      "start": 54,
+                      "strand": 1
+                    }
+                  }
+                ]
+              },
+              "has_terminal_stop": true,
+              "protein": "MK",
+              "starts_at_initiator": true,
+              "table_id": 11
+            }
+          }
+        ]
+      }
+    }
+  }
+}

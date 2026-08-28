@@ -1,0 +1,38 @@
+{
+  "recorded_as": "bt5.core.result.Conflict",
+  "value": {
+    "__type__": "bt5.core.result.Conflict",
+    "fields": {
+      "binding_spec_id": "d1_restriction_sites",
+      "interval": {
+        "__type__": "bt5.core.types.Interval",
+        "fields": {
+          "end": 58,
+          "start": 48,
+          "strand": 1
+        }
+      },
+      "kind": "mutually_exclusive",
+      "relaxations": {
+        "__tuple__": [
+          {
+            "__type__": "bt5.core.result.Relaxation",
+            "fields": {
+              "change": "accept an adequate Kozak",
+              "predicted_cost": {
+                "__map__": {}
+              },
+              "spec_id": "b8_kozak"
+            }
+          }
+        ]
+      },
+      "spec_ids": {
+        "__tuple__": [
+          "b8_kozak",
+          "d1_restriction_sites"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "recorded_as": "bt5.core.result.Relaxation",
+  "value": {
+    "__type__": "bt5.core.result.Relaxation",
+    "fields": {
+      "change": "raise gc_max 0.60 -> 0.64",
+      "predicted_cost": {
+        "__map__": {
+          "c1_cai": -0.02
+        }
+      },
+      "spec_id": "e2_gc_band"
+    }
+  }
+}

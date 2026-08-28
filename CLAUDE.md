@@ -40,11 +40,36 @@ their directory.
 
 - `packages/engine/src/bt5/verify.py` — the oracle (`approved:oracle-change`)
 - `packages/engine/src/bt5/core/**` — the frozen contract (`approved:contract-change`)
+- `tests/contract/**` — the RECORD of that contract (`approved:contract-change`)
 - `tests/invariants/**`, `tests/data_integrity/**` (`approved:oracle-change`)
 - `benchmarks/baseline.json`, `benchmarks/tolerances.yaml` (`approved:algorithm-change`)
 - `data/genetic_codes/**`, `data/codon_usage/**` (`approved:data-change`)
 - `.github/**` (`approved:ci-change`)
 - `pyproject.toml` / `uv.lock` — every dependency is already declared
+
+## 2a. `core/` is frozen
+
+Wave 1 has landed, so `bt5/core/` is frozen and the freeze is a CI check, not an
+intention. `contract-freeze` classifies your branch against `main` by asking one
+question: **who breaks?**
+
+- **MINOR** — a new type, a new **defaulted** field, a new enum member, a field
+  that gains a default. Nothing that exists stops working. Run
+  `python tests/contract/regenerate.py`, commit the manifest and fixtures with
+  your change, and that is all.
+- **MAJOR** — a removed or renamed anything, a changed annotation or default, a
+  field that **loses** its default, a changed signature, a new protocol method.
+  Needs an RFC, a deprecation shim, the two-window rule, and
+  `pytest tests/contract` passing **without regenerating the fixtures**. See
+  `docs/rfcs/README.md`.
+
+Dataclass fields and protocol methods classify in opposite directions, and that
+is deliberate: BT5 *constructs* a `Breach`, so a defaulted field is free, but it
+*implements* a `FoldEngine`, so a new method lands on every implementer.
+
+Regenerating a fixture is not a fix. A fixture records that a value built under
+the old contract still constructs; re-recording it does not make an old caller
+work, it only stops recording that it doesn't. Same rule as §4.
 
 ## 3. Correctness rules that are not negotiable
 

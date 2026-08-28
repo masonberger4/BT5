@@ -1,0 +1,12 @@
+{
+  "recorded_as": "bt5.core.spec.Citation",
+  "value": {
+    "__type__": "bt5.core.spec.Citation",
+    "fields": {
+      "label": "Kudla 2009",
+      "sign": "supports",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC3902468/",
+      "year": 2009
+    }
+  }
+}

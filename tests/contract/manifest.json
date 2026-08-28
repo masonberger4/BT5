@@ -1,0 +1,1095 @@
+{
+  "amendments": [],
+  "contract_version": 1,
+  "frozen_at": "2026-08-28",
+  "surface": {
+    "bt5.core.context": {
+      "BiosecurityVerdict": {
+        "fields": [
+          {
+            "annotation": "Literal['not_run', 'clear', 'flag', 'block']",
+            "name": "status",
+            "required": true
+          },
+          {
+            "annotation": "str | None",
+            "default": "None",
+            "name": "database_version",
+            "required": false
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "name": "detail",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "may_proceed": "property(self) -> 'bool'"
+        },
+        "slots": true
+      },
+      "ContextSlot": {
+        "fields": [
+          {
+            "annotation": "SlotRole",
+            "name": "role",
+            "required": true
+          },
+          {
+            "annotation": "HostId",
+            "name": "host",
+            "required": true
+          },
+          {
+            "annotation": "Modality",
+            "name": "modality",
+            "required": true
+          },
+          {
+            "annotation": "int",
+            "name": "table_id",
+            "required": true
+          },
+          {
+            "annotation": "Strand",
+            "default": "1",
+            "name": "strand_of_interest",
+            "required": false
+          },
+          {
+            "annotation": "bool",
+            "default": "True",
+            "name": "enabled",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "DesignContext": {
+        "fields": [
+          {
+            "annotation": "tuple[ContextSlot, ...]",
+            "name": "slots",
+            "required": true
+          },
+          {
+            "annotation": "Strand",
+            "name": "cassette_orientation",
+            "required": true
+          },
+          {
+            "annotation": "int",
+            "name": "seed",
+            "required": true
+          },
+          {
+            "annotation": "BiosecurityVerdict",
+            "name": "screen",
+            "required": true
+          },
+          {
+            "annotation": "bool",
+            "default": "True",
+            "name": "strict_biosecurity",
+            "required": false
+          },
+          {
+            "annotation": "Mapping[str, str]",
+            "default": "<factory>",
+            "name": "engine_versions",
+            "required": false
+          },
+          {
+            "annotation": "Mapping[str, float]",
+            "default": "<factory>",
+            "name": "weights",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "active_slots": "property(self) -> 'tuple[ContextSlot, ...]'",
+          "slot": "(self, role: 'SlotRole') -> 'ContextSlot | None'"
+        },
+        "slots": false
+      },
+      "HostId": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "CHO": "'cho'",
+          "E_COLI_BL21": "'e_coli_bl21'",
+          "E_COLI_K12": "'e_coli_k12'",
+          "HEK293": "'hek293'",
+          "HUMAN": "'human'",
+          "MOUSE": "'mouse'",
+          "P_PASTORIS": "'p_pastoris'",
+          "SF9": "'sf9'",
+          "S_CEREVISIAE": "'s_cerevisiae'"
+        },
+        "methods": {}
+      },
+      "LOCKED_TRANSLATION_TABLE": {
+        "kind": "constant",
+        "value": "{<HostId.CHO: 'cho'>: 1, <HostId.E_COLI_BL21: 'e_coli_bl21'>: 11, <HostId.E_COLI_K12: 'e_coli_k12'>: 11, <HostId.HEK293: 'hek293'>: 1, <HostId.HUMAN: 'human'>: 1, <HostId.MOUSE: 'mouse'>: 1, <HostId.P_PASTORIS: 'p_pastoris'>: 1, <HostId.SF9: 'sf9'>: 1, <HostId.S_CEREVISIAE: 's_cerevisiae'>: 1}"
+      },
+      "Modality": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "AAV": "'aav'",
+          "BACTERIAL_EXPRESSION": "'bacterial_expression'",
+          "GENOME_INTEGRATED": "'genome_integrated'",
+          "IVT_MRNA": "'ivt_mrna'",
+          "LENTIVIRAL": "'lentiviral'",
+          "PLASMID_STABLE": "'plasmid_stable'",
+          "PLASMID_TRANSIENT": "'plasmid_transient'"
+        },
+        "methods": {}
+      },
+      "SlotRole": {
+        "kind": "constant",
+        "value": "typing.Literal['propagation', 'producer', 'target']"
+      }
+    },
+    "bt5.core.registry": {
+      "CalibrationMismatchError": {
+        "base": "RuntimeError",
+        "kind": "exception",
+        "members": {}
+      },
+      "all_specs": {
+        "kind": "function",
+        "signature": "() -> 'tuple[type[Spec], ...]'"
+      },
+      "check_engine_calibration": {
+        "kind": "function",
+        "signature": "(specs: 'Sequence[type[Spec]]', engine: 'FoldEngine | None') -> 'tuple[type[Spec], ...]'"
+      },
+      "clear": {
+        "kind": "function",
+        "signature": "() -> 'None'"
+      },
+      "discover": {
+        "kind": "function",
+        "signature": "(package: 'str' = 'bt5.rules.catalog') -> 'None'"
+      },
+      "get": {
+        "kind": "function",
+        "signature": "(rule_id: 'str') -> 'type[Spec]'"
+      },
+      "iter_specs": {
+        "kind": "function",
+        "signature": "() -> 'Iterator[type[Spec]]'"
+      },
+      "register": {
+        "kind": "function",
+        "signature": "(cls: 'type[Spec]') -> 'type[Spec]'"
+      }
+    },
+    "bt5.core.result": {
+      "Candidate": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "label",
+            "required": true
+          },
+          {
+            "annotation": "Construct",
+            "name": "construct",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "cds",
+            "required": true
+          },
+          {
+            "annotation": "ScoreCard",
+            "name": "scorecard",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "design_hash",
+            "required": true
+          },
+          {
+            "annotation": "Mapping[str, float]",
+            "default": "<factory>",
+            "name": "codon_distance_to",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "Conflict": {
+        "fields": [
+          {
+            "annotation": "Interval",
+            "name": "interval",
+            "required": true
+          },
+          {
+            "annotation": "tuple[str, ...]",
+            "name": "spec_ids",
+            "required": true
+          },
+          {
+            "annotation": "Literal['mutually_exclusive', 'opposing_gradient', 'immutable_region', 'declared']",
+            "name": "kind",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "binding_spec_id",
+            "required": true
+          },
+          {
+            "annotation": "tuple[Relaxation, ...]",
+            "default": "()",
+            "name": "relaxations",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "DesignResult": {
+        "fields": [
+          {
+            "annotation": "tuple[Candidate, ...]",
+            "name": "candidates",
+            "required": true
+          },
+          {
+            "annotation": "Candidate | None",
+            "default": "None",
+            "name": "native_baseline",
+            "required": false
+          },
+          {
+            "annotation": "tuple[Conflict, ...]",
+            "default": "()",
+            "name": "conflicts",
+            "required": false
+          },
+          {
+            "annotation": "Provenance | None",
+            "default": "None",
+            "name": "provenance",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": false
+      },
+      "InfeasibilityCertificate": {
+        "fields": [
+          {
+            "annotation": "Interval",
+            "name": "interval",
+            "required": true
+          },
+          {
+            "annotation": "tuple[int, int]",
+            "name": "protein_span",
+            "required": true
+          },
+          {
+            "annotation": "tuple[str, ...]",
+            "name": "minimal_conflicting_specs",
+            "required": true
+          },
+          {
+            "annotation": "Literal['empty_mutation_space', 'automaton_dead_state', 'immutable_region']",
+            "name": "proof",
+            "required": true
+          },
+          {
+            "annotation": "tuple[Relaxation, ...]",
+            "default": "()",
+            "name": "relaxations",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "InfeasibleConstraints": {
+        "base": "Exception",
+        "kind": "exception",
+        "members": {}
+      },
+      "ObjectiveScore": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "spec_id",
+            "required": true
+          },
+          {
+            "annotation": "float",
+            "name": "raw",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "unit",
+            "required": true
+          },
+          {
+            "annotation": "float",
+            "name": "percentile",
+            "required": true
+          },
+          {
+            "annotation": "int",
+            "name": "null_n",
+            "required": true
+          },
+          {
+            "annotation": "float",
+            "name": "null_mean",
+            "required": true
+          },
+          {
+            "annotation": "float",
+            "name": "null_sd",
+            "required": true
+          },
+          {
+            "annotation": "Literal['host_frequency', 'uniform_synonymous']",
+            "default": "'host_frequency'",
+            "name": "null_kind",
+            "required": false
+          },
+          {
+            "annotation": "bool",
+            "default": "True",
+            "name": "windowed_fold_only",
+            "required": false
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "name": "unavailable_reason",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "available": "property(self) -> 'bool'",
+          "unavailable": "classmethod(cls, spec_id: 'str', unit: 'str', reason: 'str') -> 'ObjectiveScore'"
+        },
+        "slots": true
+      },
+      "Relaxation": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "spec_id",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "change",
+            "required": true
+          },
+          {
+            "annotation": "Mapping[str, float]",
+            "default": "<factory>",
+            "name": "predicted_cost",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "ScoreCard": {
+        "fields": [
+          {
+            "annotation": "tuple[ObjectiveScore, ...]",
+            "name": "scores",
+            "required": true
+          },
+          {
+            "annotation": "tuple[Breach, ...]",
+            "default": "()",
+            "name": "hard_checks",
+            "required": false
+          },
+          {
+            "annotation": "float",
+            "default": "0.0",
+            "name": "total",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "available": "property(self) -> 'tuple[ObjectiveScore, ...]'",
+          "unavailable": "property(self) -> 'tuple[ObjectiveScore, ...]'"
+        },
+        "slots": true
+      },
+      "VerificationError": {
+        "base": "Exception",
+        "kind": "exception",
+        "members": {}
+      }
+    },
+    "bt5.core.services": {
+      "FoldEnergy": {
+        "fields": [
+          {
+            "annotation": "float",
+            "name": "dg_kcal_mol",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "engine",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "engine_version",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "param_set",
+            "required": true
+          },
+          {
+            "annotation": "float",
+            "default": "37.0",
+            "name": "temperature_c",
+            "required": false
+          },
+          {
+            "annotation": "int",
+            "default": "2",
+            "name": "dangles",
+            "required": false
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "name": "structure",
+            "required": false
+          },
+          {
+            "annotation": "int | None",
+            "default": "None",
+            "name": "duplex_split",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "calibration_key": "property(self) -> 'str'",
+          "is_duplex": "property(self) -> 'bool'"
+        },
+        "slots": true
+      },
+      "FoldEngine": {
+        "annotations": {
+          "name": "ClassVar[str]",
+          "param_set": "ClassVar[str]",
+          "version": "ClassVar[str]"
+        },
+        "kind": "protocol",
+        "members": {
+          "accessibility": "(self, seq: 'str', iv: 'Interval', u: 'int') -> 'float | None'",
+          "duplex": "(self, a: 'str', b: 'str') -> 'FoldEnergy'",
+          "mfe": "(self, seq: 'str') -> 'FoldEnergy'",
+          "mfe_window": "(self, seq: 'str', iv: 'Interval') -> 'FoldEnergy'"
+        }
+      },
+      "GeneticCode": {
+        "annotations": {
+          "table_id": "int"
+        },
+        "kind": "protocol",
+        "members": {
+          "is_start": "(self, codon: 'str') -> 'bool'",
+          "is_stop": "(self, codon: 'str') -> 'bool'",
+          "synonymous_codons": "(self, aa: 'str') -> 'tuple[str, ...]'",
+          "translate": "(self, dna: 'str') -> 'str'"
+        }
+      },
+      "KmerIndex": {
+        "annotations": {},
+        "kind": "protocol",
+        "members": {
+          "duplicates": "(self, min_len: 'int') -> 'Iterator[tuple[Interval, Interval]]'",
+          "of": "classmethod(cls, c: 'Construct', k: 'int') -> 'KmerIndex'",
+          "revcomp_pairs": "(self, min_stem: 'int', max_loop: 'int') -> 'Iterator[tuple[Interval, Interval]]'"
+        }
+      },
+      "Services": {
+        "fields": [
+          {
+            "annotation": "FoldEngine | None",
+            "name": "fold",
+            "required": true
+          },
+          {
+            "annotation": "type[KmerIndex]",
+            "name": "kmer",
+            "required": true
+          },
+          {
+            "annotation": "TableProvider",
+            "name": "tables",
+            "required": true
+          },
+          {
+            "annotation": "np.random.Generator",
+            "name": "rng",
+            "required": true
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": false
+      },
+      "TableProvider": {
+        "annotations": {},
+        "kind": "protocol",
+        "members": {
+          "genetic_code": "(self, table_id: 'int') -> 'GeneticCode'",
+          "usage": "(self, host: 'str') -> 'Mapping[str, float]'",
+          "weights": "(self, host: 'str', kind: \"Literal['cai', 'tai', 'stai', 'csc']\") -> 'Mapping[str, float]'"
+        }
+      }
+    },
+    "bt5.core.spec": {
+      "Breach": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "spec_id",
+            "required": true
+          },
+          {
+            "annotation": "Interval",
+            "name": "interval",
+            "required": true
+          },
+          {
+            "annotation": "float",
+            "name": "magnitude",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "message",
+            "required": true
+          },
+          {
+            "annotation": "bool",
+            "name": "fixable_by_codon_choice",
+            "required": true
+          },
+          {
+            "annotation": "str | None",
+            "default": "None",
+            "name": "slot_role",
+            "required": false
+          },
+          {
+            "annotation": "Mapping[str, float | str]",
+            "default": "<factory>",
+            "name": "detail",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "Citation": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "label",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "url",
+            "required": true
+          },
+          {
+            "annotation": "int | None",
+            "default": "None",
+            "name": "year",
+            "required": false
+          },
+          {
+            "annotation": "str",
+            "default": "'supports'",
+            "name": "sign",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "Direction": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "BAND": "'band'",
+          "HIGHER_IS_BETTER": "'higher_is_better'",
+          "LOWER_IS_BETTER": "'lower_is_better'"
+        },
+        "methods": {}
+      },
+      "Enforcement": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "HARD_CHECK": "'hard_check'",
+          "HARD_LATTICE": "'hard_lattice'",
+          "HARD_REPAIR": "'hard_repair'",
+          "REPORT_ONLY": "'report_only'",
+          "SOFT": "'soft'"
+        },
+        "methods": {
+          "is_hard": "property(self) -> 'bool'",
+          "is_scored": "property(self) -> 'bool'"
+        }
+      },
+      "Evaluation": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "spec_id",
+            "required": true
+          },
+          {
+            "annotation": "bool",
+            "name": "passes",
+            "required": true
+          },
+          {
+            "annotation": "float",
+            "name": "raw_score",
+            "required": true
+          },
+          {
+            "annotation": "tuple[Breach, ...]",
+            "default": "()",
+            "name": "breaches",
+            "required": false
+          },
+          {
+            "annotation": "tuple[tuple[Interval, float], ...]",
+            "default": "()",
+            "name": "windows",
+            "required": false
+          },
+          {
+            "annotation": "int",
+            "default": "0",
+            "name": "n_evaluated",
+            "required": false
+          },
+          {
+            "annotation": "str | None",
+            "default": "None",
+            "name": "binding_side",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "Evidence": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "CONTESTED": "'contested'",
+          "EVIDENCE_BACKED": "'evidence_backed'",
+          "FOLKLORE": "'folklore'",
+          "VENDOR_ASSERTED": "'vendor_asserted'"
+        },
+        "methods": {}
+      },
+      "LatticeTerms": {
+        "fields": [
+          {
+            "annotation": "tuple[str, ...]",
+            "default": "()",
+            "name": "forbidden",
+            "required": false
+          },
+          {
+            "annotation": "Mapping[str, float] | None",
+            "default": "None",
+            "name": "codon_weights",
+            "required": false
+          },
+          {
+            "annotation": "Mapping[tuple[str, str], float] | None",
+            "default": "None",
+            "name": "codon_pair_weights",
+            "required": false
+          },
+          {
+            "annotation": "Callable[[int, str], float] | None",
+            "default": "None",
+            "name": "positional",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "LocalizationPolicy": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "MOTIF_LEN_MINUS_1": "'motif_len_minus_1'",
+          "PAIRED_SEGMENTS": "'paired_segments'",
+          "WHOLE_SCOPE": "'whole_scope'",
+          "WINDOW_MINUS_1": "'window_minus_1'"
+        },
+        "methods": {}
+      },
+      "RepairPolicy": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "FIXED_POINT": "'fixed_point'",
+          "SINGLE_PASS": "'single_pass'"
+        },
+        "methods": {}
+      },
+      "Spec": {
+        "annotations": {
+          "band": "ClassVar[tuple[float, float] | None]",
+          "brief_ref": "ClassVar[str]",
+          "citations": "ClassVar[tuple[Citation, ...]]",
+          "conflicts_with": "ClassVar[tuple[str, ...]]",
+          "cost_class": "ClassVar[str]",
+          "default_enabled": "ClassVar[bool]",
+          "default_weight": "ClassVar[float]",
+          "direction": "ClassVar[Direction]",
+          "enforcement": "ClassVar[Enforcement]",
+          "engine_calibration": "ClassVar[str | None]",
+          "evidence": "ClassVar[Evidence]",
+          "id": "ClassVar[str]",
+          "last_verified": "ClassVar[str]",
+          "localization": "ClassVar[LocalizationPolicy]",
+          "param_schema": "ClassVar[Mapping[str, object]]",
+          "repair": "ClassVar[RepairPolicy]",
+          "steering_weight": "ClassVar[float]",
+          "title": "ClassVar[str]",
+          "unit": "ClassVar[str]",
+          "version": "ClassVar[str]",
+          "weight_provenance": "ClassVar[str]"
+        },
+        "kind": "protocol",
+        "members": {
+          "enforcement_for": "(self, slot: 'ContextSlot') -> 'Enforcement'",
+          "evaluate": "(self, c: 'Construct', ctx: 'DesignContext', svc: 'Services') -> 'Evaluation'",
+          "gate": "(self, slot: 'ContextSlot') -> 'bool'",
+          "lattice_terms": "(self, ctx: 'DesignContext') -> 'LatticeTerms | None'"
+        }
+      },
+      "strand_for": {
+        "kind": "function",
+        "signature": "(ctx: 'DesignContext', slot: 'ContextSlot') -> 'Strand'"
+      }
+    },
+    "bt5.core.types": {
+      "Construct": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "sequence",
+            "required": true
+          },
+          {
+            "annotation": "Topology",
+            "name": "topology",
+            "required": true
+          },
+          {
+            "annotation": "tuple[Segment, ...]",
+            "name": "segments",
+            "required": true
+          },
+          {
+            "annotation": "tuple[TranslationUnit, ...]",
+            "default": "()",
+            "name": "translation_units",
+            "required": false
+          },
+          {
+            "annotation": "tuple[Feature, ...]",
+            "default": "()",
+            "name": "features",
+            "required": false
+          },
+          {
+            "annotation": "Mapping[str, str]",
+            "default": "<factory>",
+            "name": "annotations",
+            "required": false
+          },
+          {
+            "annotation": "Provenance | None",
+            "default": "None",
+            "name": "provenance",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "editable": "property(self) -> 'tuple[Interval, ...]'",
+          "exempt": "property(self) -> 'tuple[Interval, ...]'",
+          "is_circular": "property(self) -> 'bool'",
+          "is_editable": "(self, iv: 'Interval') -> 'bool'",
+          "length": "property(self) -> 'int'",
+          "overlaps_editable": "(self, iv: 'Interval') -> 'bool'",
+          "slice": "(self, iv: 'Interval') -> 'str'",
+          "tripled": "(self) -> 'tuple[str, int]'"
+        },
+        "slots": false
+      },
+      "DNA_ALPHABET": {
+        "kind": "constant",
+        "value": "frozenset({'A', 'C', 'G', 'T'})"
+      },
+      "Feature": {
+        "fields": [
+          {
+            "annotation": "Interval",
+            "name": "interval",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "kind",
+            "required": true
+          },
+          {
+            "annotation": "Mapping[str, tuple[str, ...]]",
+            "default": "<factory>",
+            "name": "qualifiers",
+            "required": false
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "name": "uid",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "Interval": {
+        "fields": [
+          {
+            "annotation": "int",
+            "name": "start",
+            "required": true
+          },
+          {
+            "annotation": "int",
+            "name": "end",
+            "required": true
+          },
+          {
+            "annotation": "Strand",
+            "default": "1",
+            "name": "strand",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "contains": "(self, inner: 'Interval', construct_length: 'int', circular: 'bool') -> 'bool'",
+          "extended": "(self, by: 'int', construct_length: 'int', circular: 'bool') -> 'Interval'",
+          "length": "property(self) -> 'int'",
+          "overlaps": "(self, other: 'Interval', construct_length: 'int', circular: 'bool') -> 'bool'",
+          "wraps": "(self, construct_length: 'int') -> 'bool'"
+        },
+        "slots": true
+      },
+      "Provenance": {
+        "fields": [
+          {
+            "annotation": "str",
+            "name": "app_version",
+            "required": true
+          },
+          {
+            "annotation": "int",
+            "name": "seed",
+            "required": true
+          },
+          {
+            "annotation": "Mapping[str, str]",
+            "default": "<factory>",
+            "name": "engine_versions",
+            "required": false
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "name": "codon_table_name",
+            "required": false
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "name": "constraint_set_hash",
+            "required": false
+          },
+          {
+            "annotation": "tuple[str, ...]",
+            "default": "()",
+            "name": "degradations",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "Segment": {
+        "fields": [
+          {
+            "annotation": "Interval",
+            "name": "interval",
+            "required": true
+          },
+          {
+            "annotation": "SegmentKind",
+            "name": "kind",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "default": "''",
+            "name": "label",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {
+          "exempt_from_scanning": "property(self) -> 'bool'",
+          "is_editable": "property(self) -> 'bool'"
+        },
+        "slots": true
+      },
+      "SegmentKind": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "ANNOTATED_INTRON": "'annotated_intron'",
+          "BACKBONE": "'backbone'",
+          "DESIGNABLE_CDS": "'designable_cds'",
+          "WHITELISTED_REPEAT": "'whitelisted_repeat'"
+        },
+        "methods": {}
+      },
+      "Strand": {
+        "kind": "constant",
+        "value": "typing.Literal[1, -1]"
+      },
+      "Topology": {
+        "base": "StrEnum",
+        "kind": "enum",
+        "members": {
+          "CIRCULAR": "'circular'",
+          "LINEAR": "'linear'"
+        },
+        "methods": {}
+      },
+      "TranslationUnit": {
+        "fields": [
+          {
+            "annotation": "int",
+            "name": "table_id",
+            "required": true
+          },
+          {
+            "annotation": "tuple[Interval, ...]",
+            "name": "codon_map",
+            "required": true
+          },
+          {
+            "annotation": "str",
+            "name": "protein",
+            "required": true
+          },
+          {
+            "annotation": "bool",
+            "default": "True",
+            "name": "has_terminal_stop",
+            "required": false
+          },
+          {
+            "annotation": "bool",
+            "default": "True",
+            "name": "starts_at_initiator",
+            "required": false
+          }
+        ],
+        "frozen": true,
+        "kind": "dataclass",
+        "members": {},
+        "slots": true
+      },
+      "reverse_complement": {
+        "kind": "function",
+        "signature": "(seq: 'str') -> 'str'"
+      }
+    }
+  }
+}
