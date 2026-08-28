@@ -117,3 +117,85 @@ class TestRepeatBreaking:
 
 def test_longest_repeat_finds_nothing_in_a_unique_sequence() -> None:
     assert longest_repeat("ACGTACGGTTACCAGGATTCA", min_len=8) is None
+
+
+class TestLongestRepeatMeasuresRatherThanBounds:
+    """`longest_repeat` is the reference measurement the repeat rules rest on.
+
+    It used to cap its search at `min(n // 2, 40)` and return the cap. Both
+    halves under-reported on exactly the sequences the rules exist for, because
+    one-codon-per-amino-acid back-translation of a repetitive protein produces a
+    TANDEM array, where the copies overlap and neither bound holds.
+    """
+
+    #: What max-CAI does to a (G4S)3 linker: one codon per residue, three times.
+    LINKER = "GGTGGTGGTGGTTCT" * 3
+
+    def brute(self, seq: str, min_len: int = 8) -> tuple[str, int, int] | None:
+        """Deliberately the slowest possible correct answer, for differencing."""
+        for size in range(len(seq) - 1, min_len - 1, -1):
+            seen: dict[str, int] = {}
+            for i in range(len(seq) - size + 1):
+                k = seq[i : i + size]
+                if k in seen:
+                    return (k, seen[k], i)
+                seen[k] = i
+        return None
+
+    def test_overlapping_copies_are_found(self) -> None:
+        """45 bp of period-15 tandem holds a 30 bp repeat; n // 2 says 22."""
+        found = longest_repeat(self.LINKER)
+        assert found is not None
+        assert len(found[0]) == 30
+        assert (found[1], found[2]) == (0, 15), "the copies overlap, which is the point"
+
+    def test_a_long_tandem_is_not_truncated_at_forty(self) -> None:
+        found = longest_repeat("GGTGGTGGTGGTTCT" * 8)
+        assert found is not None
+        assert len(found[0]) == 105
+
+    def test_it_agrees_with_brute_force_on_the_linker(self) -> None:
+        exact = self.brute(self.LINKER)
+        found = longest_repeat(self.LINKER)
+        assert exact is not None
+        assert found is not None
+        assert len(found[0]) == len(exact[0])
+
+    @pytest.mark.parametrize("seed", [1, 2, 3, 5, 8, 13])
+    def test_it_agrees_with_brute_force_on_random_sequence(self, seed: int) -> None:
+        """Differential against the slow implementation, planted repeats and all.
+
+        Seeded explicitly: an unseeded case that failed once could not be
+        reproduced, which is the whole reason the global RNG is banned in src/.
+        """
+        import numpy as np
+
+        rng = np.random.default_rng(seed)
+        for _ in range(40):
+            n = int(rng.integers(10, 160))
+            seq = "".join("ACGT"[i] for i in rng.integers(0, 4, n))
+            if rng.random() < 0.5:
+                unit = "".join("ACGT"[i] for i in rng.integers(0, 4, int(rng.integers(8, 25))))
+                gap = "".join("ACGT"[i] for i in rng.integers(0, 4, int(rng.integers(0, 30))))
+                seq = seq + unit + gap + unit
+            found, exact = longest_repeat(seq), self.brute(seq)
+            assert (found is None) == (exact is None)
+            if found is not None and exact is not None:
+                assert len(found[0]) == len(exact[0]), f"disagreed on {seq!r}"
+
+    def test_both_reported_copies_really_carry_the_repeat(self) -> None:
+        """Checked against the sequence, not against the search that found it."""
+        found = longest_repeat(self.LINKER)
+        assert found is not None
+        kmer, first, second = found
+        assert self.LINKER[first : first + len(kmer)] == kmer
+        assert self.LINKER[second : second + len(kmer)] == kmer
+        assert first != second
+
+    def test_min_len_is_still_a_floor(self) -> None:
+        assert longest_repeat("ACGTACGGTTACCAGGATTCA", min_len=8) is None
+        assert longest_repeat("AAAAAAAA", min_len=20) is None
+
+    def test_a_sequence_too_short_to_repeat_returns_nothing(self) -> None:
+        assert longest_repeat("ACGT", min_len=8) is None
+        assert longest_repeat("", min_len=1) is None
