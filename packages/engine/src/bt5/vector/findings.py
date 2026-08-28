@@ -158,7 +158,7 @@ def hairpin_liabilities(
     Whitelisted regions are excluded: an AAV ITR IS a palindrome, by design, and
     reporting it as a liability every run trains the reader to skip the section.
     """
-    stems = ConstructKmerIndex.of(construct, min_stem).revcomp_pairs(
+    stems = ConstructKmerIndex.of(construct, min_stem).inverted_repeats(
         min_stem, max_loop, exclude=construct.exempt
     )
     return tuple(

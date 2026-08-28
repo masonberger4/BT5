@@ -110,7 +110,7 @@ def services() -> Services:
 
     return Services(
         fold=None,
-        kmer=ConstructKmerIndex,  # type: ignore[arg-type]
+        kmer=ConstructKmerIndex,
         tables=_Tables(),  # type: ignore[arg-type]
         rng=np.random.default_rng(42),
     )

@@ -8,6 +8,8 @@ artefact that would otherwise report every k-mer in a circular plasmid.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from bt5.core.types import (
@@ -18,7 +20,7 @@ from bt5.core.types import (
     Topology,
     reverse_complement,
 )
-from bt5.vector import ConstructKmerIndex, repeat_risk
+from bt5.vector import ConstructKmerIndex, kmers, repeat_risk
 
 
 def dna(n: int, *, seed: int = 3) -> str:
@@ -131,7 +133,7 @@ class TestInvertedRepeats:
     def test_finds_a_hairpin_stem(self) -> None:
         found = ConstructKmerIndex.of(
             construct(self.hairpin(dna(25, seed=61), 30)), 20
-        ).revcomp_pairs(20, 60)
+        ).inverted_repeats(20, 60)
         assert found
         assert all(p.second.strand == -1 for p in found)
         assert all(p.first.strand == 1 for p in found)
@@ -139,7 +141,7 @@ class TestInvertedRepeats:
     def test_the_stem_is_reported_at_its_full_length(self) -> None:
         """Seeding at 20 and reporting the seed calls a 60 bp stem a 20 bp one."""
         arm = dna(60, seed=81)
-        found = ConstructKmerIndex.of(construct(self.hairpin(arm, 10)), 20).revcomp_pairs(20, 60)
+        found = ConstructKmerIndex.of(construct(self.hairpin(arm, 10)), 20).inverted_repeats(20, 60)
         assert len(found) == 1, "one hairpin is one finding, not one per seed offset"
         assert found[0].stem >= 60
         assert found[0].loop == 10
@@ -148,7 +150,7 @@ class TestInvertedRepeats:
         """Without maximal extension this reported 26 near-identical pairs."""
         found = ConstructKmerIndex.of(
             construct(self.hairpin(dna(60, seed=81), 10)), 20
-        ).revcomp_pairs(20, 60)
+        ).inverted_repeats(20, 60)
         assert len(found) == 1
 
     def test_an_origin_spanning_hairpin_is_found(self) -> None:
@@ -158,7 +160,7 @@ class TestInvertedRepeats:
         hairpin = arm + dna(10, seed=89) + reverse_complement(arm)
         cut = 35  # split the hairpin so it straddles position 0
         seq = hairpin[cut:] + dna(400, seed=97) + hairpin[:cut]
-        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        found = ConstructKmerIndex.of(construct(seq), 20).inverted_repeats(20, 60)
         assert found, "an origin-spanning stem-loop is still a stem-loop"
         assert found[0].stem >= 20
 
@@ -167,8 +169,8 @@ class TestInvertedRepeats:
         hairpin = arm + dna(10, seed=89) + reverse_complement(arm)
         middle = dna(200) + hairpin + dna(200, seed=97)
         rotated = middle[240:] + middle[:240]
-        a = ConstructKmerIndex.of(construct(middle), 20).revcomp_pairs(20, 60)
-        b = ConstructKmerIndex.of(construct(rotated), 20).revcomp_pairs(20, 60)
+        a = ConstructKmerIndex.of(construct(middle), 20).inverted_repeats(20, 60)
+        b = ConstructKmerIndex.of(construct(rotated), 20).inverted_repeats(20, 60)
         assert len(a) == len(b) == 1
         assert a[0].stem == b[0].stem
         assert a[0].loop == b[0].loop
@@ -176,14 +178,15 @@ class TestInvertedRepeats:
     def test_a_perfect_palindrome_has_no_loop(self) -> None:
         arm = dna(40, seed=101)
         seq = dna(200) + arm + reverse_complement(arm) + dna(200, seed=103)
-        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        found = ConstructKmerIndex.of(construct(seq), 20).inverted_repeats(20, 60)
         assert found[0].loop == 0
         assert found[0].perfect_palindrome
 
     def test_the_loop_ceiling_is_enforced(self) -> None:
         arm = dna(25, seed=107)
         assert (
-            ConstructKmerIndex.of(construct(self.hairpin(arm, 200)), 20).revcomp_pairs(20, 60) == []
+            ConstructKmerIndex.of(construct(self.hairpin(arm, 200)), 20).inverted_repeats(20, 60)
+            == []
         )
 
     def test_nested_stems_collapse_to_the_maximal_one(self) -> None:
@@ -193,7 +196,7 @@ class TestInvertedRepeats:
         # homopolymer a second valid register, which is a real alternative stem
         # rather than a duplicate, and not what this test is about.
         seq = dna(149) + "G" + "A" * 40 + "T" * 40 + "G" + dna(149, seed=137)
-        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        found = ConstructKmerIndex.of(construct(seq), 20).inverted_repeats(20, 60)
         assert len(found) == 1
         assert found[0].stem == 40
         assert found[0].perfect_palindrome
@@ -205,7 +208,7 @@ class TestInvertedRepeats:
         0, which is where an outward pass would have been the only rescue."""
         arm = dna(50, seed=139)
         seq = arm + dna(10, seed=149) + reverse_complement(arm) + dna(300, seed=151)
-        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        found = ConstructKmerIndex.of(construct(seq), 20).inverted_repeats(20, 60)
         assert len(found) == 1
         assert found[0].first.start == 0
         assert found[0].stem >= 50
@@ -218,15 +221,15 @@ class TestInvertedRepeats:
         # arms must fall inside for the exclusion to apply, as for direct repeats.
         itr = Interval(150, 380)
         index = ConstructKmerIndex.of(construct(seq), 20)
-        assert index.revcomp_pairs(20, 60)
-        assert index.revcomp_pairs(20, 60, exclude=[itr]) == []
+        assert index.inverted_repeats(20, 60)
+        assert index.inverted_repeats(20, 60, exclude=[itr]) == []
 
     def test_a_direct_repeat_is_not_an_inverted_one(self) -> None:
         """The two scans must not leak into each other: only the direct one
         feeds a risk surface calibrated on the deletion literature."""
         unit = dna(40, seed=109)
         direct = dna(200) + unit + dna(300, seed=113) + unit + dna(200, seed=127)
-        assert ConstructKmerIndex.of(construct(direct), 20).revcomp_pairs(20, 400) == []
+        assert ConstructKmerIndex.of(construct(direct), 20).inverted_repeats(20, 400) == []
 
     def test_an_inverted_repeat_is_not_a_direct_one(self) -> None:
         arm = dna(40, seed=109)
@@ -239,7 +242,7 @@ class TestInvertedRepeats:
         arm = dna(45, seed=131)
         seq = self.hairpin(arm, 12)
         c = construct(seq)
-        for pair in ConstructKmerIndex.of(c, 20).revcomp_pairs(20, 60):
+        for pair in ConstructKmerIndex.of(c, 20).inverted_repeats(20, 60):
             assert c.slice(pair.first) == reverse_complement(
                 seq[pair.second.start : pair.second.end]
             )
@@ -269,7 +272,7 @@ class TestInvertedRepeatCost:
         import time
 
         start = time.perf_counter()
-        found = ConstructKmerIndex.of(construct("AT" * 2000), 20).revcomp_pairs(20, 60)
+        found = ConstructKmerIndex.of(construct("AT" * 2000), 20).inverted_repeats(20, 60)
         elapsed = time.perf_counter() - start
         assert elapsed < 10.0, (
             f"4 kb of alternating AT took {elapsed:.1f}s (was 27s when quadratic)"
@@ -281,5 +284,66 @@ class TestInvertedRepeatCost:
         import time
 
         start = time.perf_counter()
-        ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        ConstructKmerIndex.of(construct(seq), 20).inverted_repeats(20, 60)
         assert time.perf_counter() - start < 5.0
+
+
+class TestProtocolConformance:
+    """`ConstructKmerIndex` must actually satisfy `KmerIndex`.
+
+    It did not, until this test existed. `revcomp_pairs` was the name of the
+    rich form and returned `list[InvertedRepeat]` where the frozen contract
+    promises `Iterator[tuple[Interval, Interval]]`, so a rule reaching through
+    `Services.kmer` would have been handed value objects where it expected
+    tuples. Nothing caught it because nothing had yet consumed the protocol --
+    a protocol with no conforming implementation and no consumer is a promise
+    that has never once been checked.
+    """
+
+    def hairpin(self, arm: str, loop: int) -> str:
+        return dna(200) + arm + dna(loop) + reverse_complement(arm) + dna(200)
+
+    def test_the_static_conformance_assertion_is_where_mypy_can_see_it(self) -> None:
+        """The type-level half of this guard lives in `kmers.py`, not here.
+
+        mypy is configured over `packages/engine/src/bt5` only, so a
+        `type[KmerIndex]` assertion written in a test file type-checks NOWHERE
+        and passes whatever the implementation does -- which is the same shape
+        of gap that let the mismatch exist. This test only checks the assertion
+        is still present; mypy is what evaluates it.
+        """
+        source = Path(kmers.__file__).read_text()
+        assert "_protocol_conformance: type[KmerIndex] = ConstructKmerIndex" in source
+
+    def test_duplicates_yields_interval_pairs(self) -> None:
+        seq = dna(100) + (unit := dna(40, seed=9)) + dna(100) + unit + dna(100)
+        for first, second in ConstructKmerIndex.of(construct(seq), 20).duplicates(20):
+            assert isinstance(first, Interval)
+            assert isinstance(second, Interval)
+
+    def test_revcomp_pairs_yields_interval_pairs_not_value_objects(self) -> None:
+        arm = dna(30, seed=11)
+        index = ConstructKmerIndex.of(construct(self.hairpin(arm, 10)), 20)
+        pairs = list(index.revcomp_pairs(20, 60))
+        assert pairs, "the fixture contains a hairpin"
+        for first, second in pairs:
+            assert isinstance(first, Interval)
+            assert isinstance(second, Interval)
+
+    def test_the_narrow_form_agrees_with_the_rich_one(self) -> None:
+        """The adapter must not filter or reorder -- a rule and this lane's own
+        report have to be looking at the same findings."""
+        arm = dna(30, seed=11)
+        index = ConstructKmerIndex.of(construct(self.hairpin(arm, 10)), 20)
+        rich = index.inverted_repeats(20, 60)
+        assert [(r.first, r.second) for r in rich] == list(index.revcomp_pairs(20, 60))
+
+    def test_the_geometry_a_rule_needs_survives_the_narrowing(self) -> None:
+        """Stem and loop are recoverable from the pair, which is why the
+        contract can stay narrow without costing a caller anything."""
+        arm = dna(30, seed=11)
+        index = ConstructKmerIndex.of(construct(self.hairpin(arm, 10)), 20)
+        repeat = index.inverted_repeats(20, 60)[0]
+        first, second = next(iter(index.revcomp_pairs(20, 60)))
+        assert first.length == repeat.stem
+        assert second.start - first.end == repeat.loop
