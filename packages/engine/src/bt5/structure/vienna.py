@@ -122,8 +122,8 @@ class ViennaFold:
     def mfe(self, seq: str) -> FoldEnergy:
         """Whole-sequence MFE. REPORT TIME ONLY -- O(n^3), ~8.9 s at 3 kb."""
         rna = _rna()
-        _, dg = rna.fold_compound(_prepare(seq), self._md()).mfe()
-        return self._energy(dg)
+        structure, dg = rna.fold_compound(_prepare(seq), self._md()).mfe()
+        return self._energy(dg, structure=structure)
 
     def mfe_window(self, seq: str, iv: Interval) -> FoldEnergy:
         """Windowed fold: the interactive-loop and null-model primitive.
@@ -134,8 +134,8 @@ class ViennaFold:
         the same answer for the same interval.
         """
         rna = _rna()
-        _, dg = rna.fold_compound(_prepare(slice_of(seq, iv)), self._md()).mfe()
-        return self._energy(dg)
+        structure, dg = rna.fold_compound(_prepare(slice_of(seq, iv)), self._md()).mfe()
+        return self._energy(dg, structure=structure)
 
     def accessibility(self, seq: str, iv: Interval, u: int) -> float | None:
         """Mean probability that a stretch of `u` bases is unpaired, over `iv`.
@@ -154,6 +154,23 @@ class ViennaFold:
         values = [up[i][u] for i in range(u, len(text) + 1)]
         return sum(values) / len(values) if values else None
 
+    def duplex(self, a: str, b: str) -> FoldEnergy:
+        """Energy of `a` and `b` pairing with each other.
+
+        Folded through ViennaRNA's `A&B` dimer spelling rather than
+        `duplexfold`, because the dimer path takes a model-details object and so
+        honours this engine's temperature and dangles; `duplexfold` reads
+        globals and would silently ignore both.
+
+        The returned structure carries NO separator -- ViennaRNA emits one flat
+        string -- so `duplex_split` records where the second molecule starts.
+        Without it the two halves cannot be told apart downstream.
+        """
+        rna = _rna()
+        first, second = _prepare(a), _prepare(b)
+        structure, dg = rna.fold_compound(f"{first}&{second}", self._md()).mfe_dimer()
+        return self._energy(dg, structure=structure, duplex_split=len(first))
+
     # -- internals --------------------------------------------------------
 
     def _md(self) -> Any:
@@ -162,9 +179,13 @@ class ViennaFold:
         md.dangles = self.dangles
         return md
 
-    def _energy(self, dg: float) -> FoldEnergy:
+    def _energy(
+        self, dg: float, *, structure: str = "", duplex_split: int | None = None
+    ) -> FoldEnergy:
         return FoldEnergy(
             dg_kcal_mol=float(dg),
+            structure=str(structure),
+            duplex_split=duplex_split,
             engine=ENGINE_NAME,
             engine_version=installed_version(),
             param_set=PARAM_SET,

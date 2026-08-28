@@ -39,6 +39,37 @@ class ObjectiveScore:
     null_sd: float
     null_kind: Literal["host_frequency", "uniform_synonymous"] = "host_frequency"
     windowed_fold_only: bool = True  # nulls never use whole-transcript MFE
+    #: Non-empty when this objective could NOT be evaluated -- no folding engine
+    #: installed, a required input absent. `raw` and `percentile` are then
+    #: meaningless and must not enter the weighted sum.
+    #:
+    #: A field rather than an omission, because the two are not the same to a
+    #: reader: a scorecard missing its highest-weight objective looks exactly
+    #: like a scorecard where that objective was never configured, and the
+    #: difference is whether the ranking means anything. Silently dropping the
+    #: term is the failure the whole degradation vocabulary exists to prevent,
+    #: and nothing else in the contract could express it.
+    unavailable_reason: str = ""
+
+    @property
+    def available(self) -> bool:
+        return not self.unavailable_reason
+
+    @classmethod
+    def unavailable(cls, spec_id: str, unit: str, reason: str) -> ObjectiveScore:
+        """An objective that could not be evaluated, stated rather than dropped."""
+        if not reason:
+            raise ValueError("an unavailable objective must say why")
+        return cls(
+            spec_id=spec_id,
+            raw=float("nan"),
+            unit=unit,
+            percentile=float("nan"),
+            null_n=0,
+            null_mean=float("nan"),
+            null_sd=float("nan"),
+            unavailable_reason=reason,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +141,17 @@ class ScoreCard:
     scores: tuple[ObjectiveScore, ...]
     hard_checks: tuple[Breach, ...] = ()
     total: float = 0.0
+
+    @property
+    def available(self) -> tuple[ObjectiveScore, ...]:
+        """The scores a weighted sum may legitimately operate on."""
+        return tuple(s for s in self.scores if s.available)
+
+    @property
+    def unavailable(self) -> tuple[ObjectiveScore, ...]:
+        """Objectives that could not be evaluated. A report that does not show
+        these is claiming a completeness it does not have."""
+        return tuple(s for s in self.scores if not s.available)
 
 
 @dataclass(frozen=True, slots=True)
