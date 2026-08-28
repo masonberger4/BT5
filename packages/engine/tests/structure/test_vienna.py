@@ -175,6 +175,80 @@ class TestFolding:
         with pytest.raises(ValueError, match="must be positive"):
             self.engine().accessibility(SEQ, Interval(0, 60), 0)
 
+    def test_it_satisfies_the_fold_engine_protocol(self) -> None:
+        """Checked by assignment, which is what mypy verifies. A protocol nothing
+        is ever assigned to is a protocol nothing has to satisfy."""
+        from bt5.core.services import FoldEngine
+
+        checked: FoldEngine = self.engine()
+        assert checked.name == ENGINE_NAME
+
+    @pytest.mark.parametrize("method", ["mfe", "mfe_window"])
+    def test_the_structure_travels_with_the_energy(self, method: str) -> None:
+        """Both entry points, because they record it independently and a test of
+        only one leaves the other free to drop it silently."""
+        engine = self.engine()
+        window = SEQ[:41]
+        e = engine.mfe(window) if method == "mfe" else engine.mfe_window(SEQ, Interval(0, 41))
+        assert len(e.structure) == 41, "one bracket per base of the folded window"
+        assert set(e.structure) <= {".", "(", ")"}
+        assert not e.is_duplex
+
+    def test_both_entry_points_agree_on_the_same_window(self) -> None:
+        engine = self.engine()
+        direct = engine.mfe(SEQ[:41])
+        windowed = engine.mfe_window(SEQ, Interval(0, 41))
+        assert direct.structure == windowed.structure
+        assert direct.dg_kcal_mol == pytest.approx(windowed.dg_kcal_mol, abs=1e-6)
+
+
+class TestDuplex:
+    """dG_mRNA:rRNA for the Salis TIR model -- one of the four families gate G0
+    validates the contract against, and the one `mfe`/`mfe_window` cannot express
+    at any spelling."""
+
+    #: A Shine-Dalgarno-bearing leader and the 3' end of 16S rRNA it pairs with.
+    MRNA = "ATTCCTAGGAGGTTTGACCTATGCGAGCTTTTAGTG"
+    ANTI_SD = "ACCTCCTTA"
+
+    @pytest.fixture(autouse=True)
+    def _needs_vienna(self) -> None:
+        pytest.importorskip("RNA", reason="the `fold` extra is not installed")
+
+    def test_a_duplex_is_not_the_fold_of_the_concatenation(self) -> None:
+        """The whole reason this method exists. Joining the molecules end to end
+        lets the model form a covalent bond that is not there, and the error runs
+        in the direction that makes a weak ribosome binding site look adequate."""
+        engine = ViennaFold()
+        duplex = engine.duplex(self.MRNA, self.ANTI_SD).dg_kcal_mol
+        concatenated = engine.mfe(self.MRNA + self.ANTI_SD).dg_kcal_mol
+        assert duplex != pytest.approx(concatenated, abs=0.05)
+
+    def test_it_records_where_the_second_molecule_begins(self) -> None:
+        e = ViennaFold().duplex(self.MRNA, self.ANTI_SD)
+        assert e.is_duplex
+        assert e.duplex_split == len(self.MRNA)
+        assert len(e.structure) == len(self.MRNA) + len(self.ANTI_SD)
+
+    def test_it_honours_this_engine_s_temperature(self) -> None:
+        """`duplexfold` reads globals and would ignore both conditions; the
+        dimer path takes a model-details object, which is why it is used."""
+        cold = ViennaFold(temperature_c=30.0).duplex(self.MRNA, self.ANTI_SD)
+        warm = ViennaFold(temperature_c=42.0).duplex(self.MRNA, self.ANTI_SD)
+        assert cold.dg_kcal_mol < warm.dg_kcal_mol
+        assert cold.temperature_c == 30.0
+
+    def test_a_duplex_energy_carries_its_provenance_like_any_other(self) -> None:
+        e = ViennaFold().duplex(self.MRNA, self.ANTI_SD)
+        assert e.calibration_key == "viennarna:rna_turner2004"
+        assert e.engine_version == installed_version()
+
+    def test_dna_input_is_transcribed_on_both_strands(self) -> None:
+        engine = ViennaFold()
+        dna = engine.duplex(self.MRNA, self.ANTI_SD).dg_kcal_mol
+        rna = engine.duplex(self.MRNA.replace("T", "U"), self.ANTI_SD.replace("T", "U")).dg_kcal_mol
+        assert dna == pytest.approx(rna, abs=1e-6)
+
 
 class TestCost:
     """The windowed fold is the null-model and interactive-loop primitive, so

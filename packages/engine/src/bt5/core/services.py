@@ -35,10 +35,28 @@ class FoldEnergy:
     param_set: str
     temperature_c: float = 37.0
     dangles: int = 2
+    #: Dot-bracket structure, or "" when the engine was not asked for one. An
+    #: energy alone cannot answer a rule stated in terms of an individual
+    #: hairpin's position -- the cap-proximal ladder, the -1 frameshift
+    #: escalation and the AAV hairpin flag are all written that way -- so the
+    #: structure has to be able to travel with the number rather than requiring
+    #: a second fold to recover it.
+    structure: str = ""
+    #: Index in `structure` where the SECOND molecule begins, for an
+    #: intermolecular duplex; None for an ordinary intramolecular fold.
+    #: ViennaRNA's dimer structure carries no separator, so without this the two
+    #: halves of a duplex are indistinguishable in the string -- and a duplex
+    #: energy silently read as an intramolecular one is off by the energy of a
+    #: covalent join that does not exist.
+    duplex_split: int | None = None
 
     @property
     def calibration_key(self) -> str:
         return f"{self.engine}:{self.param_set}"
+
+    @property
+    def is_duplex(self) -> bool:
+        return self.duplex_split is not None
 
 
 class FoldEngine(Protocol):
@@ -62,6 +80,23 @@ class FoldEngine(Protocol):
 
     def accessibility(self, seq: str, iv: Interval, u: int) -> float | None:
         """Mean unpaired probability over a window, or None if unsupported."""
+        ...
+
+    def duplex(self, a: str, b: str) -> FoldEnergy:
+        """Free energy of two molecules pairing with EACH OTHER.
+
+        Distinct from folding their concatenation, which is not the same
+        quantity: joining them end to end lets the model form a covalent bond
+        that does not exist, and on a real Shine-Dalgarno / anti-SD pair that
+        error is worth ~0.6 kcal/mol in the direction that makes a weak site
+        look adequate.
+
+        Required rather than optional because the contract has to be able to
+        express the rules it was frozen to serve. The Salis TIR model -- one of
+        the four families gate G0 validates the protocol against -- is defined
+        in terms of dG_mRNA:rRNA and dG_standby, and neither `mfe` nor
+        `mfe_window` can produce an intermolecular energy at any spelling.
+        """
         ...
 
 
@@ -109,7 +144,13 @@ class TableProvider(Protocol):
 class Services:
     """Passed to every rule. Never imported around."""
 
-    fold: FoldEngine
+    #: None when no folding engine is available. Widened deliberately: `mfe`
+    #: returns a non-optional FoldEnergy, so an engine that cannot fold has only
+    #: two ways to behave -- raise, which crashes the run, or invent a number,
+    #: which is the one thing the whole honesty apparatus exists to prevent.
+    #: A rule receiving None reports its objective unavailable; see
+    #: `ObjectiveScore.unavailable`.
+    fold: FoldEngine | None
     kmer: type[KmerIndex]
     tables: TableProvider
     rng: np.random.Generator  # always np.random.default_rng(seed); never global RNG
