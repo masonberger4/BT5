@@ -188,15 +188,36 @@ class TestScopeIsTheFragment:
         assert DirectRepeats().evaluate(c, context(), svc).breaches
 
 
+ADAPTER_ON = "twist_gene_fragment_adapter_on"
+
+
 class TestAdapters:
-    """Adapter sequence is synthesised with the fragment and is in no plasmid."""
+    """Adapter sequence is synthesised with the fragment and is in no plasmid.
+
+    Only on the ADAPTER-ON option, though. Twist states that adapter sequences
+    are not added by default to Gene Fragments -- adapter-on and adapter-free
+    are two choices made at checkout -- so every test here names the option it
+    means rather than relying on the default.
+    """
 
     def test_an_insert_reproducing_the_adapter_is_caught(self, svc: Services) -> None:
         c = construct(dna(150) + TWIST_FIVE_PRIME + dna(150, 5), dna(300, 11))
-        found = hits(c, svc)
+        found = hits(c, svc, vendor=ADAPTER_ON)
         assert found, "no whole-plasmid scan can see this: the adapter is not in the plasmid"
         assert any(b.detail["involves_adapter"] == "yes" for b in found)
         assert any("recode the insert side" in b.message for b in found)
+
+    def test_the_default_order_carries_no_adapters(self, svc: Services) -> None:
+        """The regression guard for the mixed-default bug.
+
+        A plain Twist Gene Fragment is the ordered DNA and nothing else. When
+        the default silently meant adapter-on, this construct produced a finding
+        about a collision with sequence the user would never receive -- a false
+        positive that costs real sequence freedom to repair.
+        """
+        c = construct(dna(150) + TWIST_FIVE_PRIME + dna(150, 5), dna(300, 11))
+        assert not hits(c, svc)
+        assert hits(c, svc, vendor=ADAPTER_ON), "and adapter-on must still find it"
 
     def test_without_adapters_there_is_nothing_to_collide_with(self, svc: Services) -> None:
         c = construct(dna(150) + TWIST_FIVE_PRIME + dna(150, 5), dna(300, 11))
@@ -207,7 +228,7 @@ class TestAdapters:
     ) -> None:
         """A finding lying wholly inside vendor sequence has no construct
         coordinate and nothing BT5 can do about it."""
-        assert not hits(construct(dna(400, 21), dna(300, 22)), svc)
+        assert not hits(construct(dna(400, 21), dna(300, 22)), svc, vendor=ADAPTER_ON)
 
 
 class TestDetection:

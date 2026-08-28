@@ -200,6 +200,11 @@ class RepeatDensity:
                 "type": "string",
                 "default": "twist_gene_fragment",
                 "enum": sorted(VENDOR_ADAPTERS),
+                "description": (
+                    "Which vendor product the fragment is ordered as. Only the "
+                    "adapter-on options carry adapters; a plain Gene Fragment "
+                    "order is the ordered DNA and nothing else."
+                ),
             },
         },
     }

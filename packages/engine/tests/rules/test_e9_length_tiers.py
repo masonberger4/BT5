@@ -1,0 +1,147 @@
+"""E9: whether the vendor will take the order at all.
+
+The rule under test cannot be satisfied by changing the sequence, so the thing
+worth testing hardest is not detection -- a length comparison is not subtle --
+but the three properties that make the finding useful rather than merely true:
+that it routes away from the solver, that it names somewhere the order COULD
+go, and that it refuses to guess on the one bound the vendors leave ambiguous.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+from bt5.core.registry import discover, get
+from bt5.core.services import Services
+from bt5.core.spec import Enforcement
+from bt5.core.types import Construct
+from bt5.rules.catalog.e9_length_tiers import AMBIGUOUS, UNORDERABLE, LengthTiers
+from bt5.rules.fragment import VENDOR_ADAPTERS, VENDOR_LENGTHS
+from conftest import construct, context
+
+
+def dna(n: int, seed: int = 3) -> str:
+    rng = np.random.default_rng(seed)
+    return "".join("ACGT"[i] for i in rng.integers(0, 4, n))
+
+
+@pytest.fixture
+def svc() -> Services:
+    from bt5.vector.kmers import ConstructKmerIndex
+
+    return Services(
+        fold=None,
+        kmer=ConstructKmerIndex,
+        tables=None,  # type: ignore[arg-type]
+        rng=np.random.default_rng(42),
+    )
+
+
+def run(insert_bp: int, svc: Services, vendor: str = "twist_gene_fragment"):
+    c: Construct = construct(dna(insert_bp), dna(300, 11))
+    return LengthTiers(vendor=vendor).evaluate(c, context(), svc)
+
+
+class TestTheFloor:
+    """The bound nobody remembers, and the reason this rule exists."""
+
+    def test_an_insert_under_300_bp_cannot_be_ordered_from_twist(self, svc: Services) -> None:
+        ev = run(200, svc)
+        assert not ev.passes
+        assert ev.raw_score == UNORDERABLE
+        assert "below the 300-5000 bp" in ev.breaches[0].message
+
+    def test_and_it_names_the_one_configuration_that_would_take_it(self, svc: Services) -> None:
+        """A finding no codon can act on is only useful if it says where to go."""
+        breach = run(200, svc).breaches[0]
+        assert breach.detail["alternatives"] == "idt_gblocks"
+        assert "idt_gblocks" in breach.message
+
+    def test_under_125_bp_nothing_accepts_it(self, svc: Services) -> None:
+        breach = run(100, svc).breaches[0]
+        assert breach.detail["alternatives"] == "none"
+        assert "no configured vendor accepts this length" in breach.message
+
+    def test_a_300_bp_insert_is_exactly_in_range(self, svc: Services) -> None:
+        """The floor is inclusive; 300 is orderable and 299 is not."""
+        assert run(300, svc).passes
+        assert not run(299, svc).passes
+
+
+class TestTheCeiling:
+    def test_eblocks_stop_at_1500(self, svc: Services) -> None:
+        ev = run(2000, svc, vendor="idt_eblocks")
+        assert not ev.passes
+        assert "above the 300-1500 bp" in ev.breaches[0].message
+
+    def test_and_the_same_insert_is_fine_as_a_gene_fragment(self, svc: Services) -> None:
+        assert run(2000, svc).passes
+        assert "twist_gene_fragment" in str(
+            run(2000, svc, vendor="idt_eblocks").breaches[0].detail["alternatives"]
+        )
+
+
+class TestItNeverGoesToTheSolver:
+    def test_no_finding_is_fixable_by_codon_choice(self, svc: Services) -> None:
+        """Every synonymous codon is three bases, so the mutation space contains
+        no sequence of a different length. Sending this to the solver would
+        exhaust that space and report infeasible on a design that is fine."""
+        for bp in (100, 200, 6000):
+            for b in run(bp, svc).breaches:
+                assert b.fixable_by_codon_choice is False
+
+    def test_the_rule_is_hard_check_and_never_weighted(self) -> None:
+        discover()
+        spec = get("e9_length_tiers")
+        assert spec.enforcement is Enforcement.HARD_CHECK
+        assert spec.default_weight == 0.0
+        assert spec.steering_weight == 0.0, "no codon choice moves a length"
+
+
+class TestTheAmbiguousBound:
+    """The vendors publish a range without saying insert or insert-plus-adapters."""
+
+    def test_just_under_the_floor_with_adapters_is_reported_as_unresolved(
+        self, svc: Services
+    ) -> None:
+        # 280 bp of insert is under the 300 bp floor; 280 + 44 of adapter is over it.
+        ev = run(280, svc, vendor="twist_gene_fragment_adapter_on")
+        assert ev.raw_score == AMBIGUOUS
+        assert ev.passes, "unresolved is a finding, not a proven rejection"
+        assert "does not say whether it applies" in ev.breaches[0].message
+
+    def test_just_under_the_ceiling_with_adapters_too(self, svc: Services) -> None:
+        ev = run(4980, svc, vendor="twist_gene_fragment_adapter_on")
+        assert ev.raw_score == AMBIGUOUS
+        assert ev.breaches[0].detail["with_adapters_bp"] == 5024.0
+
+    def test_an_adapter_free_order_is_never_ambiguous(self, svc: Services) -> None:
+        """With no adapters the two readings are the same number."""
+        assert run(280, svc).raw_score == UNORDERABLE
+        assert run(4980, svc).passes
+
+    def test_well_inside_the_range_adapters_change_nothing(self, svc: Services) -> None:
+        assert run(900, svc, vendor="twist_gene_fragment_adapter_on").passes
+
+
+class TestTheRegistries:
+    def test_registries_describe_the_same_configurations(self) -> None:
+        """The bug this guards against already happened once.
+
+        Two vendor namespaces that validate their own keys independently let a
+        run be spec'd for one vendor's limits and another's adapters, and each
+        lookup succeeded. Adapters and lengths must describe the same set.
+        """
+        assert set(VENDOR_ADAPTERS) - {"none"} == set(VENDOR_LENGTHS)
+
+    def test_none_is_not_an_orderable_configuration(self) -> None:
+        with pytest.raises(ValueError, match="not orderable from anyone"):
+            LengthTiers(vendor="none")
+
+    def test_an_unknown_vendor_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="unknown vendor"):
+            LengthTiers(vendor="genscript_gentitan")
+
+    def test_every_range_is_non_empty_and_positive(self) -> None:
+        for name, (lo, hi) in VENDOR_LENGTHS.items():
+            assert 0 < lo < hi, name

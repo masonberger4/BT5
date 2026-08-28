@@ -124,9 +124,10 @@ class SynthesisRepeats:
     citations: ClassVar[tuple[Citation, ...]] = (
         Citation(
             "Twist gene synthesis FAQ: repeated sequences are a named complexity "
-            "trigger, with 20 bp the published limit; adapters are synthesised as "
-            "part of a Gene Fragment",
-            "https://www.twistbioscience.com/faq/gene-synthesis",
+            "trigger, with 20 bp the published limit. Adapters are an OPTION and "
+            "not the default -- Twist states that adapter sequences are not added "
+            "by default to Gene Fragments, and adapter-on is chosen at checkout",
+            "https://www.twistbioscience.com/faq/gene-synthesis/are-adapter-sequences-appended-ends-my-sequences",
             2026,
             sign="supports",
         ),
@@ -185,7 +186,11 @@ class SynthesisRepeats:
                 "type": "string",
                 "default": "twist_gene_fragment",
                 "enum": sorted(VENDOR_ADAPTERS),
-                "description": "Whose adapters are synthesised with the fragment.",
+                "description": (
+                    "Which vendor product the fragment is ordered as. Only the "
+                    "adapter-on options carry adapters; a plain Gene Fragment "
+                    "order is the ordered DNA and nothing else."
+                ),
             },
         },
     }
