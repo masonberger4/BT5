@@ -7,6 +7,7 @@ argument attached to it?
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -257,6 +258,33 @@ class TestShippedWeights:
         top = max(by_ref.values(), key=lambda e: e.weight)
         assert top.brief_ref == "2.B1"
         assert by_ref["2.B1"].weight > by_ref["2.C1"].weight
+
+    def test_every_weighted_ref_is_a_real_row_in_the_brief(self) -> None:
+        """The guard for the bug this test was written after.
+
+        The packaging presets originally weighted a `2.G1` that does not exist:
+        section 2.G of the brief is prose, not a numbered table, so the ref was
+        invented. It failed silently in the worst way -- `resolve` reported it
+        as an unimplemented objective, which reads exactly like a rule nobody
+        has written yet rather than a row nobody will ever write.
+
+        Rows appear either as a table row `| D4 |` or as bolded prose `**D4 `,
+        because the brief uses both forms.
+        """
+        brief = (Path(__file__).resolve().parents[4] / "docs" / "research" / "brief.md").read_text()
+        missing: list[str] = []
+        for preset in PRESETS:
+            for entry in preset.entries:
+                row = entry.brief_ref.split(".")[-1]
+                if f"| {row} |" not in brief and f"**{row} " not in brief:
+                    missing.append(f"{preset.id} -> {entry.brief_ref}")
+        assert not missing, f"presets weight brief rows that do not exist: {missing}"
+
+    def test_the_packaging_presets_weight_internal_polya(self) -> None:
+        """The measured 8-9x functional titer loss, which is the whole reason
+        these two presets differ from the plasmid case."""
+        for preset in (get("lentiviral_hek293"), get("aav_hek293")):
+            assert "2.D4" in preset.by_ref
 
     def test_no_shipped_preset_weights_a_hard_rule_in_this_build(self) -> None:
         """Runs resolve() against the live registry, which is what the pipeline
