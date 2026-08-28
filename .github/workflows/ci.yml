@@ -103,7 +103,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with: { enable-cache: true }
       - run: uv venv --python 3.11 .venv
-      - run: uv pip install --python .venv/bin/python -e ".[dev,export]"
+      - run: uv pip install --python .venv/bin/python -e ".[dev,export,fold]"
       - run: .venv/bin/pytest packages/engine/tests -q -m "not slow"
 
   # ---- The ONLY check named in the ruleset ---------------------------------
