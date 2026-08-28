@@ -30,6 +30,11 @@ from bt5.vector.candidates import (
     find_orfs,
     suggest_insertion_sites,
 )
+from bt5.vector.findings import (
+    hairpin_liabilities,
+    identical_exempt_repeats,
+    repeat_liabilities,
+)
 from bt5.vector.gibson import (
     MAX_ARM_BP,
     MIN_ARM_BP,
@@ -70,6 +75,7 @@ from bt5.vector.locations import (
 from bt5.vector.markers import is_marker, is_recombination_site
 from bt5.vector.notes import DesignNote, NoteKind, format_span
 from bt5.vector.remap import IntervalRemapper
+from bt5.vector.survey import Survey, construct_from_backbone, survey
 
 __all__ = [
     "MIN_ARM_TM_C",
@@ -89,6 +95,7 @@ __all__ = [
     "SiteCandidate",
     "InsertionSite",
     "InvertedRepeat",
+    "Survey",
     "IntervalRemapper",
     "LocationError",
     "ParsedLocation",
@@ -103,12 +110,15 @@ __all__ = [
     "cloning_sites",
     "backbone_from_record",
     "backbone_to_record",
+    "construct_from_backbone",
     "construct_to_record",
     "insert_shared_repeats",
     "insertion_site_from_interval",
     "junction_points",
     "find_orfs",
     "format_span",
+    "hairpin_liabilities",
+    "identical_exempt_repeats",
     "interval_to_location",
     "is_marker",
     "is_recombination_site",
@@ -120,9 +130,11 @@ __all__ = [
     "read_genbank",
     "read_snapgene",
     "read_vector",
+    "repeat_liabilities",
     "repeat_risk",
     "rotate_interval",
     "shortest_usable_arm",
     "suggest_insertion_sites",
+    "survey",
     "write_genbank",
 ]
