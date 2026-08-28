@@ -37,10 +37,15 @@ from typing import Any
 WORKFLOWS = pathlib.Path(".github/workflows")
 RULESET = pathlib.Path(".github/rulesets/main-protection.json")
 
-#: Jobs deliberately outside the merge gate. Empty on purpose: adding a name
-#: here is a decision to let a job fail without blocking a merge, and it should
-#: be visible in a diff rather than implied by an omission from `needs`.
-NON_BLOCKING: frozenset[str] = frozenset()
+#: Jobs deliberately outside the merge gate. Adding a name here is a decision to
+#: let a job fail without blocking a merge, and it belongs in a diff rather than
+#: being implied by an omission from `needs`.
+#:
+#: `main-broken` runs ONLY on push-to-main and is skipped on every pull_request
+#: event. The gate counts `skipped` as failure, so putting it in `needs` would
+#: block every pull request permanently -- the exact deadlock this script exists
+#: to catch, arrived at from the other direction.
+NON_BLOCKING: frozenset[str] = frozenset({"main-broken"})
 
 PATH_FILTER_KEYS = ("paths", "paths-ignore")
 

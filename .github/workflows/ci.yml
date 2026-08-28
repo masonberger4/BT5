@@ -171,6 +171,80 @@ jobs:
           git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" > /tmp/changed.txt
           .github/scripts/check-approval-labels.sh /tmp/changed.txt "$LABELS"
 
+  # ---- The post-merge safety net -------------------------------------------
+  # A required status check gates PULL REQUESTS. It can do nothing about a
+  # branch that has already been pushed, so until now a merge that broke main
+  # produced a red check-run and then silence: no issue, no revert, and no gate
+  # on the next merge landing on top of it. With `strict: false` in the ruleset
+  # and several lanes open at once, the first symptom is every OPEN pull request
+  # going red for a reason that has nothing to do with its own diff -- and the
+  # failure gets attributed to whichever agent's PR happened to run into it.
+  #
+  # DELIBERATELY NOT in `required-checks.needs`, and listed in that script's
+  # NON_BLOCKING set instead. It cannot be a gate dependency: it is skipped on
+  # every pull_request event, and the gate counts `skipped` as failure, so
+  # adding it to `needs` would block every PR permanently.
+  #
+  # `issues: write` is granted HERE and nowhere else. Job-level permissions
+  # replace the workflow-level block outright, so this scope reaches this job
+  # only -- no other job, and no third-party action in any other job, inherits it.
+  main-broken:
+    name: main-broken
+    if: >-
+      always() && github.event_name == 'push' &&
+      (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+    needs:
+      [changes, python-quality, invariants, contract, contract-freeze, python-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open one issue per broken commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # This job does no checkout -- it has nothing to build -- so `gh` has
+          # no local repo to infer from and must be told which one it is acting on.
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          TITLE="main is red at ${SHA:0:9}"
+          # One issue per commit, not one per re-run. `--search` is scoped to
+          # open issues so a closed one does not suppress a fresh break on a
+          # later commit that happens to share the prefix.
+          EXISTING="$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                        --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            echo "already tracked in #$EXISTING"
+            exit 0
+          fi
+          # No --label: the repository has no label set for this, and
+          # `gh issue create --label` FAILS on an unknown label rather than
+          # warning -- which would break the safety net at the one moment it is
+          # needed. Add one here if a suitable label is ever created.
+          gh issue create --title "$TITLE" --body "$(cat <<EOF
+          CI failed on \`main\` at [\`${SHA:0:9}\`](${{ github.server_url }}/${{ github.repository }}/commit/$SHA).
+
+          **Run:** $RUN_URL
+
+          Every open pull request will now go red against this base, for reasons
+          unrelated to its own diff. Fix forward or revert before merging anything
+          else -- the merge gate protects pull requests and cannot protect a branch
+          that has already been pushed.
+
+          Job results:
+
+          \`\`\`json
+          $RESULTS
+          \`\`\`
+
+          _Opened automatically by the \`main-broken\` job in ci.yml._
+          EOF
+          )"
+
   # ---- The ONLY check named in the ruleset ---------------------------------
   # `if: always()` plus an explicit needs.*.result inspection. Without the
   # inspection the gate reports success while everything under it burns; with
