@@ -6,6 +6,7 @@ the same construct -- a claim the evidence supports -- and which candidates are
 genuinely different from one another.
 """
 
+from bt5.score.conflicts import detect_conflicts, hard_versus_soft
 from bt5.score.distance import (
     codon_distance,
     distance_matrix,
@@ -34,28 +35,52 @@ from bt5.score.null import (
     percentile_of,
     synonymous_variant,
 )
+from bt5.score.presets import (
+    AAV,
+    BACTERIAL,
+    LENTIVIRAL,
+    PRESETS,
+    Preset,
+    PresetError,
+    ResolvedPreset,
+    WeightEntry,
+    preset_for,
+    resolve,
+)
 
 __all__ = [
+    "AAV",
+    "BACTERIAL",
     "DEFAULT_NULL_N",
     "G4_MIN_PAIRWISE_DISTANCE",
     "HASH_LENGTH",
+    "LENTIVIRAL",
     "MAX_GALLERY",
     "MIN_GALLERY",
+    "PRESETS",
     "Gallery",
     "NullDistribution",
     "NullKind",
+    "Preset",
+    "PresetError",
+    "ResolvedPreset",
     "SweepPoint",
+    "WeightEntry",
     "band_deviation",
     "build_gallery",
     "codon_distance",
     "design_hash",
+    "detect_conflicts",
     "distance_matrix",
     "greedy_max_min",
+    "hard_versus_soft",
     "normalise",
     "null_distribution",
     "nucleotide_distance",
     "pairwise_minimum",
     "percentile_of",
+    "preset_for",
+    "resolve",
     "simplex_weights",
     "sweep",
     "synonymous_variant",
