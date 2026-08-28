@@ -24,13 +24,18 @@ def test_lookup_by_id() -> None:
     assert get("e2_gc_band").enforcement is Enforcement.HARD_REPAIR
 
 
-def test_gc_band_encodes_the_published_twist_bound_not_the_folklore_one() -> None:
-    """The widely repeated 35-65% 50bp window figure has no vendor source; Twist's
-    published High-Complexity trigger is 10-90%."""
+def test_gc_band_uses_the_measured_global_manufacturability_bound() -> None:
+    """The band is the measured global envelope, not a published windowed trigger.
+
+    An 18-sequence ladder through both vendors' checkers showed no single window
+    gates acceptance; global GC does -- refused <=25%, accepted >=30%, ceiling
+    vendor-specific with Twist shipping 80%. See docs/design/vendor-gc-calibration.md.
+    """
     discover()
     spec = get("e2_gc_band")
     assert spec.evidence is Evidence.VENDOR_ASSERTED
-    assert any("10%" in c.label or "90%" in c.label for c in spec.citations)
+    assert spec.band == (0.28, 0.80)
+    assert any("vendor-gc-calibration" in c.label for c in spec.citations)
 
 
 def test_restriction_rule_declares_forward_motifs_only() -> None:
