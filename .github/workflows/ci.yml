@@ -5,6 +5,10 @@ name: ci
 # error and no timeout. All path filtering happens INSIDE jobs.
 on:
   pull_request:
+    # `labeled`/`unlabeled` are what let the approvals gate clear when the label
+    # is applied. Without them the check keeps its stale result and the only way
+    # to green is an unrelated push.
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
   merge_group:        # REQUIRED if a merge queue is ever enabled
   push:
     branches: [main]
@@ -106,6 +110,26 @@ jobs:
       - run: uv pip install --python .venv/bin/python -e ".[dev,export,fold]"
       - run: .venv/bin/pytest packages/engine/tests -q -m "not slow"
 
+  approvals:
+    name: approvals
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # Full history: the diff is taken against the merge base, and a shallow
+        # clone has no merge base to take it against.
+        with: { fetch-depth: 0 }
+      - name: Protected paths require their approval label
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Not a pull request; approval labels are a PR-time gate."
+            exit 0
+          fi
+          git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" > /tmp/changed.txt
+          .github/scripts/check-approval-labels.sh /tmp/changed.txt "$LABELS"
+
   # ---- The ONLY check named in the ruleset ---------------------------------
   # `if: always()` plus an explicit needs.*.result inspection. Without the
   # inspection the gate reports success while everything under it burns; with
@@ -114,13 +138,14 @@ jobs:
   required-checks:
     name: required-checks
     if: always()
-    needs: [changes, python-quality, invariants, contract, python-tests]
+    needs: [changes, python-quality, invariants, contract, python-tests, approvals]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed
         if: >-
           contains(needs.*.result, 'failure') ||
-          contains(needs.*.result, 'cancelled')
+          contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped')
         run: |
           echo "::error::One or more required jobs did not succeed"
           echo '${{ toJSON(needs) }}'

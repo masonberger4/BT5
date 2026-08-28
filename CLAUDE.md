@@ -110,6 +110,22 @@ Open your PR as a **draft** until you believe it is done; drafts skip the
 expensive CI jobs, and CI capacity is the binding constraint (20 concurrent job
 slots, ~12 per Python PR, so at most 5 open non-draft PRs at a time).
 
+## 7a. Merged branches leave a stale ref behind
+
+Head branches are auto-deleted on merge, so after every merge the local
+remote-tracking ref for your branch points at a commit that no longer exists on
+the remote. Anything comparing HEAD against it then reports phantom unpushed
+commits. Always fetch with `--prune`:
+
+```bash
+git fetch --prune origin main
+git checkout -B <your-branch> origin/main
+```
+
+`git config remote.origin.prune true` makes every fetch do it, but the setting
+is per-clone and does not survive a fresh checkout, so the flag is the reliable
+form.
+
 ## 8. Before you push
 
 Run these locally. One validated push beats three speculative ones.
