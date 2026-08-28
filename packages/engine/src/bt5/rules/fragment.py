@@ -42,9 +42,18 @@ from bt5.core.types import (
     Topology,
 )
 
-#: Twist Gene Fragment adapters, synthesised as part of the ordered fragment.
-#: VENDOR_ASSERTED and dated: vendor templates drift, and these are exactly the
-#: kind of constant that goes stale silently.
+#: Twist ADAPTER-ON Gene Fragment adapters, synthesised as part of the fragment.
+#:
+#: These belong to an OPTION, not to the product. Twist states plainly that
+#: "adapter sequences are not added by default to Gene Fragments" -- adapter-on
+#: and adapter-free are two choices made at checkout, so a plain Twist Gene
+#: Fragment order carries none of this:
+#: https://www.twistbioscience.com/faq/gene-synthesis/are-adapter-sequences-appended-ends-my-sequences
+#:
+#: VENDOR_ASSERTED and dated twice over: these are the adapters for orders placed
+#: after 2021-11-02, so an older order carries a DIFFERENT pair. Exactly the kind
+#: of constant that goes stale silently.
+#: https://www.twistbioscience.com/faq/gene-synthesis/what-are-adapter-sequences-used-adapter-gene-fragments
 TWIST_FIVE_PRIME = "CAATCCGCCCTCACTACAACCG"
 TWIST_THREE_PRIME = "CTACTCTGGCGTCGATGAGGGA"
 
@@ -63,11 +72,19 @@ class Adapters:
 
 
 NO_ADAPTERS = Adapters()
-TWIST_GENE_FRAGMENT = Adapters(TWIST_FIVE_PRIME, TWIST_THREE_PRIME, "twist_gene_fragment")
+
+#: A plain Twist Gene Fragment order. No adapters -- but it still names the
+#: vendor, because a finding has to say WHOSE fragment it is about and
+#: `NO_ADAPTERS` would report the vendor as "none".
+TWIST_GENE_FRAGMENT = Adapters(vendor="twist_gene_fragment")
+
+#: The adapter-on option. Only this one carries the adapters.
+TWIST_ADAPTER_ON = Adapters(TWIST_FIVE_PRIME, TWIST_THREE_PRIME, "twist_gene_fragment_adapter_on")
 
 VENDOR_ADAPTERS: dict[str, Adapters] = {
     "none": NO_ADAPTERS,
     "twist_gene_fragment": TWIST_GENE_FRAGMENT,
+    "twist_gene_fragment_adapter_on": TWIST_ADAPTER_ON,
 }
 
 

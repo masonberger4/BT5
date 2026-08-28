@@ -274,10 +274,12 @@ max_repeat_bp: int   # no exact repeat >= this length anywhere in the
   measured rejection data starts.
 - **Scope: the assembled construct.** That is the molecule the user ends up
   holding. BT5 still reports the *fragment* scope separately, because the vendor
-  screens the fragment plus its adapters and will reject on that regardless of
-  what the assembled plasmid looks like. The two scopes already exist and
-  already disagree deliberately (`bt5/rules/fragment.py`); the knob must not
-  collapse them.
+  screens the ordered fragment — plus its adapters, **if** the order carries any
+  — and will reject on that regardless of what the assembled plasmid looks like.
+  Adapters are an option, not a property of the product: Twist states that
+  adapter sequences are not added by default to Gene Fragments, and adapter-on
+  is chosen at checkout. The two scopes already exist and already disagree
+  deliberately (`bt5/rules/fragment.py`); the knob must not collapse them.
 - **Enforcement: `HARD_REPAIR`.** Not `HARD_LATTICE` — k-mer uniqueness is not
   decidable from a bounded suffix, since it depends on the entire prefix, so the
   Aho-Corasick automaton cannot guarantee it. Repair plus the independent
