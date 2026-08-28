@@ -283,9 +283,11 @@ BACTERIAL: Preset = Preset(
             1.0,
             "The highest-weighted objective in BT5, and the only one whose "
             "published effect size justifies it: r = 0.66 over 154 measured "
-            "variants. Weighted above its own default because in a bacterial "
-            "expression context there is no packaging or delivery objective "
-            "competing with it.",
+            "variants. This MATCHES the rule's own default rather than "
+            "departing from it: b1_five_prime gates to bacterial expression "
+            "and nothing else, so its default weight and its weight here are "
+            "necessarily the same judgement, and there is no second context "
+            "for the default to have been set for.",
         ),
         WeightEntry("2.C1", 0.2, _NATIVE_NOTE),
         WeightEntry("2.C3", 0.3, _NATIVE_NOTE),
