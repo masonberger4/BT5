@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from bt5.core.types import Construct, Interval, Segment, SegmentKind, Topology
+from bt5.core.types import (
+    Construct,
+    Interval,
+    Segment,
+    SegmentKind,
+    Topology,
+    reverse_complement,
+)
 from bt5.vector import ConstructKmerIndex, repeat_risk
 
 
@@ -110,14 +117,133 @@ class TestRiskSurface:
 
 
 class TestInvertedRepeats:
-    def test_finds_a_hairpin_stem(self) -> None:
-        from bt5.core.types import reverse_complement
+    """A hairpin is not a direct repeat with a minus sign on it.
 
-        stem = dna(25, seed=61)
-        seq = dna(200) + stem + dna(30, seed=67) + reverse_complement(stem) + dna(200, seed=71)
-        found = list(ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60))
+    A direct repeat is lost by deletion and codon choice fixes it. An inverted
+    repeat extrudes a cruciform, stalls forks and is cleaved by SbcCD -- a
+    different mechanism with a different answer, which is why it has its own
+    type and stays out of `repeat_risk`.
+    """
+
+    def hairpin(self, arm: str, loop: int, *, lead: int = 200, tail: int = 200) -> str:
+        return dna(lead) + arm + dna(loop, seed=67) + reverse_complement(arm) + dna(tail, seed=71)
+
+    def test_finds_a_hairpin_stem(self) -> None:
+        found = ConstructKmerIndex.of(
+            construct(self.hairpin(dna(25, seed=61), 30)), 20
+        ).revcomp_pairs(20, 60)
         assert found
-        assert any(b.strand == -1 for _, b in found)
+        assert all(p.second.strand == -1 for p in found)
+        assert all(p.first.strand == 1 for p in found)
+
+    def test_the_stem_is_reported_at_its_full_length(self) -> None:
+        """Seeding at 20 and reporting the seed calls a 60 bp stem a 20 bp one."""
+        arm = dna(60, seed=81)
+        found = ConstructKmerIndex.of(construct(self.hairpin(arm, 10)), 20).revcomp_pairs(20, 60)
+        assert len(found) == 1, "one hairpin is one finding, not one per seed offset"
+        assert found[0].stem >= 60
+        assert found[0].loop == 10
+
+    def test_one_hairpin_is_one_finding(self) -> None:
+        """Without maximal extension this reported 26 near-identical pairs."""
+        found = ConstructKmerIndex.of(
+            construct(self.hairpin(dna(60, seed=81), 10)), 20
+        ).revcomp_pairs(20, 60)
+        assert len(found) == 1
+
+    def test_an_origin_spanning_hairpin_is_found(self) -> None:
+        """The 3' arm lives past position n, so indexing only the first turn
+        loses it -- silently, and on exactly the ITR layouts that matter."""
+        arm = dna(30, seed=83)
+        hairpin = arm + dna(10, seed=89) + reverse_complement(arm)
+        cut = 35  # split the hairpin so it straddles position 0
+        seq = hairpin[cut:] + dna(400, seed=97) + hairpin[:cut]
+        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        assert found, "an origin-spanning stem-loop is still a stem-loop"
+        assert found[0].stem >= 20
+
+    def test_the_same_hairpin_is_found_wherever_the_origin_sits(self) -> None:
+        arm = dna(30, seed=83)
+        hairpin = arm + dna(10, seed=89) + reverse_complement(arm)
+        middle = dna(200) + hairpin + dna(200, seed=97)
+        rotated = middle[240:] + middle[:240]
+        a = ConstructKmerIndex.of(construct(middle), 20).revcomp_pairs(20, 60)
+        b = ConstructKmerIndex.of(construct(rotated), 20).revcomp_pairs(20, 60)
+        assert len(a) == len(b) == 1
+        assert a[0].stem == b[0].stem
+        assert a[0].loop == b[0].loop
+
+    def test_a_perfect_palindrome_has_no_loop(self) -> None:
+        arm = dna(40, seed=101)
+        seq = dna(200) + arm + reverse_complement(arm) + dna(200, seed=103)
+        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        assert found[0].loop == 0
+        assert found[0].perfect_palindrome
+
+    def test_the_loop_ceiling_is_enforced(self) -> None:
+        arm = dna(25, seed=107)
+        assert (
+            ConstructKmerIndex.of(construct(self.hairpin(arm, 200)), 20).revcomp_pairs(20, 60) == []
+        )
+
+    def test_nested_stems_collapse_to_the_maximal_one(self) -> None:
+        """A homopolymer arm pairs at every offset, so one physical stem seeds
+        41 nested alignments. Reporting them all buries the finding in itself."""
+        # Explicit non-pairing flanks: a stray A or T beside the arm gives the
+        # homopolymer a second valid register, which is a real alternative stem
+        # rather than a duplicate, and not what this test is about.
+        seq = dna(149) + "G" + "A" * 40 + "T" * 40 + "G" + dna(149, seed=137)
+        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        assert len(found) == 1
+        assert found[0].stem == 40
+        assert found[0].perfect_palindrome
+
+    def test_a_stem_is_found_from_its_outermost_seed_alone(self) -> None:
+        """The invariant the inward-only extension rests on: every seed position
+        is indexed, so the outermost one is always available and closing inward
+        from it recovers the whole stem. Checked where the stem touches position
+        0, which is where an outward pass would have been the only rescue."""
+        arm = dna(50, seed=139)
+        seq = arm + dna(10, seed=149) + reverse_complement(arm) + dna(300, seed=151)
+        found = ConstructKmerIndex.of(construct(seq), 20).revcomp_pairs(20, 60)
+        assert len(found) == 1
+        assert found[0].first.start == 0
+        assert found[0].stem >= 50
+
+    def test_an_exempt_region_can_be_excluded(self) -> None:
+        """AAV ITRs are palindromic by construction; reporting them is noise."""
+        arm = dna(60, seed=81)
+        seq = self.hairpin(arm, 10)
+        # An annotated ITR feature comfortably contains its palindrome; both
+        # arms must fall inside for the exclusion to apply, as for direct repeats.
+        itr = Interval(150, 380)
+        index = ConstructKmerIndex.of(construct(seq), 20)
+        assert index.revcomp_pairs(20, 60)
+        assert index.revcomp_pairs(20, 60, exclude=[itr]) == []
+
+    def test_a_direct_repeat_is_not_an_inverted_one(self) -> None:
+        """The two scans must not leak into each other: only the direct one
+        feeds a risk surface calibrated on the deletion literature."""
+        unit = dna(40, seed=109)
+        direct = dna(200) + unit + dna(300, seed=113) + unit + dna(200, seed=127)
+        assert ConstructKmerIndex.of(construct(direct), 20).revcomp_pairs(20, 400) == []
+
+    def test_an_inverted_repeat_is_not_a_direct_one(self) -> None:
+        arm = dna(40, seed=109)
+        seq = dna(200) + arm + dna(300, seed=113) + reverse_complement(arm) + dna(200, seed=127)
+        assert ConstructKmerIndex.of(construct(seq), 20).repeat_pairs(20) == []
+
+    def test_the_arms_really_base_pair(self) -> None:
+        """Checked against the sequence, not against the coordinates that
+        produced it: a stem whose arms do not pair is not a stem."""
+        arm = dna(45, seed=131)
+        seq = self.hairpin(arm, 12)
+        c = construct(seq)
+        for pair in ConstructKmerIndex.of(c, 20).revcomp_pairs(20, 60):
+            assert c.slice(pair.first) == reverse_complement(
+                seq[pair.second.start : pair.second.end]
+            )
+            assert pair.first.length == pair.second.length == pair.stem
 
 
 class TestBiosecurity:

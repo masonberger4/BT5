@@ -108,6 +108,38 @@ def repeat_risk(length: int, spacer: int, *, tandem: bool = False) -> RiskBand:
     return "moderate" if length >= SUBSTANTIAL_BP else "low"
 
 
+@dataclass(frozen=True, slots=True)
+class InvertedRepeat:
+    """Two arms that base-pair with each other: a hairpin or cruciform precursor.
+
+    Mechanically distinct from a direct repeat and not interchangeable with one.
+    A direct repeat is lost by deletion -- slipped-strand mispairing or
+    single-strand annealing -- and codon choice fixes it. An inverted repeat
+    extrudes a cruciform, stalls replication forks and is cleaved by SbcCD; the
+    answer is usually a strain and a temperature, not a redesign. That is why it
+    gets its own type and does NOT feed `repeat_risk`, whose bands are calibrated
+    on the deletion literature and would be a category error here.
+
+    Banding inverted repeats needs its own citations. Until the rules lane does
+    that pass, this reports geometry and nothing else.
+    """
+
+    #: The 5' arm, read on the plus strand.
+    first: Interval
+    #: The 3' arm, reported on the MINUS strand, where it reads identically to
+    #: the first. "Opposite direction on one strand" and "same direction on
+    #: opposite strands" describe one physical object; strand -1 records which
+    #: of the two readings this interval is.
+    second: Interval
+    stem: int
+    loop: int
+
+    @property
+    def perfect_palindrome(self) -> bool:
+        """Arms abutting with no loop: the most extrudable configuration."""
+        return self.loop == 0
+
+
 class ConstructKmerIndex:
     """Exact repeats and inverted repeats within one assembled construct."""
 
@@ -206,29 +238,107 @@ class ConstructKmerIndex:
             tandem=start_b - (start_a + length) <= 0,
         )
 
-    def revcomp_pairs(self, min_stem: int, max_loop: int) -> Iterator[tuple[Interval, Interval]]:
-        """Inverted repeats: a stem of at least `min_stem` within `max_loop` bases.
+    def revcomp_pairs(
+        self, min_stem: int, max_loop: int, *, exclude: Sequence[Interval] = ()
+    ) -> list[InvertedRepeat]:
+        """Maximal inverted repeats: a stem of at least `min_stem` within `max_loop`.
 
-        These are hairpin precursors and palindromic instability sites, distinct
-        from direct repeats both mechanically and in what a user can do about them.
+        Maximal, like the direct-repeat scan and for the same reason. Seeding at
+        a fixed width and reporting the seed says a 60 bp stem is 20 bp, once per
+        offset -- 26 near-identical findings for one hairpin, each understating
+        it threefold. How long the stem actually is IS the finding.
         """
-        text, n = self._text, self._n
+        text = self._text
+        n, limit = self._n, len(self._text) - min_stem + 1
         seeds: dict[str, list[int]] = {}
-        for i in range(min(n, len(text) - min_stem + 1)):
+        # Indexed over the WHOLE doubled text, not just the first turn: the 3'
+        # arm of a stem-loop straddling the origin lives past position n, and
+        # indexing only [0, n) drops every origin-spanning hairpin silently.
+        for i in range(max(0, limit)):
             seeds.setdefault(text[i : i + min_stem], []).append(i)
-        emitted: set[tuple[int, int]] = set()
-        for i in range(min(n, len(text) - min_stem + 1)):
+
+        seen: set[tuple[int, int]] = set()
+        out: list[InvertedRepeat] = []
+        probe_limit = n if self._construct.is_circular else max(0, n - min_stem + 1)
+        for i in range(probe_limit):
             probe = reverse_complement(text[i : i + min_stem])
             for j in seeds.get(probe, ()):
-                if j <= i:
+                if j < i + min_stem:
+                    continue  # the arms would overlap
+                stem = self._extend_stem(i, j, min_stem, max_loop)
+                if stem is None:
                     continue
-                loop = j - (i + min_stem)
-                if 0 <= loop <= max_loop and (i, j) not in emitted:
-                    emitted.add((i, j))
-                    yield (
-                        Interval(i, i + min_stem),
-                        Interval(j, j + min_stem, -1),
-                    )
+                key = (stem.first.start, stem.second.end)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if _inside_any(stem.first, exclude) and _inside_any(stem.second, exclude):
+                    continue
+                out.append(stem)
+        out.sort(key=lambda p: (-p.stem, p.first.start))
+        return _drop_contained_stems(out)[:MAX_PAIRS]
+
+    def _extend_stem(self, i: int, j: int, min_stem: int, max_loop: int) -> InvertedRepeat | None:
+        """Grow a seeded stem inward until the arms stop pairing.
+
+        A stem grows differently from a direct repeat. Its arms pair END TO END,
+        so they close on each other and eat the loop two bases at a time, rather
+        than sliding in the same direction. Comparing `text[a_end]` against
+        `text[b_start]`, as the direct-repeat extension does, would be checking
+        the wrong two bases.
+
+        Inward only, deliberately. Every seed position is indexed, so the
+        OUTERMOST seed of a stem is always among them, and from there closing
+        inward recovers the whole stem -- an outward pass as well changes no
+        result on any input (hairpin, perfect palindrome, homopolymer arm,
+        origin-spanning, linear, or a stem at position 0). Inner seeds yield
+        shorter nested stems instead of converging, which is what
+        `_drop_contained_stems` is for. If seed enumeration ever becomes sparse,
+        that invariant goes with it and this needs an outward pass again.
+        """
+        text, n = self._text, self._n
+        a_start, a_end = i, i + min_stem
+        b_start, b_end = j, j + min_stem
+        while b_start - a_end >= 2 and _complementary(text[a_end], text[b_start - 1]):
+            a_end += 1
+            b_start -= 1
+
+        stem, loop = a_end - a_start, b_start - a_end
+        if stem < min_stem or loop > max_loop:
+            return None
+        if a_start >= n:
+            return None  # both arms live in the doubled tail
+        if self._construct.is_circular and b_start - a_start == n:
+            return None  # a self-complementary arm matching its own second copy
+        return InvertedRepeat(
+            first=Interval(a_start, a_end),
+            second=Interval(b_start, b_end, -1),
+            stem=stem,
+            loop=loop,
+        )
+
+
+_COMPLEMENT = {"A": "T", "T": "A", "G": "C", "C": "G"}
+
+
+def _complementary(x: str, y: str) -> bool:
+    return _COMPLEMENT.get(x) == y
+
+
+def _drop_contained_stems(stems: list[InvertedRepeat]) -> list[InvertedRepeat]:
+    """Keep only maximal stems: one hairpin otherwise reports once per seed offset."""
+    kept: list[InvertedRepeat] = []
+    for stem in stems:
+        if any(
+            k.first.start <= stem.first.start
+            and stem.first.end <= k.first.end
+            and k.second.start <= stem.second.start
+            and stem.second.end <= k.second.end
+            for k in kept
+        ):
+            continue
+        kept.append(stem)
+    return kept
 
 
 def _inside_any(iv: Interval, regions: Sequence[Interval]) -> bool:
