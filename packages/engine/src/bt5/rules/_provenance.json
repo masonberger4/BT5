@@ -1,0 +1,128 @@
+{
+  "_about": {
+    "describes": "vendors.py -- the VendorProfile registry",
+    "policy": "Every number in a profile is one of MEASURED (BT5 put a probe sequence through the vendor's own order-entry checker and recorded the verdict), PUBLISHED (the vendor states it on a page we link), or INHERITED (carried from a sibling product of the SAME vendor, never across vendors). A profile's `notes` field says which, in prose, for the reader of a finding; this file records the source for the reader of the code.",
+    "why_in_lane": "Liability-flagging vendor data, so it lives beside the module under M4's ownership rather than in root data/. Nothing here changes a protein.",
+    "recalibration": "Vendor numbers drift -- Twist moved its published homopolymer limit from 14 to 30 bp between 2023 and 2026. Re-run the ladder and re-read the pages on the cadence in docs/design/vendor-gc-calibration.md, and move `last_verified` only when you actually looked."
+  },
+
+  "twist_gene_fragment": {
+    "vendor": "Twist Bioscience",
+    "product": "Gene Fragment",
+    "last_verified": "2026-08-28",
+    "adapters": {
+      "status": "PUBLISHED",
+      "value": "none",
+      "source": "https://www.twistbioscience.com/faq/gene-synthesis/are-adapter-sequences-appended-ends-my-sequences",
+      "notes": "\"Adapter sequences are not added by default to Gene Fragments.\" Adapter-on is a separate checkout option, carried as its own profile."
+    },
+    "length_bp": {
+      "status": "PUBLISHED",
+      "value": [300, 5000],
+      "source": "https://www.twistbioscience.com/faq/gene-synthesis/are-there-any-sequence-limitationsdesign-guidelines-genes-which-i-should-follow",
+      "notes": "The 300 bp FLOOR is the bound users are surprised by. Clonal genes, not fragments, are what reach 7 kb."
+    },
+    "homopolymer": {
+      "status": "PUBLISHED",
+      "value": [13, 13],
+      "source": "https://www.twistbioscience.com/faq/gene-synthesis",
+      "notes": "STALE-LEANING AND DELIBERATELY TIGHT. The brief recorded 'under 14 bp', which is the 2023 number; the current FAQ says 30 bp. Neither is stated for the Gene Fragment product specifically. Kept at 13 because E1 is HARD_LATTICE: loosening it on an unverified number fails SILENTLY, since a lattice constraint's output when a run is permitted is the absence of a finding. Open question for the next recalibration."
+    },
+    "global_gc": {
+      "status": "MEASURED",
+      "value": [0.28, 0.80],
+      "source": "docs/design/vendor-gc-calibration.md",
+      "measured_on": "2026-08-28",
+      "notes": "18-probe ladder through the Twist order form: <=25% Not Accepted, 30-80% all Standard, including 80%. Floor 0.28 splits the refused 25% from the accepted 30%."
+    }
+  },
+
+  "twist_gene_fragment_adapter_on": {
+    "vendor": "Twist Bioscience",
+    "product": "Gene Fragment, adapters appended",
+    "last_verified": "2026-08-28",
+    "adapters": {
+      "status": "PUBLISHED",
+      "value": ["CAATCCGCCCTCACTACAACCG", "CTACTCTGGCGTCGATGAGGGA"],
+      "source": "https://www.twistbioscience.com/faq/gene-synthesis/what-are-adapter-sequences-used-adapter-gene-fragments",
+      "notes": "DATED TWICE OVER: these are the adapters for orders placed after 2021-11-02. An older order carries a different pair."
+    },
+    "length_bp": {
+      "status": "INHERITED",
+      "from": "twist_gene_fragment",
+      "value": [300, 5000],
+      "notes": "Same product, different checkout option. See e9_length_tiers for the unresolved question of whether the bound applies to the insert or the insert plus these 44 bp -- E9 reports the disagreement rather than guessing."
+    },
+    "homopolymer": {"status": "INHERITED", "from": "twist_gene_fragment", "value": [13, 13]},
+    "global_gc": {"status": "INHERITED", "from": "twist_gene_fragment", "value": [0.28, 0.80]}
+  },
+
+  "idt_gblocks": {
+    "vendor": "IDT",
+    "product": "gBlocks Gene Fragment",
+    "last_verified": "2026-08-28",
+    "adapters": {
+      "status": "PUBLISHED",
+      "value": "none",
+      "source": "https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/gblocks-gene-fragments"
+    },
+    "length_bp": {
+      "status": "PUBLISHED",
+      "value": [125, 3000],
+      "source": "https://www.idtdna.com/pages/support/faqs/what-is-the-length-of-gblocks-gene-fragments-that-idt-can-synthesize",
+      "notes": "The only configured product that accepts an insert under 300 bp, which is what makes it the alternative E9 names for a short design."
+    },
+    "homopolymer": {
+      "status": "PUBLISHED",
+      "value": [9, 5],
+      "source": "https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/gblocks-gene-fragments",
+      "notes": "~10 consecutive A/T but only ~6 consecutive G/C. The asymmetry is the point: it is the clearest vendor evidence that G/C runs are chemically worse rather than merely repetitive (G-quadruplex formation on the solid support), and a single 'max homopolymer' number would encode the wrong physics. These are the tightest run limits in the registry, which is why DEFAULT_VENDOR resolves here."
+    },
+    "global_gc": {
+      "status": "MEASURED",
+      "value": [0.28, 0.77],
+      "source": "docs/design/vendor-gc-calibration.md",
+      "measured_on": "2026-08-28",
+      "notes": "18-probe ladder through the gBlocks plate-entry complexity checker: <=25% Denied, 30-65% clean, 70-75% Accepted-Moderate (an acceptance with a surcharge), 80% Denied. The ceiling 0.77 is the solved Denied threshold from the penalty line score = 1.40*GC%-83.8, fit on three exact hits. IDT's own STATED target is 32-62%, which is a soft scored preference and not where they refuse -- the measurement is what is encoded."
+    }
+  },
+
+  "idt_eblocks": {
+    "vendor": "IDT",
+    "product": "eBlocks Gene Fragment",
+    "last_verified": "2026-08-28",
+    "adapters": {
+      "status": "PUBLISHED",
+      "value": "none",
+      "source": "https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/eblocks-gene-fragments"
+    },
+    "length_bp": {
+      "status": "PUBLISHED",
+      "value": [300, 1500],
+      "source": "https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/eblocks-gene-fragments"
+    },
+    "homopolymer": {
+      "status": "INHERITED",
+      "from": "idt_gblocks",
+      "value": [9, 5],
+      "notes": "Same vendor, different product line. eBlocks publish their own design guidelines and these have not been read against them."
+    },
+    "global_gc": {
+      "status": "INHERITED",
+      "from": "idt_gblocks",
+      "value": [0.28, 0.77],
+      "notes": "The calibration ladder was run through gBlocks plate entry only, so this is one IDT product's measurement applied to another. Inheriting inside a vendor is the policy; nothing is carried across one, because the ladder's finding IS that Twist ships 80% as Standard where IDT denies it."
+    }
+  },
+
+  "_dropped": {
+    "genscript": {
+      "was": "homopolymer (15, 15), in the old e1_homopolymers.VENDOR_LIMITS",
+      "why": "Out of scope -- BT5 spec's gene fragments from Twist and IDT -- and it had no adapters and no length range, so it could never become a complete profile. VendorProfile now refuses a half-filled one on principle."
+    },
+    "twist_standard": {
+      "was": "homopolymer (13, 13), in the old e1_homopolymers.VENDOR_LIMITS",
+      "why": "Not a product. 'Standard' is the complexity VERDICT the Twist checker returns, so this key named a tier while the adapter/length namespace next to it named a product. Its numbers moved to twist_gene_fragment; the key is gone."
+    }
+  }
+}

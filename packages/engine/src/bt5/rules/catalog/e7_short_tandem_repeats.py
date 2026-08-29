@@ -59,7 +59,8 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
-from bt5.rules.fragment import VENDOR_ADAPTERS, Fragment, fragments
+from bt5.rules.fragment import Fragment, fragments
+from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
 
 #: Microsatellite unit lengths. 1 is excluded at report time, not here: the scan
 #: needs period 1 in order to recognise a homopolymer and hand it to E1.
@@ -178,8 +179,8 @@ class ShortTandemRepeats:
             "hard_tract": {"type": "integer", "default": HARD_TRACT_BP},
             "vendor": {
                 "type": "string",
-                "default": "twist_gene_fragment",
-                "enum": sorted(VENDOR_ADAPTERS),
+                "default": DEFAULT_VENDOR,
+                "enum": list(all_keys()),
                 "description": (
                     "Which vendor product the fragment is ordered as. Only the "
                     "adapter-on options carry adapters; a plain Gene Fragment "
@@ -194,7 +195,7 @@ class ShortTandemRepeats:
         max_unit: int = MAX_UNIT_BP,
         warn_tract: int = WARN_TRACT_BP,
         hard_tract: int = HARD_TRACT_BP,
-        vendor: str = "twist_gene_fragment",
+        vendor: str = DEFAULT_VENDOR,
     ) -> None:
         if max_unit < MIN_UNIT_BP:
             raise ValueError(
@@ -208,8 +209,7 @@ class ShortTandemRepeats:
             )
         if hard_tract < warn_tract:
             raise ValueError(f"hard_tract {hard_tract} must not be below {warn_tract}")
-        if vendor not in VENDOR_ADAPTERS:
-            raise ValueError(f"unknown vendor {vendor!r}; have {sorted(VENDOR_ADAPTERS)}")
+        profile(vendor)  # raises on an unknown key, with the real ones listed
         self.max_unit = max_unit
         self.warn_tract = warn_tract
         self.hard_tract = hard_tract
@@ -233,7 +233,7 @@ class ShortTandemRepeats:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = VENDOR_ADAPTERS[self.vendor]
+        adapters = profile(self.vendor).adapters
         breaches: list[Breach] = []
         worst = 0
         scanned = 0

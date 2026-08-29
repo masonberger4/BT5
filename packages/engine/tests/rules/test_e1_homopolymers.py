@@ -8,7 +8,8 @@ from bt5.core.registry import discover, get
 from bt5.core.services import Services
 from bt5.core.spec import Enforcement
 from bt5.core.types import Construct, Interval, Segment, SegmentKind, Topology
-from bt5.rules.catalog.e1_homopolymers import VENDOR_LIMITS, Homopolymers, _maximal_runs
+from bt5.rules.catalog.e1_homopolymers import Homopolymers, _maximal_runs
+from bt5.rules.vendors import PROFILES
 from conftest import construct, context, slot
 
 discover()
@@ -136,18 +137,44 @@ class TestEvaluate:
 
 class TestVendors:
     def test_the_vendor_changes_the_limits(self) -> None:
+        """A 12 nt A-run is over IDT's 9 and under Twist's 13."""
         c = construct("ATG" + "A" * 12 + "TAA")
         assert evaluate(Homopolymers(vendor="idt_gblocks"), c).breaches
-        assert not evaluate(Homopolymers(vendor="genscript"), c).breaches
+        assert not evaluate(Homopolymers(vendor="twist_gene_fragment"), c).breaches
 
     def test_explicit_limits_override_the_vendor(self) -> None:
         rule = Homopolymers(max_at_run=20, vendor="idt_gblocks")
         assert rule.max_at_run == 20
-        assert rule.max_gc_run == VENDOR_LIMITS["idt_gblocks"][1], "the other limit still applies"
+        assert rule.max_gc_run == PROFILES["idt_gblocks"].homopolymer_gc, (
+            "the other limit still applies"
+        )
 
     def test_an_unknown_vendor_is_refused(self) -> None:
         with pytest.raises(ValueError, match="unknown vendor"):
             Homopolymers(vendor="acme")
+
+    def test_no_vendor_chosen_is_refused_rather_than_guessed(self) -> None:
+        """`none` reaches E4-E7 legitimately -- they need only the synthesis
+        scope. Here it is a request to check a sequence against the limits of a
+        vendor nobody picked, and guessing which vendor to answer with is exactly
+        the split default this registry exists to end."""
+        with pytest.raises(ValueError, match="not orderable from anyone"):
+            Homopolymers(vendor="none")
+
+    def test_the_default_is_the_strictest_shipped_configuration(self) -> None:
+        """The unified default must not LOOSEN a lattice bound.
+
+        E1 is HARD_LATTICE, so its output when a run is permitted is silence --
+        there is no finding to notice. That asymmetry is why the shared default
+        resolves toward the tighter run limits even though the length range it
+        brings with it is not the one most orders use.
+        """
+        default = Homopolymers()
+        for p in PROFILES.values():
+            if not p.is_orderable:
+                continue
+            assert default.max_at_run <= p.homopolymer_at, p.key
+            assert default.max_gc_run <= p.homopolymer_gc, p.key
 
     def test_an_absurd_limit_is_refused(self) -> None:
         with pytest.raises(ValueError, match="forbid ordinary sequence"):

@@ -16,7 +16,7 @@ from bt5.core.services import Services
 from bt5.core.spec import Enforcement
 from bt5.core.types import Construct
 from bt5.rules.catalog.e9_length_tiers import AMBIGUOUS, UNORDERABLE, LengthTiers
-from bt5.rules.fragment import VENDOR_ADAPTERS, VENDOR_LENGTHS
+from bt5.rules.vendors import PROFILES, orderable_keys
 from conftest import construct, context
 
 
@@ -124,15 +124,53 @@ class TestTheAmbiguousBound:
         assert run(900, svc, vendor="twist_gene_fragment_adapter_on").passes
 
 
-class TestTheRegistries:
-    def test_registries_describe_the_same_configurations(self) -> None:
-        """The bug this guards against already happened once.
+class TestTheRegistry:
+    """The bug this guards against already happened once.
 
-        Two vendor namespaces that validate their own keys independently let a
-        run be spec'd for one vendor's limits and another's adapters, and each
-        lookup succeeded. Adapters and lengths must describe the same set.
-        """
-        assert set(VENDOR_ADAPTERS) - {"none"} == set(VENDOR_LENGTHS)
+    Two vendor namespaces that validated their own keys independently let a run
+    be spec'd for one vendor's limits and another's adapters, and each lookup
+    succeeded. The old test here compared the two dicts' key sets; there is now
+    one dict, so the same guarantee is asserted against the structure that
+    replaced them -- an orderable profile carries EVERY vendor fact or none of
+    them, and half a profile is refused at construction.
+    """
+
+    def test_an_orderable_profile_is_complete(self) -> None:
+        for key in orderable_keys():
+            p = PROFILES[key]
+            assert p.adapters.vendor == key, "adapters must name their own configuration"
+            assert p.length_bp is not None
+            assert p.homopolymer_at is not None
+            assert p.homopolymer_gc is not None
+            assert p.global_gc is not None
+            assert p.last_verified
+            assert p.notes.strip()
+
+    def test_a_half_specified_profile_cannot_be_constructed(self) -> None:
+        """The structural replacement for comparing two dicts' key sets."""
+        from bt5.rules.fragment import IDT_GBLOCKS
+        from bt5.rules.vendors import VendorProfile
+
+        with pytest.raises(ValueError, match="half-specified"):
+            VendorProfile(
+                key="idt_gblocks",
+                vendor="IDT",
+                product="gBlocks Gene Fragment",
+                adapters=IDT_GBLOCKS,
+                length_bp=(125, 3000),  # a length but no run limits and no GC band
+            )
+
+    def test_a_profile_cannot_carry_another_configurations_adapters(self) -> None:
+        from bt5.rules.fragment import TWIST_ADAPTER_ON
+        from bt5.rules.vendors import VendorProfile
+
+        with pytest.raises(ValueError, match="one configuration, one name"):
+            VendorProfile(
+                key="idt_gblocks",
+                vendor="IDT",
+                product="gBlocks Gene Fragment",
+                adapters=TWIST_ADAPTER_ON,
+            )
 
     def test_none_is_not_an_orderable_configuration(self) -> None:
         with pytest.raises(ValueError, match="not orderable from anyone"):
@@ -143,5 +181,6 @@ class TestTheRegistries:
             LengthTiers(vendor="genscript_gentitan")
 
     def test_every_range_is_non_empty_and_positive(self) -> None:
-        for name, (lo, hi) in VENDOR_LENGTHS.items():
-            assert 0 < lo < hi, name
+        for key in orderable_keys():
+            lo, hi = PROFILES[key].length_bp
+            assert 0 < lo < hi, key

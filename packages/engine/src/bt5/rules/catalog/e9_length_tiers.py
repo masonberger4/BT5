@@ -15,6 +15,15 @@ land under the floor, and without this rule BT5 would design one, rank it
 against a null, hash it, and write it into the order file. The user would find
 out at checkout.
 
+The default configuration is the one that does NOT have that floor -- gBlocks,
+125-3000 bp -- and that is not the rule undercutting its own headline. The
+default is shared with E1, which is HARD_LATTICE, and a shared default has to be
+chosen where getting it wrong is loudest: a loosened run limit reports nothing at
+all, while a wrong length range reports a finding that names the configurations
+which would take the fragment. So E9 absorbs the imprecise default on purpose,
+and the floor lands the moment a user selects Twist or eBlocks. See
+`bt5.rules.vendors.DEFAULT_VENDOR`.
+
 **Why HARD_CHECK rather than HARD_REPAIR.** Length is fixed by the protein and
 the genetic code: every synonymous codon is three bases, so the mutation space
 the solver searches does not contain a single sequence of a different length.
@@ -59,7 +68,8 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct
-from bt5.rules.fragment import VENDOR_ADAPTERS, VENDOR_LENGTHS, fragments
+from bt5.rules.fragment import fragments
+from bt5.rules.vendors import DEFAULT_VENDOR, accepting_length, orderable, orderable_keys
 
 #: A fragment that cannot be ordered under either reading of the bound.
 UNORDERABLE = 1.0
@@ -67,19 +77,6 @@ UNORDERABLE = 1.0
 #: Below 1.0 deliberately: it is a real finding and not a proven rejection, so it
 #: is reported without failing the rule.
 AMBIGUOUS = 0.5
-
-DEFAULT_VENDOR = "twist_gene_fragment"
-
-
-def alternatives(length: int, exclude: str) -> tuple[str, ...]:
-    """Every other configuration whose range contains `length`."""
-    return tuple(
-        sorted(
-            name
-            for name, (lo, hi) in VENDOR_LENGTHS.items()
-            if name != exclude and lo <= length <= hi
-        )
-    )
 
 
 @register
@@ -135,7 +132,7 @@ class LengthTiers:
             "vendor": {
                 "type": "string",
                 "default": DEFAULT_VENDOR,
-                "enum": sorted(VENDOR_LENGTHS),
+                "enum": list(orderable_keys()),
                 "description": (
                     "Which vendor configuration the fragment is ordered as. Each "
                     "has its own orderable length range, and the minimum differs "
@@ -146,11 +143,9 @@ class LengthTiers:
     }
 
     def __init__(self, vendor: str = DEFAULT_VENDOR) -> None:
-        if vendor not in VENDOR_LENGTHS:
-            raise ValueError(
-                f"unknown vendor {vendor!r}; have {sorted(VENDOR_LENGTHS)}. "
-                f"'none' is not orderable from anyone and has no length range."
-            )
+        # `orderable` and not `profile`: this rule's entire question is what a
+        # vendor will accept, and "no vendor chosen" is not orderable from anyone.
+        self.profile = orderable(vendor)
         self.vendor = vendor
 
     def gate(self, slot: ContextSlot) -> bool:
@@ -166,8 +161,9 @@ class LengthTiers:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = VENDOR_ADAPTERS[self.vendor]
-        lo, hi = VENDOR_LENGTHS[self.vendor]
+        adapters = self.profile.adapters
+        assert self.profile.length_bp is not None  # guaranteed by `orderable`
+        lo, hi = self.profile.length_bp
         breaches: list[Breach] = []
         frags = fragments(c, adapters)
 
@@ -179,7 +175,7 @@ class LengthTiers:
             if ordered_ok and total_ok:
                 continue
 
-            alts = alternatives(length, self.vendor)
+            alts = accepting_length(length, exclude=self.vendor)
             where = (
                 "orderable instead as " + ", ".join(alts)
                 if alts
