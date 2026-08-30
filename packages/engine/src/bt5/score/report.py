@@ -30,13 +30,42 @@ from dataclasses import dataclass
 
 from bt5.core.result import Candidate, Conflict, DesignResult, ObjectiveScore
 from bt5.core.types import Provenance
+from bt5.rules.vendors import DEFAULT_VENDOR, orderable
 
 #: Mean error-free synthesis length, in bp, from each vendor's published
 #: per-base fidelity. P(perfect clone) = exp(-L/E). These are VENDOR-ASSERTED
 #: and drift, so they carry a verification date like any other vendor number.
+#:
+#: **Keyed on `vendors.PROFILES` keys, and that is load-bearing.** This table
+#: used to be keyed on "twist" and "idt_eblocks" -- a THIRD vendor namespace,
+#: overlapping the real registry by one key and by coincidence. It validated its
+#: own keys, so it raised for `idt_gblocks`, which is BT5's own DEFAULT_VENDOR,
+#: and accepted "twist", which names no orderable product. PR #53 merged two such
+#: namespaces into one; this was the third. `test_no_fourth_vendor_namespace`
+#: keeps it from reopening.
+#:
+#: A profile ABSENT from this table is not an error -- it is a vendor whose
+#: fidelity BT5 has not got on file. See `screening_burden`.
 ERROR_FREE_BP: dict[str, int] = {
-    "twist": 7500,
+    # https://www.twistbioscience.com/faq/gene-synthesis
+    "twist_gene_fragment": 7500,
+    # Inherited from the plain Gene Fragment: adapter-on is a checkout option on
+    # the same product and the same synthesis process, not a different one. Same
+    # within-a-vendor inheritance policy vendors.py states for GC bands and run
+    # limits, and here it is inheritance within a single PRODUCT, which is safer
+    # still.
+    "twist_gene_fragment_adapter_on": 7500,
+    # https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/eblocks-gene-fragments
     "idt_eblocks": 5000,
+    # NOTE the absence of "idt_gblocks", which is DEFAULT_VENDOR. No published
+    # error-free length is on file for gBlocks, and there are two wrong ways to
+    # fill that hole. Inventing a figure is obvious. The subtle one is inheriting
+    # eBlocks' 5000 across IDT's two product lines: a fidelity number comes out
+    # of a manufacturing process, not a design guideline, and eBlocks and gBlocks
+    # are different processes. `test_the_vendor_changes_the_answer` already says
+    # what that costs -- "reporting one vendor's number under another's name is
+    # the kind of quiet error a lab pays for in plates". So BT5 says it does not
+    # know, and the report carries a degradation saying so. See issue #54.
 }
 ERROR_FREE_LAST_VERIFIED = "2026-08-28"
 
@@ -64,23 +93,40 @@ class ScreeningBurden:
 def screening_burden(
     length_bp: int,
     *,
-    vendor: str = "idt_eblocks",
+    vendor: str = DEFAULT_VENDOR,
     confidence: float = DEFAULT_CONFIDENCE,
-) -> ScreeningBurden:
+) -> ScreeningBurden | None:
     """Colonies to pick for `confidence` of at least one error-free clone.
 
     P(perfect) = exp(-L/E); n = ceil(ln(1-confidence) / ln(1-P)).
+
+    Returns None -- not a raise, and not a guess -- when `vendor` is a real
+    orderable configuration whose error-free length BT5 has not got on file.
+    Two failures live here and they are NOT the same failure:
+
+    - "acme" is not a vendor anyone can order from, and `none` is "no vendor
+      chosen". Both are caller bugs and both raise.
+    - `idt_gblocks` IS orderable, and is BT5's own default, and no published
+      fidelity figure exists for it in this repo. That is a gap in BT5's data,
+      not an error in the request, and the honest answer is "I do not know how
+      many colonies to pick" rather than eBlocks' number wearing gBlocks' name.
+
+    Collapsing the two is how the report ends up quietly authoritative about a
+    number nobody measured. `build_report` turns the None into a degradation, so
+    the absence is stated rather than merely missing.
     """
     if length_bp <= 0:
         raise ValueError(f"length must be positive, got {length_bp}")
     if not 0.0 < confidence < 1.0:
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
-    try:
-        e = ERROR_FREE_BP[vendor]
-    except KeyError:
-        raise ValueError(
-            f"no error-free length on file for {vendor!r}; have {sorted(ERROR_FREE_BP)}"
-        ) from None
+    # THREE outcomes, and the registry draws two of the lines for us. `orderable`
+    # raises for a key nobody sells ("acme") and for `none`, which is "no vendor
+    # chosen" -- and how many colonies to pick is a question only a vendor can
+    # answer, so shrugging at it would be the guessed-vendor bug wearing a shrug.
+    orderable(vendor)
+    e = ERROR_FREE_BP.get(vendor)
+    if e is None:
+        return None
 
     p = math.exp(-length_bp / e)
     # p == 1.0 only for a construct short enough that the log below divides by
@@ -136,7 +182,7 @@ def build_report(
     *,
     translation_table_id: int,
     preset_id: str = "",
-    vendor: str = "idt_eblocks",
+    vendor: str = DEFAULT_VENDOR,
     advisories: Sequence[str] = (),
     strain_protocol: Sequence[str] = (),
     extra_degradations: Sequence[str] = (),
@@ -152,6 +198,16 @@ def build_report(
     degradations = tuple(provenance.degradations) if provenance else ()
     engines = tuple(sorted(provenance.engine_versions.items())) if provenance else ()
 
+    # A vendor with no error-free length on file is REPORTED as unknown, never
+    # answered with a neighbour's number. `is_complete` reads `degradations`, so
+    # this also stops a report missing its screening line from looking complete.
+    burden = screening_burden(len(candidate.cds), vendor=vendor)
+    if burden is None:
+        degradations += (
+            f"screening burden unavailable: no published error-free length on file "
+            f"for {vendor}, so BT5 cannot say how many colonies to pick",
+        )
+
     return QcReport(
         design_hash=candidate.design_hash,
         translation_table_id=translation_table_id,
@@ -163,7 +219,7 @@ def build_report(
         advisories=tuple(advisories),
         degradations=degradations + tuple(extra_degradations),
         strain_protocol=tuple(strain_protocol),
-        burden=screening_burden(len(candidate.cds), vendor=vendor),
+        burden=burden,
         native_baseline_available=result.native_baseline is not None,
         preset_id=preset_id,
         engine_versions=engines,
