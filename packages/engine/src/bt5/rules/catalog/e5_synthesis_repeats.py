@@ -58,7 +58,13 @@ from bt5.core.spec import (
 )
 from bt5.core.types import Construct, Interval
 from bt5.rules.fragment import Fragment, fragments
-from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
+from bt5.rules.vendors import (
+    DEFAULT_SELECTION,
+    DEFAULT_VENDOR,
+    VendorSelection,
+    all_keys,
+    require_selection,
+)
 
 #: The shortest repeat that can reach a 60 C duplex at any composition
 #: (pure-GC 12-mer = 58.7 C, pure-GC 10-mer = 49.7 C). Also the brief's warn floor.
@@ -183,10 +189,12 @@ class SynthesisRepeats:
             "min_len": {"type": "integer", "default": MIN_LENGTH_BP, "minimum": MIN_LENGTH_BP},
             "hard_len": {"type": "integer", "default": HARD_LENGTH_BP},
             "anneal_c": {"type": "number", "default": ANNEAL_C},
-            "vendor": {
-                "type": "string",
-                "default": DEFAULT_VENDOR,
-                "enum": list(all_keys()),
+            "vendors": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": list(all_keys())},
+                "default": [DEFAULT_VENDOR],
                 "description": (
                     "Which vendor product the fragment is ordered as. Only the "
                     "adapter-on options carry adapters; a plain Gene Fragment "
@@ -201,7 +209,7 @@ class SynthesisRepeats:
         min_len: int = MIN_LENGTH_BP,
         hard_len: int = HARD_LENGTH_BP,
         anneal_c: float = ANNEAL_C,
-        vendor: str = DEFAULT_VENDOR,
+        vendors: VendorSelection = DEFAULT_SELECTION,
     ) -> None:
         if min_len < MIN_LENGTH_BP:
             raise ValueError(
@@ -211,13 +219,12 @@ class SynthesisRepeats:
             )
         if hard_len < min_len:
             raise ValueError(f"hard_len {hard_len} must not be below min_len {min_len}")
-        profile(vendor)  # raises on an unknown key, with the real ones listed
         if not 30.0 <= anneal_c <= 80.0:
             raise ValueError(f"anneal_c {anneal_c} is outside any real PCR protocol")
         self.min_len = min_len
         self.hard_len = hard_len
         self.anneal_c = anneal_c
-        self.vendor = vendor
+        self.vendors = require_selection(vendors)
 
     def gate(self, slot: ContextSlot) -> bool:
         # Every construct BT5 designs is ordered as DNA, including an IVT mRNA
@@ -233,7 +240,7 @@ class SynthesisRepeats:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = profile(self.vendor).adapters
+        adapters = self.vendors.adapters
         breaches: list[Breach] = []
         worst = "warn"
         scanned = 0

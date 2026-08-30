@@ -77,7 +77,13 @@ from bt5.core.spec import (
 )
 from bt5.core.types import Construct, Interval
 from bt5.rules.fragment import Fragment, fragments
-from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
+from bt5.rules.vendors import (
+    DEFAULT_SELECTION,
+    DEFAULT_VENDOR,
+    VendorSelection,
+    all_keys,
+    require_selection,
+)
 
 #: SD of GC is taken over 100 bp windows -- the window the feature was ranked at.
 DGC_WINDOW_BP = 100
@@ -263,10 +269,12 @@ class GCExtent:
                     "chance. 1.0 would report every sequence, since chance is 1.0."
                 ),
             },
-            "vendor": {
-                "type": "string",
-                "default": DEFAULT_VENDOR,
-                "enum": list(all_keys()),
+            "vendors": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": list(all_keys())},
+                "default": [DEFAULT_VENDOR],
                 "description": (
                     "Which vendor configuration the fragment is ordered as. Only "
                     "the adapter-on options carry adapters, and adapter GC counts "
@@ -281,7 +289,7 @@ class GCExtent:
         dgc_window: int = DGC_WINDOW_BP,
         extent_window: int = EXTENT_WINDOW_BP,
         warn_ratio: float = WARN_RATIO,
-        vendor: str = DEFAULT_VENDOR,
+        vendors: VendorSelection = DEFAULT_SELECTION,
     ) -> None:
         if dgc_window < 20 or extent_window < 20:
             raise ValueError(
@@ -294,11 +302,10 @@ class GCExtent:
                 f"warn_ratio {warn_ratio} is at or below chance (1.0), which would "
                 f"report every sequence including a perfectly uniform one"
             )
-        profile(vendor)  # raises on an unknown key, with the real ones listed
         self.dgc_window = dgc_window
         self.extent_window = extent_window
         self.warn_ratio = warn_ratio
-        self.vendor = vendor
+        self.vendors = require_selection(vendors)
 
     def gate(self, slot: ContextSlot) -> bool:
         # Every construct BT5 designs is ordered as DNA, in every context.
@@ -314,7 +321,7 @@ class GCExtent:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = profile(self.vendor).adapters
+        adapters = self.vendors.adapters
         breaches: list[Breach] = []
         windows: list[tuple[Interval, float]] = []
         worst = 0.0
@@ -394,7 +401,7 @@ class GCExtent:
                 message=message,
                 fixable_by_codon_choice=True,
                 detail={
-                    "vendor": self.vendor,
+                    "vendor": self.vendors.label,
                     "dispersion_ratio": round(ratio, 3),
                     "extent_pct": round(span, 2),
                     "min_gc_pct": round(lo, 2),

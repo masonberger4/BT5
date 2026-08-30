@@ -9,7 +9,7 @@ from bt5.core.services import Services
 from bt5.core.spec import Enforcement
 from bt5.core.types import Construct, Interval, Segment, SegmentKind, Topology
 from bt5.rules.catalog.e1_homopolymers import Homopolymers, _maximal_runs
-from bt5.rules.vendors import PROFILES
+from bt5.rules.vendors import PROFILES, VendorSelection
 from conftest import construct, context, slot
 
 discover()
@@ -139,11 +139,13 @@ class TestVendors:
     def test_the_vendor_changes_the_limits(self) -> None:
         """A 12 nt A-run is over IDT's 9 and under Twist's 13."""
         c = construct("ATG" + "A" * 12 + "TAA")
-        assert evaluate(Homopolymers(vendor="idt_gblocks"), c).breaches
-        assert not evaluate(Homopolymers(vendor="twist_gene_fragment"), c).breaches
+        assert evaluate(Homopolymers(vendors=VendorSelection.of("idt_gblocks")), c).breaches
+        assert not evaluate(
+            Homopolymers(vendors=VendorSelection.of("twist_gene_fragment")), c
+        ).breaches
 
     def test_explicit_limits_override_the_vendor(self) -> None:
-        rule = Homopolymers(max_at_run=20, vendor="idt_gblocks")
+        rule = Homopolymers(max_at_run=20, vendors=VendorSelection.of("idt_gblocks"))
         assert rule.max_at_run == 20
         assert rule.max_gc_run == PROFILES["idt_gblocks"].homopolymer_gc, (
             "the other limit still applies"
@@ -151,7 +153,7 @@ class TestVendors:
 
     def test_an_unknown_vendor_is_refused(self) -> None:
         with pytest.raises(ValueError, match="unknown vendor"):
-            Homopolymers(vendor="acme")
+            Homopolymers(vendors=VendorSelection.of("acme"))
 
     def test_no_vendor_chosen_is_refused_rather_than_guessed(self) -> None:
         """`none` reaches E4-E7 legitimately -- they need only the synthesis
@@ -159,7 +161,7 @@ class TestVendors:
         vendor nobody picked, and guessing which vendor to answer with is exactly
         the split default this registry exists to end."""
         with pytest.raises(ValueError, match="not orderable from anyone"):
-            Homopolymers(vendor="none")
+            Homopolymers(vendors=VendorSelection.of("none"))
 
     def test_the_default_is_the_strictest_shipped_configuration(self) -> None:
         """The unified default must not LOOSEN a lattice bound.
@@ -192,3 +194,64 @@ def test_it_applies_in_every_modality() -> None:
 def test_it_is_registered_under_its_brief_row() -> None:
     assert get("e1_homopolymers") is Homopolymers
     assert Homopolymers.brief_ref == "2.E1"
+
+
+class TestMultiVendorAttribution:
+    """#43 V3: one automaton, one enforced limit -- the strictest -- and per-axis
+    attribution so a finding names which selected product it is a finding against."""
+
+    def _sel(self) -> VendorSelection:
+        return VendorSelection.of("idt_gblocks", "twist_gene_fragment")
+
+    def test_the_strictest_limit_binds_and_the_message_names_it(self) -> None:
+        # 11 A: over IDT's 9, under Twist's 13. IDT binds.
+        c = construct("ATG" + "A" * 11 + "TAA")
+        b = evaluate(Homopolymers(vendors=self._sel()), c).breaches[0]
+        assert b.detail["limit"] == 9.0
+        assert b.detail["vendor"] == "idt_gblocks"
+        assert "9 nt idt_gblocks limit" in b.message
+
+    def test_a_recodeable_run_names_the_looser_vendor_that_would_accept_it(self) -> None:
+        c = construct("ATG" + "A" * 11 + "TAA")
+        b = evaluate(Homopolymers(vendors=self._sel()), c).breaches[0]
+        assert b.detail["accepting"] == "twist_gene_fragment"
+        assert b.detail["scope"] == "ordered"
+        assert "twist_gene_fragment would accept" in b.message
+
+    def test_a_backbone_run_names_no_accepting_vendor(self) -> None:
+        """E1 scans the whole construct; a run in the user's own backbone is DNA
+        no vendor is asked to synthesize, so 'twist would accept it' would be an
+        affirmative false claim about a fragment nobody is ordering."""
+        # A G-run of 8 wholly inside the backbone: over IDT's 5, under Twist's 13.
+        c = construct("ATGCTGTAA", "GGGGGGGGCCC")
+        b = evaluate(Homopolymers(vendors=self._sel()), c).breaches[0]
+        assert b.detail["scope"] == "backbone"
+        assert b.detail["accepting"] == ""
+        assert not b.fixable_by_codon_choice
+        assert "would accept" not in b.message
+
+    def test_a_run_over_both_names_both_as_binders_and_no_acceptor(self) -> None:
+        c = construct("ATG" + "A" * 14 + "TAA")  # over IDT 9 and Twist 13
+        b = evaluate(Homopolymers(vendors=self._sel()), c).breaches[0]
+        assert b.detail["vendor"] == "idt_gblocks"  # 9 is the min; only IDT publishes it
+        assert b.detail["accepting"] == ""
+
+    def test_an_override_attributes_the_limit_to_nobody(self) -> None:
+        """Today `Homopolymers(max_at_run=20, vendor='idt_gblocks')` says 'over the
+        20 nt idt_gblocks limit' while IDT publishes 9 -- a live misattribution of
+        the user's own number to a vendor. The override guard ends it."""
+        c = construct("ATG" + "A" * 22 + "TAA")
+        b = evaluate(Homopolymers(max_at_run=20, vendors=self._sel()), c).breaches[0]
+        assert b.detail["limit_source"] == "override"
+        assert b.detail["vendor"] == ""
+        assert b.detail["accepting"] == ""
+        assert "limit you set" in b.message
+
+    def test_an_override_on_one_axis_leaves_the_other_a_vendor_limit(self) -> None:
+        # Override A/T only; a G/C run must still be attributed to the vendor.
+        rule = Homopolymers(max_at_run=20, vendors=self._sel())
+        c = construct("ATG" + "G" * 8 + "TAA")  # over IDT's 5, under Twist's 13
+        b = evaluate(rule, c).breaches[0]
+        assert b.detail["base_class"] == "G/C"
+        assert b.detail["limit_source"] == "vendor"
+        assert b.detail["vendor"] == "idt_gblocks"

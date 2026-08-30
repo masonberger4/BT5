@@ -28,6 +28,7 @@ from bt5.rules.catalog.e7_short_tandem_repeats import (
 )
 from bt5.rules.catalog.f1_direct_repeats import DirectRepeats
 from bt5.rules.catalog.f2_near_perfect_repeats import NearPerfectRepeats
+from bt5.rules.vendors import VendorSelection
 from bt5.vector.kmers import ConstructKmerIndex
 from conftest import construct, context, slot
 
@@ -210,7 +211,7 @@ class TestContract:
         with pytest.raises(ValueError, match="must not be below"):
             ShortTandemRepeats(warn_tract=50, hard_tract=30)
         with pytest.raises(ValueError, match="unknown vendor"):
-            ShortTandemRepeats(vendor="acme")
+            ShortTandemRepeats(vendors=VendorSelection.of("acme"))
 
     def test_it_is_registered_under_its_brief_row(self) -> None:
         assert get("e7_short_tandem_repeats") is ShortTandemRepeats

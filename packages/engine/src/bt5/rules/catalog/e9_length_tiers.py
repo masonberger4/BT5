@@ -69,7 +69,13 @@ from bt5.core.spec import (
 )
 from bt5.core.types import Construct
 from bt5.rules.fragment import fragments
-from bt5.rules.vendors import DEFAULT_VENDOR, accepting_length, orderable, orderable_keys
+from bt5.rules.vendors import (
+    DEFAULT_SELECTION,
+    DEFAULT_VENDOR,
+    VendorSelection,
+    orderable_keys,
+    require_selection,
+)
 
 #: A fragment that cannot be ordered under either reading of the bound.
 UNORDERABLE = 1.0
@@ -77,6 +83,11 @@ UNORDERABLE = 1.0
 #: Below 1.0 deliberately: it is a real finding and not a proven rejection, so it
 #: is reported without failing the rule.
 AMBIGUOUS = 0.5
+#: A fragment one selected vendor will build and another will not. Non-blocking,
+#: and below AMBIGUOUS: "IDT refuses this at 4002 bp, Twist takes it" is a routing
+#: fact, not a defect. #43 V3, disjunctive multi-select -- a design a selected
+#: vendor can synthesise is not failed just because another cannot.
+NARROWED = 0.25
 
 
 @register
@@ -129,24 +140,25 @@ class LengthTiers:
     param_schema: ClassVar[Mapping[str, object]] = {
         "type": "object",
         "properties": {
-            "vendor": {
-                "type": "string",
-                "default": DEFAULT_VENDOR,
-                "enum": list(orderable_keys()),
+            "vendors": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": list(orderable_keys())},
+                "default": [DEFAULT_VENDOR],
                 "description": (
-                    "Which vendor configuration the fragment is ordered as. Each "
-                    "has its own orderable length range, and the minimum differs "
-                    "between them by more than the maximum does."
+                    "Which vendor configurations the fragment is spec'd for. Each "
+                    "has its own orderable length range; a design one accepts and "
+                    "another refuses is reported, not blocked."
                 ),
             },
         },
     }
 
-    def __init__(self, vendor: str = DEFAULT_VENDOR) -> None:
-        # `orderable` and not `profile`: this rule's entire question is what a
-        # vendor will accept, and "no vendor chosen" is not orderable from anyone.
-        self.profile = orderable(vendor)
-        self.vendor = vendor
+    def __init__(self, vendors: VendorSelection = DEFAULT_SELECTION) -> None:
+        # `orderable_only`: this rule's entire question is what a vendor will
+        # accept, and "no vendor chosen" is not orderable from anyone.
+        self.vendors = require_selection(vendors).orderable_only()
 
     def gate(self, slot: ContextSlot) -> bool:
         # Every construct BT5 designs is ordered as DNA, in every context.
@@ -161,43 +173,75 @@ class LengthTiers:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = self.profile.adapters
-        assert self.profile.length_bp is not None  # guaranteed by `orderable`
-        lo, hi = self.profile.length_bp
+        label = self.vendors.label
+        adapters = self.vendors.adapters
+        profiles = self.vendors.profiles
         breaches: list[Breach] = []
         frags = fragments(c, adapters)
 
         for frag in frags:
             length = frag.ordered.length
             total = length + adapters.total
-            ordered_ok = lo <= length <= hi
-            total_ok = lo <= total <= hi
-            if ordered_ok and total_ok:
-                continue
+            verdicts = self.vendors.verdicts_for_length(length)
+            accepting = [k for k, v in verdicts if v == "accept"]
+            ambiguous = [k for k, v in verdicts if v == "ambiguous"]
+            refusing = [k for k, v in verdicts if v != "accept"]
+            if not refusing:
+                continue  # every selected configuration builds this fragment
 
-            alts = accepting_length(length, exclude=self.vendor)
+            alts = self.vendors.alternatives_for(length)
             where = (
                 "orderable instead as " + ", ".join(alts)
                 if alts
                 else "no configured vendor accepts this length"
             )
-            if ordered_ok != total_ok:
+
+            if accepting:
+                # Disjunctive: a selected vendor will build it. Report the split,
+                # do not block -- no codon moves a length, so failing a buildable
+                # design helps no one.
+                magnitude = NARROWED
+                message = (
+                    f"{length} bp is outside the range of {', '.join(refusing)}, but "
+                    f"{', '.join(accepting)}, which you also selected, accepts it. No "
+                    f"codon choice changes a length -- order from an accepting vendor"
+                )
+            elif ambiguous:
+                # No selected vendor accepts outright and one is ambiguous. Only an
+                # adapter-on order reaches here, and `of()` makes that single-key,
+                # so there is exactly one profile and today's wording is exact.
+                p = profiles[0]
+                assert p.length_bp is not None
+                lo, hi = p.length_bp
+                magnitude = AMBIGUOUS
                 message = (
                     f"{length} bp of ordered DNA plus {adapters.total} bp of "
-                    f"{self.vendor} adapters is {total} bp, and the published "
+                    f"{label} adapters is {total} bp, and the published "
                     f"{lo}-{hi} bp range does not say whether it applies to the "
                     f"insert or to the total. One reading accepts this order and "
                     f"the other rejects it; confirm with the vendor before building"
                 )
-                magnitude = AMBIGUOUS
-            else:
+            elif len(profiles) == 1:
+                # Every selected vendor refuses, and there is only one, so the
+                # message reads exactly as it did before selections existed.
+                p = profiles[0]
+                assert p.length_bp is not None
+                lo, hi = p.length_bp
+                magnitude = UNORDERABLE
                 side = "below the" if length < lo else "above the"
                 message = (
-                    f"{length} bp is {side} {lo}-{hi} bp {self.vendor} range, so "
+                    f"{length} bp is {side} {lo}-{hi} bp {label} range, so "
                     f"this fragment cannot be ordered as designed. No codon choice "
                     f"changes a length -- {where}"
                 )
+            else:
+                # Every selected vendor refuses, and there is more than one.
                 magnitude = UNORDERABLE
+                message = (
+                    f"{length} bp is outside the range of every selected configuration "
+                    f"({', '.join(refusing)}), so this fragment cannot be ordered as "
+                    f"designed. No codon choice changes a length -- {where}"
+                )
 
             breaches.append(
                 Breach(
@@ -207,11 +251,11 @@ class LengthTiers:
                     message=message,
                     fixable_by_codon_choice=False,
                     detail={
-                        "vendor": self.vendor,
+                        "vendor": label,
+                        "refusing": ", ".join(refusing),
+                        "accepting": ", ".join(accepting),
                         "ordered_bp": float(length),
                         "with_adapters_bp": float(total),
-                        "min_bp": float(lo),
-                        "max_bp": float(hi),
                         "alternatives": ", ".join(alts) if alts else "none",
                     },
                 )

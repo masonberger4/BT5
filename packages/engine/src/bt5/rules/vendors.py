@@ -326,6 +326,204 @@ def accepting_length(bp: int, exclude: str = "") -> tuple[str, ...]:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class VendorSelection:
+    """One or more configurations a fragment is being spec'd for at once.
+
+    #43 V2/V3. A rule used to take a single `vendor: str`; it now takes a
+    selection, because a user may want a design that every one of several vendors
+    can build. The selection carries the answer to the three questions that
+    genuinely differ per vendor -- run limits (E1), length range (E9), GC band
+    (E2, wired in #43 V3b) -- and nothing else, because with adapters off the
+    table (the owner never orders them) the ordered molecule is identical under
+    every configuration and the four synthesis rules see no difference at all.
+
+    `of()` is the ONLY public constructor, and it is varargs on purpose:
+    `VendorSelection.of("idt_gblocks")` is one key and can never be misread as
+    five characters. `require_selection` refuses a bare string outright, so the
+    old `vendor="idt_gblocks"` call site fails loudly rather than silently
+    iterating a string.
+
+    Multi-vendor is N verdicts, not one merged threshold. But it is still ONE
+    evaluation and ONE breach per physical fact -- the rules attribute a finding
+    to the configurations it is a finding against, they do not re-run themselves
+    per vendor. Where two vendors' limits differ, enforcement is the stricter
+    (there is one automaton, one lattice) and only the ATTRIBUTION is per vendor.
+    """
+
+    #: Deduplicated, order-preserving. `of()` is the only thing that builds it.
+    keys: tuple[str, ...]
+
+    @staticmethod
+    def of(*keys: str) -> VendorSelection:
+        """Build a selection, refusing every combination that is not a design.
+
+        Four refusals, each reusing the registry's own message where one exists:
+        an empty selection is not a choice; an unknown key is `profile()`'s
+        error; `none` cannot be combined with a real vendor; and adapter-on may
+        not be mixed with adapter-free, because those are physically different
+        molecules and BT5 designs one. That last refusal is what makes the
+        "different molecule per vendor" hazard structurally unreachable rather
+        than something each rule has to remember to handle.
+        """
+        if not keys:
+            raise ValueError(
+                "an empty selection is not a choice; omit the argument for the "
+                "default or name a configuration"
+            )
+        seen: dict[str, None] = {}
+        for k in keys:
+            profile(k)  # raises "unknown vendor 'x'; have [...]" -- one message, reused
+            seen[k] = None
+        unique = tuple(seen)
+
+        if len(unique) > 1 and "none" in unique:
+            raise ValueError(
+                "'no vendor chosen' is not a vendor you can add another to; pick "
+                "configurations or pick none, not both"
+            )
+        # Compare the PAYLOAD, not the Adapters object: NO_ADAPTERS,
+        # TWIST_GENE_FRAGMENT, IDT_GBLOCKS and IDT_EBLOCKS are four distinct
+        # objects that all carry the same empty payload, so object identity would
+        # refuse a selection of two adapter-free products it should accept.
+        payloads = {(profile(k).adapters.five, profile(k).adapters.three) for k in unique}
+        if len(payloads) > 1:
+            raise ValueError(
+                "a selection may not mix adapter-on and adapter-free configurations: "
+                "they are physically different molecules and BT5 designs one. Order "
+                "them as separate designs"
+            )
+        return VendorSelection(unique)
+
+    @property
+    def profiles(self) -> tuple[VendorProfile, ...]:
+        return tuple(profile(k) for k in self.keys)
+
+    @property
+    def label(self) -> str:
+        """The configurations, comma-joined -- what a finding names. For a single
+        key this is the key itself, so a single-vendor finding reads exactly as it
+        did before the selection existed."""
+        return ", ".join(self.keys)
+
+    def orderable_only(self) -> VendorSelection:
+        """Assert every member is a product a vendor will take, and return self.
+
+        For rules whose whole question is "will a vendor build this" -- E1's run
+        limits, E9's length range. `none` reaches them as a request to answer a
+        question with no answer; `orderable()` raises for it with the message the
+        registry already owns. Returns self so it composes at a call site.
+        """
+        for k in self.keys:
+            orderable(k)
+        return self
+
+    @property
+    def adapters(self) -> Adapters:
+        """The one adapter payload the selection shares, labelled with the whole
+        selection. `of()` proved the payload is shared, so any member's is the
+        selection's. The label -- not a member's key -- is what `fragments()`
+        stamps onto `Fragment.vendor`, so a finding names the molecule's whole
+        selection rather than one arbitrary member of it. Single key: identical
+        to that product's own adapters today."""
+        first = self.profiles[0].adapters
+        return Adapters(first.five, first.three, vendor=self.label)
+
+    def homopolymer_limits(
+        self,
+    ) -> tuple[tuple[int, tuple[str, ...]], tuple[int, tuple[str, ...]]]:
+        """Per axis, the strictest run limit across the selection and the real
+        configurations that publish it.
+
+        Enforcement is min-merged and cannot be otherwise: there is one automaton
+        and `lattice_terms` returns one forbidden set, so the union of forbidden
+        runs IS the minimum. What the binders buy is attribution -- naming which
+        selected product a run is too long for. Requires an orderable selection
+        (call `orderable_only()` first); an orderable profile always carries both
+        axes.
+        """
+
+        def axis(values: list[tuple[int, str]]) -> tuple[int, tuple[str, ...]]:
+            m = min(v for v, _ in values)
+            return m, tuple(k for v, k in values if v == m)
+
+        at: list[tuple[int, str]] = []
+        gc: list[tuple[int, str]] = []
+        for k, p in zip(self.keys, self.profiles, strict=True):
+            assert p.homopolymer_at is not None  # orderable: both axes present
+            assert p.homopolymer_gc is not None
+            at.append((p.homopolymer_at, k))
+            gc.append((p.homopolymer_gc, k))
+        return axis(at), axis(gc)
+
+    def homopolymer_accepts(self, length: int, base_class: str) -> tuple[str, ...]:
+        """Selected configurations that accept a run of `length` on this axis.
+
+        A run over the strictest limit may still be within a looser vendor's, and
+        E1 says so when the run is recodeable. `base_class` is "A/T" or "G/C".
+        """
+        axis = "homopolymer_at" if base_class == "A/T" else "homopolymer_gc"
+        out = []
+        for k, p in zip(self.keys, self.profiles, strict=True):
+            limit = getattr(p, axis)
+            if limit is not None and length <= limit:
+                out.append(k)
+        return tuple(out)
+
+    def verdicts_for_length(self, bp: int) -> tuple[tuple[str, str], ...]:
+        """Per orderable member, whether it accepts `bp` of ordered DNA.
+
+        `"accept"` / `"ambiguous"` / `"refuse"`. Ambiguous is the insert-versus-
+        insert+adapters question E9 already reported; it can only arise for an
+        adapter-on selection, which `of()` guarantees is single-key. Non-orderable
+        members (`none`) are skipped; E9 calls `orderable_only()` so there are
+        none.
+        """
+        out: list[tuple[str, str]] = []
+        for k, p in zip(self.keys, self.profiles, strict=True):
+            if p.length_bp is None:
+                continue
+            lo, hi = p.length_bp
+            total = bp + p.adapters.total
+            ordered_ok = lo <= bp <= hi
+            total_ok = lo <= total <= hi
+            if ordered_ok and total_ok:
+                out.append((k, "accept"))
+            elif ordered_ok != total_ok:
+                out.append((k, "ambiguous"))
+            else:
+                out.append((k, "refuse"))
+        return tuple(out)
+
+    def alternatives_for(self, bp: int) -> tuple[str, ...]:
+        """Orderable configurations OUTSIDE the selection whose range contains
+        `bp`. Delegates to `accepting_length` so the two cannot drift; for a
+        single-key selection it equals `accepting_length(bp, exclude=key)`,
+        pinned by test."""
+        chosen = set(self.keys)
+        return tuple(k for k in accepting_length(bp) if k not in chosen)
+
+
+#: What every rule assumes when the user has not chosen. One key, the one default.
+DEFAULT_SELECTION = VendorSelection.of(DEFAULT_VENDOR)
+
+
+def require_selection(value: object) -> VendorSelection:
+    """The one gate every rule constructor runs its `vendors` argument through.
+
+    A `VendorSelection` passes; anything else -- above all a bare `str`, the old
+    call shape -- raises `TypeError` rather than being silently iterated into a
+    per-character selection. This is the structural half of what `of()`'s varargs
+    started: the selection cannot be built wrong, and it cannot be passed wrong.
+    """
+    if not isinstance(value, VendorSelection):
+        raise TypeError(
+            f"vendors must be a VendorSelection, not {type(value).__name__}; "
+            f"pass VendorSelection.of('idt_gblocks'), not a bare string"
+        )
+    return value
+
+
 # Import-time proof, not a test: a registry whose keys and members disagree is
 # the exact failure this module was written to end, and it should be impossible
 # to import a broken one rather than merely impossible to ship it.
@@ -334,12 +532,15 @@ for _key, _profile in PROFILES.items():
         raise ValueError(f"PROFILES[{_key!r}] holds a profile named {_profile.key!r}")
 
 __all__ = [
+    "DEFAULT_SELECTION",
     "DEFAULT_VENDOR",
     "PROFILES",
     "VendorProfile",
+    "VendorSelection",
     "accepting_length",
     "all_keys",
     "orderable",
     "orderable_keys",
     "profile",
+    "require_selection",
 ]

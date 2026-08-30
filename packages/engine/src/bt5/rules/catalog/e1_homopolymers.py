@@ -37,12 +37,13 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
-from bt5.rules.vendors import DEFAULT_VENDOR, PROFILES, orderable, orderable_keys
-
-#: The limits the default configuration carries, for the schema's advertised
-#: defaults. Read from the profile rather than restated, so a corrected vendor
-#: number cannot leave the documented default disagreeing with the enforced one.
-_DEFAULT = PROFILES[DEFAULT_VENDOR]
+from bt5.rules.vendors import (
+    DEFAULT_SELECTION,
+    DEFAULT_VENDOR,
+    VendorSelection,
+    orderable_keys,
+    require_selection,
+)
 
 
 def _maximal_runs(seq: str, circular: bool) -> Iterator[tuple[int, int, str]]:
@@ -125,23 +126,24 @@ class Homopolymers:
     param_schema: ClassVar[Mapping[str, object]] = {
         "type": "object",
         "properties": {
-            "max_at_run": {
-                "type": "integer",
-                "default": _DEFAULT.homopolymer_at,
-                "minimum": 3,
-            },
-            "max_gc_run": {
-                "type": "integer",
-                "default": _DEFAULT.homopolymer_gc,
-                "minimum": 3,
-            },
-            "vendor": {
-                "type": "string",
-                "default": DEFAULT_VENDOR,
+            # No numeric default: under a multi-vendor selection the enforced
+            # limit is the STRICTEST across the selection, and a single advertised
+            # number could only agree with one member. Unset means "the strictest
+            # limit the selected configurations publish"; a number here overrides.
+            "max_at_run": {"type": "integer", "minimum": 3},
+            "max_gc_run": {"type": "integer", "minimum": 3},
+            "vendors": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
                 # Orderable only: "no vendor chosen" has no run limits to preset,
                 # and inventing some would be answering an unasked question.
-                "enum": list(orderable_keys()),
-                "description": "Preset limits. Explicit max_at_run/max_gc_run override it.",
+                "items": {"type": "string", "enum": list(orderable_keys())},
+                "default": [DEFAULT_VENDOR],
+                "description": (
+                    "Which configurations the run limits must satisfy. The strictest "
+                    "across the selection binds; explicit max_at_run/max_gc_run override."
+                ),
             },
         },
     }
@@ -150,14 +152,18 @@ class Homopolymers:
         self,
         max_at_run: int | None = None,
         max_gc_run: int | None = None,
-        vendor: str = DEFAULT_VENDOR,
+        vendors: VendorSelection = DEFAULT_SELECTION,
     ) -> None:
-        p = orderable(vendor)
-        assert p.homopolymer_at is not None  # both guaranteed by `orderable`
-        assert p.homopolymer_gc is not None
-        self.vendor = vendor
-        self.max_at_run = p.homopolymer_at if max_at_run is None else max_at_run
-        self.max_gc_run = p.homopolymer_gc if max_gc_run is None else max_gc_run
+        # `orderable_only`: E1's whole question is what a vendor will build, and
+        # "no vendor chosen" has no run limit to check against.
+        self.vendors = require_selection(vendors).orderable_only()
+        (at_min, self._at_binders), (gc_min, self._gc_binders) = self.vendors.homopolymer_limits()
+        # An explicit limit is the user's own number: enforced, but attributed to
+        # nobody. Tracked per axis so an at-override does not silence gc's vendor.
+        self._at_override = max_at_run is not None
+        self._gc_override = max_gc_run is not None
+        self.max_at_run = at_min if max_at_run is None else max_at_run
+        self.max_gc_run = gc_min if max_gc_run is None else max_gc_run
         if self.max_at_run < 3 or self.max_gc_run < 3:
             raise ValueError(
                 f"run limits below 3 forbid ordinary sequence: "
@@ -195,10 +201,38 @@ class Homopolymers:
         breaches: list[Breach] = []
         for start, length, base in _maximal_runs(c.sequence, c.is_circular):
             kind = "A/T" if base in "AT" else "G/C"
-            limit = self.max_at_run if base in "AT" else self.max_gc_run
+            at_axis = base in "AT"
+            limit = self.max_at_run if at_axis else self.max_gc_run
             if length <= limit:
                 continue
             iv = Interval(start, start + length)
+            overridden = self._at_override if at_axis else self._gc_override
+            binders = self._at_binders if at_axis else self._gc_binders
+            fixable = c.overlaps_editable(iv)
+            scope = "ordered" if fixable else "backbone"
+
+            # A breach is for ONE base class, so its attribution is per axis: an
+            # A/T run names the configurations whose A/T limit it broke, never the
+            # G/C ones. Where the user set the limit themselves, no product owns it.
+            if overridden:
+                source = "limit you set"
+                detail_vendor = ""
+                limit_source = "override"
+            else:
+                source = f"{', '.join(binders)} limit"
+                detail_vendor = ", ".join(binders)
+                limit_source = "vendor"
+
+            message = f"{kind} homopolymer of {length} nt at {start}, over the {limit} nt {source}"
+            # Only when the run is recodeable AND a real vendor set the limit does
+            # naming a looser vendor mean anything: a backbone run is DNA no vendor
+            # is asked to synthesize, so "twist would accept it" there is a false
+            # claim about a fragment nobody is ordering.
+            accepts = self.vendors.homopolymer_accepts(length, kind) if fixable else ()
+            accepts = tuple(k for k in accepts if k not in binders)
+            if accepts and not overridden:
+                message += f"; {', '.join(accepts)} would accept a run this long"
+
             breaches.append(
                 Breach(
                     spec_id=self.id,
@@ -206,18 +240,18 @@ class Homopolymers:
                     # Grows with the overrun: a run one base over the limit is a
                     # surcharge, one at twice the limit is a synthesis failure.
                     magnitude=float(length - limit),
-                    message=(
-                        f"{kind} homopolymer of {length} nt at {start}, "
-                        f"over the {limit} nt {self.vendor} limit"
-                    ),
+                    message=message,
                     # A run the user's own backbone already carries is real and
                     # worth reporting, and no codon can shorten it.
-                    fixable_by_codon_choice=c.overlaps_editable(iv),
+                    fixable_by_codon_choice=fixable,
                     detail={
                         "base_class": kind,
                         "run_length": float(length),
                         "limit": float(limit),
-                        "vendor": self.vendor,
+                        "vendor": detail_vendor,
+                        "limit_source": limit_source,
+                        "scope": scope,
+                        "accepting": ", ".join(accepts),
                     },
                 )
             )

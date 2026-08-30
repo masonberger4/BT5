@@ -15,8 +15,8 @@ from bt5.core.registry import discover, get
 from bt5.core.services import Services
 from bt5.core.spec import Enforcement
 from bt5.core.types import Construct
-from bt5.rules.catalog.e9_length_tiers import AMBIGUOUS, UNORDERABLE, LengthTiers
-from bt5.rules.vendors import PROFILES, orderable_keys
+from bt5.rules.catalog.e9_length_tiers import AMBIGUOUS, NARROWED, UNORDERABLE, LengthTiers
+from bt5.rules.vendors import PROFILES, VendorSelection, orderable_keys
 from conftest import construct, context
 
 
@@ -39,7 +39,7 @@ def svc() -> Services:
 
 def run(insert_bp: int, svc: Services, vendor: str = "twist_gene_fragment"):
     c: Construct = construct(dna(insert_bp), dna(300, 11))
-    return LengthTiers(vendor=vendor).evaluate(c, context(), svc)
+    return LengthTiers(vendors=VendorSelection.of(vendor)).evaluate(c, context(), svc)
 
 
 class TestTheFloor:
@@ -124,6 +124,59 @@ class TestTheAmbiguousBound:
         assert run(900, svc, vendor="twist_gene_fragment_adapter_on").passes
 
 
+class TestMultiVendorDisjunctive:
+    """A selection of vendors is a menu, not a contract to satisfy all of them.
+
+    #43 V3 decided multi-select is disjunctive: a fragment one selected vendor
+    will build is not blocked because another refuses it. The rule still emits one
+    breach per fragment -- it routes, it does not fail. Only when EVERY selected
+    vendor refuses does the length become unorderable.
+    """
+
+    def _multi(self, insert_bp: int, svc: Services, *keys: str):
+        c: Construct = construct(dna(insert_bp), dna(300, 11))
+        return LengthTiers(vendors=VendorSelection.of(*keys)).evaluate(c, context(), svc)
+
+    def test_over_gblocks_ceiling_but_under_twist_does_not_block(self, svc: Services) -> None:
+        # 4002 bp: over gBlocks' 3000, inside Twist's 5000.
+        ev = self._multi(4002, svc, "idt_gblocks", "twist_gene_fragment")
+        assert ev.passes, "a fragment one selected vendor builds is not a rejection"
+        assert len(ev.breaches) == 1, "one fragment, one routing finding -- no per-vendor loop"
+        b = ev.breaches[0]
+        assert b.magnitude == NARROWED
+        assert b.detail["refusing"] == "idt_gblocks"
+        assert b.detail["accepting"] == "twist_gene_fragment"
+        assert "outside the range of idt_gblocks" in b.message
+        assert "twist_gene_fragment, which you also selected, accepts it" in b.message
+
+    def test_under_twist_floor_but_gblocks_takes_it_does_not_block(self, svc: Services) -> None:
+        # 200 bp: under Twist's 300 floor, inside gBlocks' 125-3000. The floor case,
+        # run in reverse -- gBlocks is the one that reaches lower.
+        ev = self._multi(200, svc, "twist_gene_fragment", "idt_gblocks")
+        assert ev.passes
+        b = ev.breaches[0]
+        assert b.magnitude == NARROWED
+        assert b.detail["refusing"] == "twist_gene_fragment"
+        assert b.detail["accepting"] == "idt_gblocks"
+
+    def test_when_every_selected_vendor_refuses_it_is_unorderable(self, svc: Services) -> None:
+        # 6000 bp: over both gBlocks' 3000 and Twist's 5000.
+        ev = self._multi(6000, svc, "idt_gblocks", "twist_gene_fragment")
+        assert not ev.passes
+        b = ev.breaches[0]
+        assert b.magnitude == UNORDERABLE
+        assert b.detail["accepting"] == ""
+        assert b.detail["refusing"] == "idt_gblocks, twist_gene_fragment"
+        assert "outside the range of every selected configuration" in b.message
+        assert "idt_gblocks, twist_gene_fragment" in b.message
+
+    def test_a_length_both_accept_produces_no_breach(self, svc: Services) -> None:
+        # 1500 bp: inside gBlocks (125-3000) and inside Twist (300-5000).
+        ev = self._multi(1500, svc, "idt_gblocks", "twist_gene_fragment")
+        assert ev.passes
+        assert ev.breaches == ()
+
+
 class TestTheRegistry:
     """The bug this guards against already happened once.
 
@@ -174,11 +227,11 @@ class TestTheRegistry:
 
     def test_none_is_not_an_orderable_configuration(self) -> None:
         with pytest.raises(ValueError, match="not orderable from anyone"):
-            LengthTiers(vendor="none")
+            LengthTiers(vendors=VendorSelection.of("none"))
 
     def test_an_unknown_vendor_is_refused(self) -> None:
         with pytest.raises(ValueError, match="unknown vendor"):
-            LengthTiers(vendor="genscript_gentitan")
+            LengthTiers(vendors=VendorSelection.of("genscript_gentitan"))
 
     def test_every_range_is_non_empty_and_positive(self) -> None:
         for key in orderable_keys():

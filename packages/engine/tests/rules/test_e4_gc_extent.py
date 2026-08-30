@@ -26,6 +26,7 @@ from bt5.rules.catalog.e4_gc_extent import (
     extremes,
     gc_windows,
 )
+from bt5.rules.vendors import VendorSelection
 from conftest import construct, context
 
 ADAPTER_ON = "twist_gene_fragment_adapter_on"
@@ -195,19 +196,21 @@ class TestAdapters:
         uniform does not reach the dispersion gate. A 200 bp insert at 97% GC
         with both adapters reads BELOW chance.
         """
-        ev = run(block(200, 0.97, 5), svc, vendor=ADAPTER_ON, extent_window=20)
+        ev = run(block(200, 0.97, 5), svc, vendors=VendorSelection.of(ADAPTER_ON), extent_window=20)
         assert ev.raw_score < 1.0
         assert not ev.breaches
 
     def test_every_reported_interval_is_a_real_construct_coordinate(self, svc: Services) -> None:
         cds = block(600, 0.05, 5) + block(600, 0.95, 6)
-        for b in run(cds, svc, vendor=ADAPTER_ON).breaches:
+        for b in run(cds, svc, vendors=VendorSelection.of(ADAPTER_ON)).breaches:
             assert b.interval.start >= 0
             assert b.interval.end > b.interval.start
 
     def test_the_default_order_has_no_adapters_to_skew_gc(self, svc: Services) -> None:
         plain = run(block(900, 0.97, 5), svc).raw_score
-        with_adapters = run(block(900, 0.97, 5), svc, vendor=ADAPTER_ON).raw_score
+        with_adapters = run(
+            block(900, 0.97, 5), svc, vendors=VendorSelection.of(ADAPTER_ON)
+        ).raw_score
         assert with_adapters > plain, "44 bp of ~55% GC widens the spread"
 
 
