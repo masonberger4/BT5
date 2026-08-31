@@ -94,6 +94,33 @@ class RepairOutcome:
         return not self.remaining
 
 
+@dataclass(frozen=True)
+class RulePolicy:
+    """How Tier B localizes, budgets and orders ONE rule's breaches.
+
+    Repair works many rules at once, and they do not share a localization
+    heuristic (a windowed GC statistic widens by `window - 1`; a motif by
+    `motif_len - 1`), a repair discipline (SINGLE_PASS retires a breach after one
+    attempt; FIXED_POINT re-targets until the rule stops producing it, which is
+    what splice removal requires), or a place in the queue (a hard rule should be
+    cleared before a soft one gets a turn). A caller supplies one of these per
+    `spec_id`; the scalar `policy`/`repair_policy`/`window`/`motif_len` arguments
+    to `repair()` are the fallback for any rule without one.
+
+    This is caller-supplied on PURPOSE: importing the registry to read the
+    policies off the rule classes would pull the whole 15-rule catalog, Biopython
+    and the vendor registry into the solver, make Tier A untestable without the
+    catalog, and violate the lane boundary -- and the values live on rule
+    INSTANCES (`e2`'s window is `self.window`), which the classes do not carry.
+    """
+
+    localization: LocalizationPolicy
+    repair: RepairPolicy
+    window: int
+    motif_len: int
+    priority: int = 0
+
+
 def _partition(breaches: Sequence[Breach]) -> tuple[list[Breach], tuple[Breach, ...]]:
     """Split breaches into the ones the solver can act on and the ones it cannot.
 
@@ -290,40 +317,48 @@ def _window_for(
     return repair_window, first, last
 
 
+def _breach_key(breach: Breach) -> tuple[str, int, int]:
+    """A breach's identity across iterations: rule plus reported span."""
+    return (breach.spec_id, breach.interval.start, breach.interval.end)
+
+
 def _select_target(
     actionable: Sequence[Breach],
     *,
-    priority: Mapping[str, int],
+    resolve: Callable[[str], RulePolicy],
     turns: dict[str, int],
-    policy: LocalizationPolicy,
-    window: int,
-    motif_len: int,
+    retired: set[tuple[str, int, int]],
     codon_map: Sequence[Interval],
     construct_length: int,
     circular: bool,
     protein_len: int,
-) -> tuple[Breach, Interval, int, int] | None:
+) -> tuple[Breach, Interval, int, int, RulePolicy] | None:
     """Pick the next breach to work, round-robin over rules, priority first.
 
     Worst-first over raw magnitude STARVES a rule whose findings are small: a GC
     deviation of 0.05 never outranks a repeat of magnitude 4.0, so with both
     present the GC window is never targeted and the design is emitted with it
     still out of band. Selection is therefore two-level: among the highest
-    `priority` rules that currently have a workable breach, take the one served
-    least often (round-robin, ties by spec_id); within that rule, take its worst
-    breach (magnitude, then earliest). Default priority 0 for every rule is pure
-    round-robin, so a single-rule pass is unchanged.
+    `priority` rules that currently have a workable, un-retired breach, take the
+    one served least often (round-robin, ties by spec_id); within that rule, take
+    its worst breach (magnitude, then earliest). Each rule's window comes from
+    ITS own `RulePolicy`. Default priority 0 for every rule is pure round-robin,
+    so a single-rule pass is unchanged.
 
-    Returns None only when NO actionable breach has a workable window -- the
-    honest "nothing left to do" signal.
+    Returns None only when NO actionable breach has a workable window that is not
+    already retired -- the honest "nothing left to do" signal.
     """
     workable: dict[str, list[tuple[Breach, Interval, int, int]]] = {}
+    priority: dict[str, int] = {}
     for breach in actionable:
+        if _breach_key(breach) in retired:
+            continue
+        pol = resolve(breach.spec_id)
         found = _window_for(
             breach,
-            policy=policy,
-            window=window,
-            motif_len=motif_len,
+            policy=pol.localization,
+            window=pol.window,
+            motif_len=pol.motif_len,
             codon_map=codon_map,
             construct_length=construct_length,
             circular=circular,
@@ -333,14 +368,18 @@ def _select_target(
             continue
         repair_window, first, last = found
         workable.setdefault(breach.spec_id, []).append((breach, repair_window, first, last))
+        priority[breach.spec_id] = pol.priority
     if not workable:
         return None
 
-    top = max(priority.get(spec, 0) for spec in workable)
-    eligible = [spec for spec in workable if priority.get(spec, 0) == top]
+    top = max(priority.values())
+    eligible = [spec for spec in workable if priority[spec] == top]
     chosen = min(eligible, key=lambda spec: (turns.get(spec, 0), spec))
     turns[chosen] = turns.get(chosen, 0) + 1
-    return max(workable[chosen], key=lambda t: (t[0].magnitude, -t[0].interval.start))
+    breach, repair_window, first, last = max(
+        workable[chosen], key=lambda t: (t[0].magnitude, -t[0].interval.start)
+    )
+    return breach, repair_window, first, last, resolve(chosen)
 
 
 def repair(
@@ -359,6 +398,8 @@ def repair(
     right_flank: str = "",
     seed: int = 0,
     priority: Mapping[str, int] | None = None,
+    policies: Mapping[str, RulePolicy] | None = None,
+    max_candidates: int = 256,
     max_iterations: int = MAX_ITERATIONS,
 ) -> RepairOutcome:
     """Repair HARD_REPAIR breaches without ever weakening a Tier-A guarantee.
@@ -367,15 +408,32 @@ def repair(
     carried on `RepairOutcome.advisory` untouched, because no codon choice can
     move them. Breach count is the cross-rule cost; a rule's breaches are worked
     round-robin so a small-magnitude rule is never starved by a large-magnitude
-    one; `priority` (default 0 for every rule) lets a caller work some rules
-    before others. Raises InfeasibleConstraints when the search cannot clear the
-    ACTIONABLE breaches, with the minimal conflicting set rather than a bare
-    failure.
+    one. `policies` supplies a `RulePolicy` per `spec_id` (localization, repair
+    discipline, window, motif length, priority); the scalar `policy`/
+    `repair_policy`/`window`/`motif_len`/`priority` arguments are the fallback for
+    any rule without one. Raises InfeasibleConstraints when the search cannot
+    clear the ACTIONABLE breaches, with the minimal conflicting set rather than a
+    bare failure.
     """
     rng = np.random.default_rng(seed)  # explicit; never the global RNG
     patterns = expand_forbidden(forbidden)
     automaton = Automaton(patterns)
     priority = priority or {}
+    policies = policies or {}
+
+    def resolve(spec_id: str) -> RulePolicy:
+        return policies.get(
+            spec_id,
+            RulePolicy(policy, repair_policy, window, motif_len, priority.get(spec_id, 0)),
+        )
+
+    # A recoded block can create a forbidden motif that runs into the immutable
+    # suffix, and a motif of length L needs up to L - 1 suffix bases to do it.
+    # The guard is therefore fixed by the longest PATTERN, never by a rule's
+    # motif_len: working a 6 nt polyA window while GCGGCCGC (8 nt) is forbidden
+    # would otherwise scan only 6 suffix bases and let a junction NotI site slip
+    # past the very guarantee Tier A made.
+    guard_len = max((len(p) for p in patterns), default=1) - 1
 
     current = cds
     construct = assemble(current)
@@ -390,24 +448,23 @@ def repair(
     exhaustive_windows = random_windows = 0
     cur_agg = _aggregate(actionable)
     turns: dict[str, int] = {}
+    retired: set[tuple[str, int, int]] = set()
 
     for iteration in range(1, max_iterations + 1):
         codon_map = _codon_map_of(construct, current)
         selected = _select_target(
             actionable,
-            priority=priority,
+            resolve=resolve,
             turns=turns,
-            policy=policy,
-            window=window,
-            motif_len=motif_len,
+            retired=retired,
             codon_map=codon_map,
             construct_length=construct.length,
             circular=construct.is_circular,
             protein_len=len(protein),
         )
         if selected is None:
-            break  # no actionable breach has a workable window
-        target, _repair_window, first, last = selected
+            break  # no actionable breach has a workable, un-retired window
+        target, _repair_window, first, last, target_policy = selected
         target_spec = target.spec_id
 
         options = _mutation_space(protein, code, first, last)
@@ -416,7 +473,12 @@ def repair(
         suffix = current[3 * last :] + right_flank
         left_state = automaton.consume(0, prefix)[0]
 
-        if size <= EXHAUSTIVE_LIMIT:
+        # A window whose full enumeration exceeds the budget is searched by
+        # guided random, NOT enumerated -- so `find_breaches` calls per iteration
+        # are bounded by `max_candidates` on both branches, and "empty mutation
+        # space" is only ever claimed for a space that was actually enumerated.
+        exhaustive = size <= EXHAUSTIVE_LIMIT and size <= max_candidates
+        if exhaustive:
             exhaustive_windows += 1
             candidates = _enumerate(options)
         else:
@@ -424,7 +486,7 @@ def repair(
             # Guided random: perturb MUTATIONS_PER_ITERATION positions.
             base = [current[3 * (first + k) : 3 * (first + k) + 3] for k in range(last - first)]
             candidates = []
-            for _ in range(256):
+            for _ in range(max_candidates):
                 trial = list(base)
                 for pos in rng.choice(
                     len(trial), size=min(MUTATIONS_PER_ITERATION, len(trial)), replace=False
@@ -435,7 +497,7 @@ def repair(
         improved = False
         for combo in candidates:
             block = "".join(combo)
-            if _introduces_forbidden(automaton, left_state, block, suffix[: max(1, motif_len)]):
+            if _introduces_forbidden(automaton, left_state, block, suffix[:guard_len]):
                 continue  # never weaken a Tier-A guarantee
             trial_cds = current[: 3 * first] + block + current[3 * last :]
             trial_actionable, trial_advisory = _partition(find_breaches(assemble(trial_cds)))
@@ -457,10 +519,23 @@ def repair(
                     )
                 break
 
-        stagnant = 0 if improved else stagnant + 1
+        # SINGLE_PASS retires the breach after one attempt: the run continues to
+        # other targets but never re-attacks this one. FIXED_POINT leaves it
+        # eligible, so round-robin re-targets it until the rule stops producing
+        # it -- what splice-site removal requires (a point mutation can create a
+        # new cryptic donor, and a single pass would ship it). Retirement is also
+        # the perf fix: without it, a hopeless breach is re-attacked every
+        # iteration until STAGNATION_TOLERANCE.
+        retired_this_iteration = target_policy.repair is RepairPolicy.SINGLE_PASS
+        if retired_this_iteration:
+            retired.add(_breach_key(target))
+
+        # Stagnation is for a FIXED_POINT rule re-targeting a breach it cannot
+        # clear. A SINGLE_PASS retirement shrinks the eligible set, so it is
+        # progress even without an improvement, and `_select_target` returning
+        # None is what ends the pass once every breach has had its attempt.
+        stagnant = 0 if (improved or retired_this_iteration) else stagnant + 1
         if stagnant >= STAGNATION_TOLERANCE:
-            break
-        if repair_policy is RepairPolicy.SINGLE_PASS and not improved:
             break
 
     if actionable:
