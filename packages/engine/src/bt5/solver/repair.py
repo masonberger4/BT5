@@ -81,6 +81,15 @@ class RepairOutcome:
     #: unfixable backbone breach from aborting the whole pass; downstream it is
     #: what `QcReport.advisories` is for.
     advisory: tuple[Breach, ...] = ()
+    #: Why the pass stopped. `clean` (nothing actionable left), `not_run` (Tier B
+    #: was never invoked -- set by the pipeline, not here), `exhausted_targets`
+    #: (every actionable breach was attempted and none remained workable),
+    #: `stagnation` / `iterations` (a resource cap was hit before the space was
+    #: searched out -- the search GAVE UP, and `converged` is False).
+    stop_reason: str = "clean"
+    #: Present only on a non-clean outcome: the honest certificate of what was
+    #: worked last and searched. `None` when `clean`.
+    certificate: InfeasibilityCertificate | None = None
 
     @property
     def clean(self) -> bool:
@@ -92,6 +101,20 @@ class RepairOutcome:
         decides whether an unfixable finding blocks the emit.
         """
         return not self.remaining
+
+
+class RepairNotConverged(InfeasibleConstraints):
+    """The search hit a resource cap (stagnation or the iteration limit) before
+    it could search the mutation space out.
+
+    A subclass of InfeasibleConstraints so every existing caller and test that
+    catches the base type still catches this, but a distinct type on PURPOSE: the
+    base class asserts a PROOF of infeasibility, and a search that merely gave up
+    has not proven anything. Until `InfeasibilityCertificate.proof` gains a
+    `search_not_converged` member (a MAJOR contract change, filed separately),
+    the type name and this message are what keep the certificate from claiming
+    the mutation space was empty when it was only unsearched.
+    """
 
 
 @dataclass(frozen=True)
@@ -400,6 +423,7 @@ def repair(
     priority: Mapping[str, int] | None = None,
     policies: Mapping[str, RulePolicy] | None = None,
     max_candidates: int = 256,
+    raise_on_infeasible: bool = True,
     max_iterations: int = MAX_ITERATIONS,
 ) -> RepairOutcome:
     """Repair HARD_REPAIR breaches without ever weakening a Tier-A guarantee.
@@ -411,9 +435,15 @@ def repair(
     one. `policies` supplies a `RulePolicy` per `spec_id` (localization, repair
     discipline, window, motif length, priority); the scalar `policy`/
     `repair_policy`/`window`/`motif_len`/`priority` arguments are the fallback for
-    any rule without one. Raises InfeasibleConstraints when the search cannot
-    clear the ACTIONABLE breaches, with the minimal conflicting set rather than a
-    bare failure.
+    any rule without one.
+
+    On failure the behaviour is the caller's choice. `raise_on_infeasible=True`
+    (the default, so every existing caller is unchanged) raises: Infeasible
+    Constraints when the actionable breaches were searched out and genuinely
+    cannot be cleared, RepairNotConverged when a resource cap stopped the search
+    first. `raise_on_infeasible=False` returns the non-clean RepairOutcome with
+    the same honest certificate on it instead -- the pipeline uses this so the
+    independent validator, not an exception, is what refuses to emit.
     """
     rng = np.random.default_rng(seed)  # explicit; never the global RNG
     patterns = expand_forbidden(forbidden)
@@ -449,6 +479,12 @@ def repair(
     cur_agg = _aggregate(actionable)
     turns: dict[str, int] = {}
     retired: set[tuple[str, int, int]] = set()
+    # The certificate is built from what was ACTUALLY worked last, not from
+    # `breaches[0]` and the whole protein. These record it.
+    last_target: Breach | None = None
+    last_span: tuple[int, int] = (0, len(protein))
+    stop_reason = "iterations"  # the for-loop completing without a break
+    iteration = 0
 
     for iteration in range(1, max_iterations + 1):
         codon_map = _codon_map_of(construct, current)
@@ -463,9 +499,12 @@ def repair(
             protein_len=len(protein),
         )
         if selected is None:
+            stop_reason = "exhausted_targets"
             break  # no actionable breach has a workable, un-retired window
         target, _repair_window, first, last, target_policy = selected
         target_spec = target.spec_id
+        last_target = target
+        last_span = (first, last)
 
         options = _mutation_space(protein, code, first, last)
         size = _space_size(options)
@@ -516,6 +555,7 @@ def repair(
                         exhaustive_windows,
                         random_windows,
                         advisory=advisory,
+                        stop_reason="clean",
                     )
                 break
 
@@ -536,17 +576,53 @@ def repair(
         # None is what ends the pass once every breach has had its attempt.
         stagnant = 0 if (improved or retired_this_iteration) else stagnant + 1
         if stagnant >= STAGNATION_TOLERANCE:
+            stop_reason = "stagnation"
             break
 
-    if actionable:
-        raise InfeasibleConstraints(
-            InfeasibilityCertificate(
-                interval=actionable[0].interval,
-                protein_span=(0, len(protein)),
-                minimal_conflicting_specs=tuple(sorted({b.spec_id for b in actionable})),
-                proof="empty_mutation_space",
-            )
+    # One exit. If nothing actionable remains the pass is clean regardless of why
+    # the loop ended; otherwise build the honest certificate from real state.
+    if not actionable:
+        return RepairOutcome(
+            current,
+            iteration,
+            True,
+            (),
+            exhaustive_windows,
+            random_windows,
+            advisory=advisory,
+            stop_reason="clean",
         )
-    return RepairOutcome(
-        current, max_iterations, True, (), exhaustive_windows, random_windows, advisory=advisory
+
+    # `converged` distinguishes "searched the space out and it cannot be cleared"
+    # from "a resource cap stopped the search first". The certificate points at
+    # the breach worked LAST and the codon window actually searched -- never
+    # `breaches[0]` and the whole protein, which named a span the search never
+    # touched.
+    converged = stop_reason == "exhausted_targets"
+    anchor = last_target if last_target is not None else actionable[0]
+    certificate = InfeasibilityCertificate(
+        interval=anchor.interval,
+        protein_span=last_span,
+        minimal_conflicting_specs=tuple(sorted({b.spec_id for b in actionable})),
+        # The only Tier-B-relevant proof in the frozen Literal. When the search
+        # merely gave up (not `converged`), RepairNotConverged is what signals
+        # the space was not actually enumerated -- see that class and the RFC it
+        # names. A defaulted member cannot be added here without a MAJOR change.
+        proof="empty_mutation_space",
     )
+    outcome = RepairOutcome(
+        current,
+        iteration,
+        converged,
+        tuple(actionable),
+        exhaustive_windows,
+        random_windows,
+        advisory=advisory,
+        stop_reason=stop_reason,
+        certificate=certificate,
+    )
+    if not raise_on_infeasible:
+        return outcome
+    if converged:
+        raise InfeasibleConstraints(certificate)
+    raise RepairNotConverged(certificate)

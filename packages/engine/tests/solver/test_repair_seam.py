@@ -21,7 +21,10 @@ from bt5.core.types import (
     Topology,
     TranslationUnit,
 )
-from bt5.solver.repair import RulePolicy, repair
+from bt5.solver.reference import back_translate
+from bt5.solver.repair import RepairNotConverged, RulePolicy, repair
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 
 @pytest.fixture(scope="module")
@@ -229,3 +232,129 @@ class TestCandidateBudget:
         # 1 initial probe + at most max_candidates per iteration. The merge base
         # would have made ~4096 * 5 here.
         assert calls["n"] <= max_candidates * max_iterations + 1
+
+
+class TestHonestExits:
+    """The certificate must describe what was actually worked, and a search that
+    gave up must not be dressed as a proof of infeasibility."""
+
+    def _two_permanent_breaches(self):
+        # Two fixable breaches at different codons, both reported no matter what
+        # codons are chosen -- so neither ever clears and the pass runs out its
+        # iteration budget with both still present.
+        def finder(c: Construct) -> tuple[Breach, ...]:
+            return (
+                Breach("aaa", Interval(3, 6), 1.0, "x", fixable_by_codon_choice=True),
+                Breach("zzz", Interval(12, 15), 1.0, "x", fixable_by_codon_choice=True),
+            )
+
+        return finder
+
+    def test_the_certificate_names_the_breach_worked_last_and_the_span_searched(
+        self, code: object
+    ) -> None:
+        protein = "MGGGGG"
+        start = "ATG" + "GGA" * 5
+        with pytest.raises(RepairNotConverged) as exc:
+            repair(
+                start,
+                protein,
+                code,  # type: ignore[arg-type]
+                assemble=all_cds_assembler(protein),
+                find_breaches=self._two_permanent_breaches(),
+                window=3,
+                seed=0,
+                max_iterations=2,  # round-robin works aaa then zzz, then stops
+            )
+        cert = exc.value.certificate
+        # zzz was worked on the second (last) iteration -- not actionable[0],
+        # which is aaa at (3, 6). The old code always named breaches[0].
+        assert cert.interval == Interval(12, 15)
+        assert cert.interval != Interval(3, 6)
+        # The span is the codon window actually searched for zzz, not the whole
+        # protein. zzz at bases 12-15 with a window of 3 reaches codons 3-6.
+        assert cert.protein_span == (3, 6)
+        assert cert.protein_span != (0, len(protein))
+        assert set(cert.minimal_conflicting_specs) == {"aaa", "zzz"}
+
+    def test_giving_up_raises_the_not_converged_subclass(self, code: object) -> None:
+        # RepairNotConverged is a subclass of InfeasibleConstraints, so a caller
+        # catching the base type is unaffected -- but the type says the space was
+        # not searched out, only abandoned at the iteration cap.
+        protein = "MGGGGG"
+        start = "ATG" + "GGA" * 5
+        with pytest.raises(InfeasibleConstraints) as exc:
+            repair(
+                start,
+                protein,
+                code,  # type: ignore[arg-type]
+                assemble=all_cds_assembler(protein),
+                find_breaches=self._two_permanent_breaches(),
+                window=3,
+                seed=0,
+                max_iterations=2,
+            )
+        assert isinstance(exc.value, RepairNotConverged)
+
+    def test_raise_on_infeasible_false_returns_the_outcome_instead(self, code: object) -> None:
+        protein = "MGGGGG"
+        start = "ATG" + "GGA" * 5
+        out = repair(
+            start,
+            protein,
+            code,  # type: ignore[arg-type]
+            assemble=all_cds_assembler(protein),
+            find_breaches=self._two_permanent_breaches(),
+            window=3,
+            seed=0,
+            max_iterations=2,
+            raise_on_infeasible=False,
+        )
+        assert not out.clean
+        assert out.converged is False
+        assert out.stop_reason == "iterations"
+        assert len(out.remaining) == 2
+        assert out.certificate is not None
+        assert out.certificate.interval == Interval(12, 15)
+
+
+class TestTerminationProperty:
+    """`repair()` always terminates and never worsens the actionable count.
+
+    Deliberately in tests/solver/, not tests/invariants/, which is
+    approved:oracle-change. The invariant is the solver's, and it belongs beside
+    the code it constrains.
+    """
+
+    @settings(max_examples=60, deadline=None)
+    @given(tail=st.text(alphabet="GASLKRWFV", min_size=1, max_size=7))
+    def test_repair_terminates_and_never_increases_the_actionable_count(self, tail: str) -> None:
+        code = FileTableProvider().genetic_code(11)
+        protein = "M" + tail
+        assembler = all_cds_assembler(protein)
+        start = back_translate(protein, code, add_stop=False)
+
+        # Flag every codon that begins with G. Some residues (G/A/V/E/D) have
+        # only G-initial codons, so a share of these can never be cleared -- the
+        # search must still terminate and must never manufacture MORE of them.
+        def finder(c: Construct) -> tuple[Breach, ...]:
+            return tuple(
+                Breach("r", Interval(3 * i, 3 * i + 3), 1.0, "x", fixable_by_codon_choice=True)
+                for i in range(len(c.sequence) // 3)
+                if c.sequence[3 * i] == "G"
+            )
+
+        initial = len(finder(assembler(start)))
+        out = repair(
+            start,
+            protein,
+            code,
+            assemble=assembler,
+            find_breaches=finder,
+            window=6,
+            seed=0,
+            raise_on_infeasible=False,
+            max_iterations=100,
+        )
+        assert len(out.remaining) <= initial
+        assert code.translate(out.cds) == protein
