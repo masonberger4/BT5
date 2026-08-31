@@ -66,11 +66,29 @@ jobs:
         run: .venv/bin/ruff check .
       - name: ruff format
         run: .venv/bin/ruff format --check .
-      - name: Ban global RNG state in engine source
+      # CLAUDE.md 3.7 bans the global RNG, and this grep is its ONLY enforcement.
+      # It used to name five numpy functions and `random.seed`, which left
+      # np.random.uniform/normal/shuffle/permutation/random and every stdlib
+      # `random.*` except seed passing silently. Now: any np.random attribute
+      # EXCEPT the explicit-generator constructors, plus importing stdlib
+      # `random` at all in engine source. Scope widened past src/ to the test
+      # tree, because an unseeded draw in a strategy is just as irreproducible.
+      - name: Ban global RNG state
         run: |
-          if grep -rnE '(^|[^.\w])(np|numpy)\.random\.(seed|rand|randn|choice|randint)\(|(^|[^.\w])random\.seed\(' \
-               packages/engine/src/; then
+          # Match ANY np.random attribute call, then subtract the explicit-
+          # generator constructors. Deliberately NOT a negative lookahead:
+          # `grep -E` is POSIX ERE, where `(?!...)` is not a lookahead but a
+          # warning and an exit status of 0 -- which in this `if` would fail
+          # every build. Two greps, no lookahead.
+          if grep -rnE --include='*.py' \
+               '(^|[^.\w])(np|numpy)\.random\.[a-zA-Z_]+\(' packages/engine/src/ \
+               | grep -vE 'default_rng|Generator|SeedSequence|PCG64'; then
             echo "::error::Use np.random.default_rng(seed); global RNG breaks reproducibility"
+            exit 1
+          fi
+          if grep -rnE --include='*.py' '^\s*(import random|from random import)' \
+               packages/engine/src/ tests/ packages/engine/tests/; then
+            echo "::error::stdlib random is unseeded per-process; use np.random.default_rng(seed)"
             exit 1
           fi
       # Two of docs/PLAN.md's eight silent killers, both properties of the
@@ -80,6 +98,26 @@ jobs:
       # filters and a quoted `"on":` key, each of which deadlocks identically.
       - name: Guard the merge gate
         run: .venv/bin/python .github/scripts/check-workflow-gate.py
+
+  # mypy is configured `strict = true` in pyproject.toml and demanded by
+  # CLAUDE.md section 8 and the PR template, and until now ran in NO CI job --
+  # a self-declared checkbox was the only enforcement of a strict-mode type
+  # contract on a codebase whose cross-lane seams are all Protocols.
+  #
+  # Installs the `fold` extra, unlike python-quality: structure/vienna.py
+  # carries `# type: ignore[import-untyped]` on its `import RNA`, which does NOT
+  # suppress `import-not-found` when the module is absent entirely.
+  mypy:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv venv --python 3.11 .venv
+      - run: uv pip install --python .venv/bin/python -e ".[dev,export,fold]"
+      - name: mypy --strict
+        run: .venv/bin/mypy
 
   invariants:
     name: invariants
@@ -92,7 +130,11 @@ jobs:
       - run: uv pip install --python .venv/bin/python -e ".[dev]"
       - name: Property-based invariants
         env: { HYPOTHESIS_PROFILE: ci }
-        run: .venv/bin/pytest tests/invariants -q -p no:randomly
+        # No `-q`: it suppresses the run header, and the header is where the
+        # Hypothesis budget is now printed. This job silently ran at a quarter
+        # budget for months; the number being visible is what stops that
+        # recurring. 50 tests, so the extra output is negligible.
+        run: .venv/bin/pytest tests/invariants -p no:randomly
 
   contract:
     name: contract
@@ -254,7 +296,16 @@ jobs:
     name: required-checks
     if: always()
     needs:
-      [changes, python-quality, invariants, contract, contract-freeze, python-tests, approvals]
+      [
+        changes,
+        python-quality,
+        mypy,
+        invariants,
+        contract,
+        contract-freeze,
+        python-tests,
+        approvals,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed
