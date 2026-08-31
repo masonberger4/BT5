@@ -112,6 +112,27 @@ class TestHomopolymerLimits:
         assert s.homopolymer_accepts(14, "A/T") == ()
 
 
+class TestGCBand:
+    def test_the_intersection_binds_and_names_its_publisher(self) -> None:
+        s = VendorSelection.of("idt_gblocks", "twist_gene_fragment")
+        band = s.gc_band()
+        assert band is not None
+        (lo, lo_keys), (hi, hi_keys) = band
+        # Floor 0.28 is shared; the ceiling is IDT's 0.77, the lower of the two.
+        assert lo == 0.28
+        assert set(lo_keys) == {"idt_gblocks", "twist_gene_fragment"}
+        assert (hi, hi_keys) == (0.77, ("idt_gblocks",))
+
+    def test_a_single_twist_selection_keeps_its_own_ceiling(self) -> None:
+        (_, _), (hi, hi_keys) = VendorSelection.of("twist_gene_fragment").gc_band()  # type: ignore[misc]
+        assert (hi, hi_keys) == (0.80, ("twist_gene_fragment",))
+
+    def test_none_publishes_no_band(self) -> None:
+        """`none` carries synthesis scope but no vendor to ask, so E2 falls back
+        to its own loosest envelope rather than reading a band from here."""
+        assert VendorSelection.of("none").gc_band() is None
+
+
 class TestLengthVerdicts:
     def test_accept_ambiguous_refuse(self) -> None:
         s = VendorSelection.of("idt_gblocks", "twist_gene_fragment")

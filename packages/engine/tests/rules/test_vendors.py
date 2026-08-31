@@ -143,6 +143,7 @@ class TestTheOneDefault:
         so the property is stronger: every rule holds the SAME selection, not
         merely the same string."""
         from bt5.rules.catalog.e1_homopolymers import Homopolymers
+        from bt5.rules.catalog.e2_gc_band import GCBand
         from bt5.rules.catalog.e4_gc_extent import GCExtent
         from bt5.rules.catalog.e5_synthesis_repeats import SynthesisRepeats
         from bt5.rules.catalog.e6_repeat_density import RepeatDensity
@@ -151,6 +152,7 @@ class TestTheOneDefault:
 
         for rule in (
             Homopolymers(),
+            GCBand(),
             GCExtent(),
             SynthesisRepeats(),
             RepeatDensity(),
@@ -183,7 +185,7 @@ class TestTheOneDefault:
                 assert key in PROFILES, f"{spec.id} offers {key!r}, which is not a profile"
             for key in props["vendors"]["default"]:
                 assert key in enum, f"{spec.id} defaults to {key!r}, not in its own enum"
-        assert checked == 6, f"expected six vendor-taking rules, checked {checked}"
+        assert checked == 7, f"expected seven vendor-taking rules, checked {checked}"
 
 
 class TestLookup:
