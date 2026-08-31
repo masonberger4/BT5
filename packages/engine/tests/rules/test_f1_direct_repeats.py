@@ -80,6 +80,32 @@ class TestSpacer:
     def test_touching_copies_are_zero(self) -> None:
         assert _spacer(Interval(0, 40), Interval(40, 80), 800, circular=False) == 0
 
+    def test_the_breach_interval_takes_the_same_arc_the_spacer_measured(
+        self, svc: Services
+    ) -> None:
+        """Two copies bound two arcs, and the finding must describe one of them.
+
+        `_spacer` measures the short way round; the breach interval took the
+        forward arc unconditionally, so on this fixture the message read
+        "80 bp apart" while the interval covered the other 720 bp. That is not
+        only cosmetic: F1 declares `LocalizationPolicy.PAIRED_SEGMENTS`, and
+        `solver/repair.py` hands the interval straight to the repair window.
+        """
+        unit = dna(40, 11)
+        seq = dna(20, 3) + unit + dna(640, 5) + unit + dna(60, 7)
+        assert len(seq) == 800, "copies land at [20,60) and [700,740)"
+        c = Construct(
+            seq,
+            Topology.CIRCULAR,
+            (Segment(Interval(0, len(seq)), SegmentKind.DESIGNABLE_CDS, "cds"),),
+        )
+        found = DirectRepeats().evaluate(c, context(), svc).breaches
+        planted_hit = [b for b in found if "80 bp apart" in b.message]
+        assert planted_hit, "the wrap arc is the short one, so the spacer is 80 bp"
+        iv = planted_hit[0].interval
+        assert iv.end > c.length, "the short arc runs through the origin, so the interval wraps"
+        assert iv.length == 2 * 40 + 80, "the interval spans both copies plus the gap it reports"
+
 
 class TestDetection:
     def test_finds_a_planted_repeat_with_its_geometry(self, svc: Services) -> None:

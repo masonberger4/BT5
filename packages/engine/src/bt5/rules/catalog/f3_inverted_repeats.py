@@ -53,7 +53,7 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
-from bt5.rules.exempt import both_arms_exempt
+from bt5.rules.exempt import both_arms_exempt, pair_span
 
 #: Shortest stem worth reporting, paired with a tight loop.
 WARN_STEM_BP = 15
@@ -180,6 +180,7 @@ class InvertedRepeats:
         hard_stem = self._stem_threshold(ctx)
         breaches: list[Breach] = []
         worst_stem = 0
+        worst_total = 0
 
         for first, second in index.revcomp_pairs(self.min_stem, self.max_loop):
             if len(breaches) >= MAX_FINDINGS:
@@ -190,6 +191,7 @@ class InvertedRepeats:
             loop = _loop(first, second, c.length, c.is_circular)
             total = 2 * stem + loop
             worst_stem = max(worst_stem, stem)
+            worst_total = max(worst_total, total)
 
             if stem >= UNBUILDABLE_BP:
                 severity, magnitude = "unbuildable", 4.0
@@ -208,7 +210,7 @@ class InvertedRepeats:
                 severity, magnitude = "warn", 0.5
                 advice = "Usually stable below 100 bp, but worth knowing about."
 
-            span = Interval(first.start, max(first.end, second.end))
+            span = pair_span(first, second, c.length, c.is_circular)
             breaches.append(
                 Breach(
                     spec_id=self.id,
@@ -237,7 +239,11 @@ class InvertedRepeats:
 
         return Evaluation(
             spec_id=self.id,
-            passes=worst_stem < hard_stem,
+            # BOTH terms of the hard band, because line ~201 classifies on
+            # both. Testing only the stem reported a finding as "hard" in its
+            # own message while passing it -- and F3 is HARD_CHECK, so `passes`
+            # IS the enforcement surface.
+            passes=worst_stem < hard_stem and worst_total < HARD_TOTAL_BP,
             raw_score=float(sum(b.magnitude for b in breaches)),
             breaches=tuple(breaches),
             n_evaluated=c.length,
