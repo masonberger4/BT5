@@ -104,7 +104,9 @@ work, it only stops recording that it doesn't. Same rule as §4.
 Never skip, disable, `xfail` or loosen a test to get green. Never weaken a
 Hypothesis property. If a property fails on your PR and reproduces on the merge
 base, it is a pre-existing bug: file it as a fixture under
-`tests/data/regressions/` plus an issue, and say so in the PR. The owner merges.
+`tests/data/regressions/` plus an issue, and say so in the PR. **The owner merges
+that one** — it is an explicit exception to §7b's merge-on-green permission,
+because green was reached by recording the bug rather than fixing it.
 
 `--snapshot-update` is not a fix either. `goldens-not-hand-edited` regenerates
 every snapshot from scratch and diffs, so a hand-edited golden fails.
@@ -134,6 +136,30 @@ the app produces, not just the code.
 Open your PR as a **draft** until you believe it is done; drafts skip the
 expensive CI jobs, and CI capacity is the binding constraint (20 concurrent job
 slots, ~12 per Python PR, so at most 5 open non-draft PRs at a time).
+
+### 7b. Merging on green
+
+**An agent may squash-merge its own PR once CI is green.** The branch ruleset
+requires zero approving reviews and one required context, `required-checks`, so
+green means every job in that gate's `needs` succeeded. Verify against the PR's
+CURRENT head, not a stale run.
+
+Green is necessary, not sufficient. Do NOT self-merge when any of these holds —
+these go to the owner:
+
+- The PR touches a protected path from §2 and is carrying an `approved:*` label.
+  The label is the owner's sign-off on the change; it is not a licence to also
+  merge it unreviewed.
+- A Hypothesis property fails and reproduces on the merge base (§4). Green was
+  reached by recording the pre-existing bug, not by fixing it.
+- The PR changes what the app REFUSES to build, or otherwise has a non-"none"
+  scientific impact. Ranks, refusals and bands are the product; those land with
+  the owner's eyes on them.
+- An unresolved review thread. The ruleset enforces
+  `required_review_thread_resolution`, so this blocks mechanically too.
+
+Squash merge only — the ruleset requires linear history. Say in the PR that you
+merged it and why it qualified.
 
 ## 7a. Merged branches leave a stale ref behind
 
