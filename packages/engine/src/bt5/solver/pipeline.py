@@ -12,19 +12,20 @@ The refusal is not a formality. Without it, "hard" would mean "we tried", which
 is exactly the failure mode the enforcement enum exists to prevent -- and the
 independent validator lives in bt5.verify, on a different code path from the
 scorer that guided the search, so it cannot rubber-stamp the optimizer's own
-mistake.
+mistake. That is also why Tier B is asked NOT to raise here: the validator, not
+an exception from the search, is what decides whether a construct is emitted.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from bt5.codon.tables import NcbiGeneticCode
 from bt5.core.types import Construct
-from bt5.solver.lattice import optimal_back_translate
+from bt5.solver.lattice import optimal_back_translate, solve_with_gc_steering
 from bt5.solver.reference import CodonScorer
-from bt5.solver.repair import Assembler, BreachFinder, RepairOutcome, repair
+from bt5.solver.repair import Assembler, BreachFinder, RepairOutcome, RulePolicy, repair
 from bt5.verify import verify_construct
 
 
@@ -34,6 +35,12 @@ class OptimizeResult:
     construct: Construct
     repair_outcome: RepairOutcome
     verified: bool = True
+    #: Whether Tier B actually ran. False means the caller passed no
+    #: `find_breaches`, so `repair_outcome` is a "not run" placeholder rather than
+    #: a clean repair -- otherwise the two are indistinguishable, and a report
+    #: could imply the HARD_REPAIR rules were checked and passed when they were
+    #: never evaluated.
+    tier_b_ran: bool = True
 
 
 def optimize(
@@ -50,6 +57,10 @@ def optimize(
     right_flank: str = "",
     seed: int = 0,
     table_id: int | None = None,
+    priority: Mapping[str, int] | None = None,
+    policies: Mapping[str, RulePolicy] | None = None,
+    max_candidates: int = 256,
+    original_backbone: Construct | None = None,
     _verify: bool = True,
 ) -> OptimizeResult:
     """Design a CDS, then prove it before returning it.
@@ -62,17 +73,34 @@ def optimize(
     tid = table_id if table_id is not None else code.table_id
 
     # --- Tier A: exact, motif-free by construction -------------------------
-    cds = optimal_back_translate(
-        protein,
-        code,
-        forbidden=forbidden,
-        score=score,
-        left_flank=left_flank,
-        right_flank=right_flank,
-    )
+    # `gc_bounds` is the only band signal available here, so when it is present
+    # steer toward it: the docstring above has always promised Tier-A steering,
+    # and until now `optimize()` did not do it, so a GC-extreme protein could
+    # fail on a design that steering would have reached. Steering early-returns
+    # at multiplier 0.0 when the unsteered solve is already in band, so the
+    # common case costs one extra DP solve and nothing more.
+    if gc_bounds is not None:
+        cds, _multiplier = solve_with_gc_steering(
+            protein,
+            code,
+            gc_bounds=gc_bounds,
+            base_score=score,
+            forbidden=forbidden,
+            left_flank=left_flank,
+            right_flank=right_flank,
+        )
+    else:
+        cds = optimal_back_translate(
+            protein,
+            code,
+            forbidden=forbidden,
+            score=score,
+            left_flank=left_flank,
+            right_flank=right_flank,
+        )
 
     # --- Tier B: localized repair of what the lattice cannot express -------
-    outcome = RepairOutcome(cds, 0, True)
+    tier_b_ran = find_breaches is not None
     if find_breaches is not None:
         outcome = repair(
             cds,
@@ -85,8 +113,20 @@ def optimize(
             left_flank=left_flank,
             right_flank=right_flank,
             seed=seed,
+            priority=priority,
+            policies=policies,
+            max_candidates=max_candidates,
+            # The validator below is the refusal, not this. Repair returns its
+            # best attempt and the honest certificate; a construct still out of
+            # band is caught by verify_construct, on an independent code path.
+            raise_on_infeasible=False,
         )
         cds = outcome.cds
+    else:
+        # Distinguishable from "ran and found nothing": a fabricated clean
+        # outcome would let a report claim the HARD_REPAIR rules passed when they
+        # were never run.
+        outcome = RepairOutcome(cds, 0, True, stop_reason="not_run")
 
     construct = assemble(cds)
 
@@ -98,6 +138,13 @@ def optimize(
             table_id=tid,
             forbidden=forbidden,
             gc_bounds=gc_bounds,
+            # I9 -- byte-identity of the backbone complement, the invariant
+            # verify.py calls "highest value". Unarmed on every design path until
+            # a caller supplies the parsed input backbone (E1 passes
+            # `assembly.reference`).
+            original_backbone=original_backbone,
         )
 
-    return OptimizeResult(cds=cds, construct=construct, repair_outcome=outcome)
+    return OptimizeResult(
+        cds=cds, construct=construct, repair_outcome=outcome, tier_b_ran=tier_b_ran
+    )
