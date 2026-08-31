@@ -1,279 +1,160 @@
-"""`optimize()` once the catalog is wired into it.
+"""The optimize() pipeline: Tier-A GC steering, the honest 'not run' state, and
+the I9 backbone-reference arming.
 
-Three of these tests cover things that were previously unreachable rather than
-merely untested: I9 never ran from `optimize()`, a backbone-carried motif had no
-certificate, and "Tier B never ran" was byte-identical to "Tier B found nothing".
+These test the WIRING the pipeline is responsible for -- that Tier A steers when
+a band is given, that a skipped Tier B is legible rather than fabricated, and
+that the backbone-untouched invariant is actually handed the reference. The
+repair search itself is covered in test_repair.py and test_repair_seam.py.
 """
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
-from bt5.codon.tables import NcbiGeneticCode
-from bt5.core.result import (
-    InfeasibleConstraints,
-    VerificationError,
+from bt5.codon.tables import FileTableProvider
+from bt5.core.result import VerificationError
+from bt5.core.spec import Breach
+from bt5.core.types import (
+    Construct,
+    Interval,
+    Segment,
+    SegmentKind,
+    Topology,
+    TranslationUnit,
 )
-from bt5.core.spec import Breach, LocalizationPolicy, RepairPolicy
-from bt5.core.types import Construct, Interval
-from bt5.rules.vendors import VendorSelection
-from bt5.solver.catalog import build_rule_set, default_services, optimize_with
+from bt5.solver.lattice import cai_lattice_scorer, optimal_back_translate
 from bt5.solver.pipeline import optimize
-from bt5.solver.repair import NO_RULES, no_rules, repair
-from conftest import context, linear_cds, slot, with_backbone
+from bt5.verify import gc_fraction
 
-PROTEIN = "M" + "KLIWQRSTVNDEYFPGHACM" * 2
-LEFT = "GCTAGCACCATGGTGAGCAAGGGCGAGGAGCTGTTCACC"
-RIGHT = "TAAGCGGCCGCTTAATTAAGCTTGCATGCCTGCAGGTCG"
-
-
-def assembler(protein: str, left: str = LEFT, right: str = RIGHT):
-    def build(cds: str) -> Construct:
-        return with_backbone(cds, protein, left, right)
-
-    return build
+GC_LO, GC_HI, WIN = 0.40, 0.60, 30
+GC_RICH = "M" + "AGPRAAGGPPRRAGPRAAGGPPRR"
+NORMAL = "M" + "KLIWQRSTVNDEYFPGHACMKLIW"
 
 
-SHORT = "M" + "A" * 6
-SHORT_CDS = "ATG" + "GCT" * 6 + "TAA"
+@pytest.fixture(scope="module")
+def env() -> tuple:
+    p = FileTableProvider()
+    return p.genetic_code(11), p.usage("sharp_li_1987_ecoli_w")
 
 
-def bare(cds: str) -> Construct:
-    """No backbone: breach intervals are then CDS coordinates, which is what a
-    repair-window test wants to talk about."""
-    return linear_cds(cds, SHORT)
+def cds_only_assembler(protein: str):
+    """One editable CDS from base 0; no backbone, no flanks."""
 
-
-def no_breaches(_c: Construct) -> tuple[Breach, ...]:
-    """A real finder that happens to find nothing. NOT the same as not running."""
-    return ()
-
-
-class TestNotRunIsNotClean:
-    """Hazard 1. `optimize()` fabricated `RepairOutcome(cds, 0, True)` when no
-    finder was supplied, which is byte-identical to a clean repair -- so
-    forgetting the argument produced a construct that looked proven and had never
-    been checked."""
-
-    def test_find_breaches_has_no_default(self) -> None:
-        param = inspect.signature(optimize).parameters["find_breaches"]
-        assert param.default is inspect.Parameter.empty
-
-    def test_the_opt_out_and_a_clean_repair_are_distinguishable(
-        self, code: NcbiGeneticCode
-    ) -> None:
-        opted_out = optimize(
-            PROTEIN, code, assemble=assembler(PROTEIN), find_breaches=NO_RULES, seed=1
+    def assemble(cds: str) -> Construct:
+        return Construct(
+            sequence=cds,
+            topology=Topology.LINEAR,
+            segments=(Segment(Interval(0, len(cds)), SegmentKind.DESIGNABLE_CDS, "cds"),),
+            translation_units=(
+                TranslationUnit(
+                    11, tuple(Interval(i, i + 3) for i in range(0, len(cds), 3)), protein, True
+                ),
+            ),
         )
-        checked = optimize(
-            PROTEIN, code, assemble=assembler(PROTEIN), find_breaches=no_breaches, seed=1
-        )
-        # Identical in every field the old code could report...
-        assert opted_out.repair_outcome.iterations == checked.repair_outcome.iterations == 0
-        assert opted_out.repair_outcome.converged is checked.repair_outcome.converged is True
-        assert opted_out.cds == checked.cds
-        # ...and now distinguishable.
-        assert opted_out.repair_outcome.ran is False
-        assert checked.repair_outcome.ran is True
 
-    def test_the_sentinel_is_a_named_value_not_a_lambda(self) -> None:
-        assert NO_RULES is no_rules
+    return assemble
 
 
-class TestTheOracleIsArmed:
-    def test_i9_catches_a_touched_backbone_through_optimize(self, code: NcbiGeneticCode) -> None:
-        """The highest-value invariant in the oracle, and it never ran from
-        `optimize()`: `original_backbone` was simply not forwarded."""
-        reference = with_backbone("ATG" + "GCT" * 20 + "TAA", PROTEIN, LEFT, RIGHT)
-        tampered = LEFT[:-1] + ("A" if LEFT[-1] != "A" else "T")
-
-        with pytest.raises(VerificationError) as exc:
-            optimize(
-                PROTEIN,
-                code,
-                assemble=assembler(PROTEIN, left=tampered),
-                find_breaches=NO_RULES,
-                original_backbone=reference,
-                seed=1,
-            )
-        assert exc.value.invariant == "I9"
-
-    def test_without_a_reference_the_same_edit_ships(self, code: NcbiGeneticCode) -> None:
-        """Not an endorsement -- the point is that arming it is what changed."""
-        tampered = LEFT[:-1] + ("A" if LEFT[-1] != "A" else "T")
+class TestGcSteeringIsWired:
+    def test_steering_reaches_the_band_with_tier_b_off(self, env: tuple) -> None:
+        """With `find_breaches=None` Tier B never runs, so an in-band result can
+        only be Tier A steering -- which `optimize()` did not do before."""
+        code, w = env
         res = optimize(
-            PROTEIN,
+            GC_RICH,
             code,
-            assemble=assembler(PROTEIN, left=tampered),
-            find_breaches=NO_RULES,
-            seed=1,
+            assemble=cds_only_assembler(GC_RICH),
+            find_breaches=None,
+            score=cai_lattice_scorer(w.w),
+            gc_bounds=(GC_LO, GC_HI),
+            gc_window=WIN,
+            seed=7,
         )
-        assert res.construct.sequence.startswith(tampered)
+        assert res.tier_b_ran is False
+        assert GC_LO <= gc_fraction(res.cds) <= GC_HI
+        assert code.translate(res.cds)[:-1] == GC_RICH
 
 
-class TestTheImmutableRegionScreen:
-    """A motif the user's own vector carries is a finding about the vector."""
+class TestTierBLegibility:
+    def test_no_find_breaches_is_marked_not_run(self, env: tuple) -> None:
+        code, _ = env
+        res = optimize(NORMAL, code, assemble=cds_only_assembler(NORMAL), find_breaches=None)
+        assert res.tier_b_ran is False
+        # Distinguishable from a clean repair that ran and found nothing.
+        assert res.repair_outcome.stop_reason == "not_run"
 
-    def test_a_backbone_motif_is_a_named_certificate_not_a_bare_i6_failure(
-        self, code: NcbiGeneticCode
-    ) -> None:
-        with pytest.raises(InfeasibleConstraints) as exc:
-            optimize(
-                PROTEIN,
-                code,
-                assemble=assembler(PROTEIN),
-                find_breaches=NO_RULES,
-                forbidden=["GCGGCCGC"],  # NotI, present in RIGHT
-                seed=1,
-            )
-        cert = exc.value.certificate
-        assert cert.proof == "immutable_region"
-        assert cert.minimal_conflicting_specs == ("GCGGCCGC",)
-        assert cert.interval.length == 8
+    def test_supplying_find_breaches_marks_tier_b_ran(self, env: tuple) -> None:
+        code, _ = env
 
-    def test_a_motif_the_solver_can_reach_is_not_screened_out(self, code: NcbiGeneticCode) -> None:
-        """The screen must only fire on sequence no codon can change, or it
-        would refuse every design Tier A was about to fix."""
+        def clean_finder(_c: Construct) -> tuple[Breach, ...]:
+            return ()
+
         res = optimize(
-            PROTEIN,
-            code,
-            assemble=assembler(PROTEIN),
-            find_breaches=NO_RULES,
-            forbidden=["GAATTC"],  # EcoRI, absent from both flanks
-            seed=1,
+            NORMAL, code, assemble=cds_only_assembler(NORMAL), find_breaches=clean_finder
         )
-        assert "GAATTC" not in res.cds
+        assert res.tier_b_ran is True
+        assert res.repair_outcome.stop_reason == "clean"
 
 
-class TestPoliciesReachTheLoop:
-    def test_a_per_rule_localization_callable_is_consulted_per_breach(
-        self, code: NcbiGeneticCode
-    ) -> None:
-        """One global `policy=` gave every rule the same repair window. The four
-        HARD_REPAIR rules shipped today declare three different ones."""
-        seen: list[str] = []
+class TestI9IsArmed:
+    """optimize() must hand the parsed backbone to verify_construct, or the
+    highest-value invariant -- the backbone was not silently edited -- is never
+    checked on the design path."""
 
-        def localization(spec_id: str) -> LocalizationPolicy:
-            seen.append(spec_id)
-            return LocalizationPolicy.PAIRED_SEGMENTS
-
-        def find(c: Construct) -> tuple[Breach, ...]:
-            return (
-                Breach(
-                    "stubborn",
-                    Interval(3, 9),
-                    1.0,
-                    "never satisfied",
-                    fixable_by_codon_choice=True,
+    def _assembler_with_backbone(self, protein: str, backbone_seq: str):
+        def assemble(cds: str) -> Construct:
+            n = len(cds)
+            return Construct(
+                sequence=cds + backbone_seq,
+                topology=Topology.LINEAR,
+                segments=(
+                    Segment(Interval(0, n), SegmentKind.DESIGNABLE_CDS, "cds"),
+                    Segment(Interval(n, n + len(backbone_seq)), SegmentKind.BACKBONE, "bb"),
+                ),
+                translation_units=(
+                    TranslationUnit(
+                        11, tuple(Interval(i, i + 3) for i in range(0, n, 3)), protein, True
+                    ),
                 ),
             )
 
-        with pytest.raises(InfeasibleConstraints):
-            repair(
-                SHORT_CDS,
-                SHORT,
-                code,
-                assemble=bare,
-                find_breaches=find,
-                policy=localization,
-                max_iterations=3,
-            )
-        assert seen == ["stubborn"] * 3
+        return assemble
 
-    def test_a_plain_policy_still_works(self, code: NcbiGeneticCode) -> None:
-        """Non-catalog callers pass one enum and are unaffected."""
-
-        def find(_c: Construct) -> tuple[Breach, ...]:
-            return ()
-
-        out = repair(
-            SHORT_CDS,
-            SHORT,
-            code,
-            assemble=bare,
-            find_breaches=find,
-            policy=LocalizationPolicy.WHOLE_SCOPE,
+    def _reference(self, protein: str, code: object, backbone_seq: str) -> Construct:
+        n = len(optimal_back_translate(protein, code))  # type: ignore[arg-type]
+        return Construct(
+            sequence="A" * n + backbone_seq,
+            topology=Topology.LINEAR,
+            segments=(
+                Segment(Interval(0, n), SegmentKind.DESIGNABLE_CDS, "cds"),
+                Segment(Interval(n, n + len(backbone_seq)), SegmentKind.BACKBONE, "bb"),
+            ),
         )
-        assert out.clean
 
-    def test_the_worst_breach_is_chosen_in_normalised_units(self, code: NcbiGeneticCode) -> None:
-        """Ranking by raw `magnitude` compares a nucleotide count against a GC
-        fraction, so the rule reporting in the largest units monopolised the
-        search and the other was never worked on."""
-        targeted: list[str] = []
-
-        def localization(spec_id: str) -> LocalizationPolicy:
-            targeted.append(spec_id)
-            return LocalizationPolicy.WINDOW_MINUS_1
-
-        def find(_c: Construct) -> tuple[Breach, ...]:
-            return (
-                Breach("nt", Interval(3, 9), 4.0, "4 nt over", fixable_by_codon_choice=True),
-                Breach("gc", Interval(9, 15), 0.05, "5% over", fixable_by_codon_choice=True),
-            )
-
-        with pytest.raises(InfeasibleConstraints):
-            repair(
-                SHORT_CDS,
-                SHORT,
+    def test_a_mismatched_backbone_reference_is_caught(self, env: tuple) -> None:
+        code, _ = env
+        good = "ACGTACGTAC"
+        assembler = self._assembler_with_backbone(NORMAL, good)
+        reference = self._reference(NORMAL, code, "TTTTTTTTTT")  # differs from `good`
+        with pytest.raises(VerificationError) as exc:
+            optimize(
+                NORMAL,
                 code,
-                assemble=bare,
-                find_breaches=find,
-                policy=localization,
-                max_iterations=1,
+                assemble=assembler,
+                find_breaches=None,
+                original_backbone=reference,
             )
-        # Both are at 1.0 of their own rule's scale, so the tie breaks on
-        # position -- not on the eighty-fold difference in raw magnitude.
-        assert targeted == ["nt"]
+        assert exc.value.invariant == "I9"
 
-    def test_the_effective_policy_is_recorded(self, code: NcbiGeneticCode) -> None:
+    def test_a_matching_backbone_reference_passes(self, env: tuple) -> None:
+        code, _ = env
+        good = "ACGTACGTAC"
+        assembler = self._assembler_with_backbone(NORMAL, good)
+        reference = self._reference(NORMAL, code, good)
         res = optimize(
-            PROTEIN,
+            NORMAL,
             code,
-            assemble=assembler(PROTEIN),
-            find_breaches=no_breaches,
-            repair_policy=RepairPolicy.SINGLE_PASS,
-            seed=1,
+            assemble=assembler,
+            find_breaches=None,
+            original_backbone=reference,
         )
-        assert res.repair_outcome.effective_repair_policy is RepairPolicy.SINGLE_PASS
-
-
-class TestTheCatalogActuallyRuns:
-    """The end-to-end claim: rules the repo shipped now decide what is emitted."""
-
-    def test_a_catalog_driven_design_verifies_and_round_trips(self, code: NcbiGeneticCode) -> None:
-        rules = build_rule_set(
-            context(slot()),
-            default_services(seed=5, autoload_fold=False),
-            # D1 forbids NotI, which the RIGHT flank of this fixture carries;
-            # that path has its own test above.
-            include=lambda c: c.id != "d1_restriction_sites",
-        )
-        assert rules.forbidden()  # E1's homopolymer runs reach Tier A
-        res = optimize_with(rules, PROTEIN, code, assemble=assembler(PROTEIN), seed=5)
-        assert code.translate(res.cds).rstrip("*") == PROTEIN
-        assert res.repair_outcome.ran is True
-        lo, hi = rules.oracle_bounds().gc_bounds or (0.0, 1.0)
-        gc = (res.cds.count("G") + res.cds.count("C")) / len(res.cds)
-        assert lo <= gc <= hi
-
-    def test_the_catalog_refuses_a_backbone_motif_it_forbids(self, code: NcbiGeneticCode) -> None:
-        """With D1 in, the NotI site in this fixture's own flank is a finding --
-        one a hand-written `forbidden` list would never have surfaced."""
-        rules = build_rule_set(context(slot()), default_services(seed=5, autoload_fold=False))
-        with pytest.raises(InfeasibleConstraints) as exc:
-            optimize_with(rules, PROTEIN, code, assemble=assembler(PROTEIN), seed=5)
-        assert exc.value.certificate.proof == "immutable_region"
-
-    def test_the_selected_vendor_reaches_the_validator(self, code: NcbiGeneticCode) -> None:
-        """E2 gates on the selection's band and I7 is handed the same numbers, so
-        the two cannot enforce different contracts."""
-        rules = build_rule_set(
-            context(slot()),
-            default_services(seed=5, autoload_fold=False),
-            vendors=VendorSelection.of("twist_gene_fragment"),
-            include=lambda c: c.id != "d1_restriction_sites",
-        )
-        e2 = next(s for s in rules.specs if s.id == "e2_gc_band")
-        assert rules.oracle_bounds().gc_bounds == (e2.gc_min, e2.gc_max)  # type: ignore[attr-defined]
+        assert res.construct.sequence.endswith(good)

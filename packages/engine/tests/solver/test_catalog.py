@@ -1,9 +1,12 @@
 """The wiring that makes the rule catalog run.
 
 Before this module's subject existed, `grep -rn "\\.evaluate(" src/` returned
-nothing. Most of what is tested here is therefore not "does the code work" but
-"does the code route", because every one of these four hazards is a way for the
-wiring to look like it works while quietly enforcing less than it claims.
+nothing. Most of what is tested here is not "does the code work" but "does the
+code route": every hazard is a way for the wiring to look like it works while
+quietly enforcing less than it claims. The Tier-B mechanics themselves --
+round-robin target selection, the fixable/advisory partition, per-rule repair
+discipline -- live in `repair.py` and are tested in `test_repair_seam.py`; this
+file tests what the catalog HANDS to that machinery.
 """
 
 from __future__ import annotations
@@ -30,7 +33,6 @@ from bt5.rules.catalog.e1_homopolymers import Homopolymers
 from bt5.rules.catalog.e2_gc_band import GCBand
 from bt5.rules.vendors import VendorSelection
 from bt5.solver.catalog import RuleSet, build_rule_set, default_services
-from bt5.solver.repair import BreachCost
 from conftest import context, linear_cds, slot
 
 
@@ -63,6 +65,7 @@ class Fake:
         enforcement: Enforcement = Enforcement.HARD_REPAIR,
         localization: LocalizationPolicy = LocalizationPolicy.WINDOW_MINUS_1,
         repair: RepairPolicy = RepairPolicy.SINGLE_PASS,
+        window: int | None = None,
         breaches: tuple[Breach, ...] = (),
         passes: bool = False,
         gates: bool = True,
@@ -72,6 +75,8 @@ class Fake:
         self.enforcement = enforcement
         self.localization = localization
         self.repair = repair
+        if window is not None:
+            self.window = window
         self._breaches = breaches
         self._passes = passes
         self._gates = gates
@@ -132,8 +137,6 @@ class TestTheSlotLoopIsTheRulesJob:
         assert spy.calls == 1
 
     def test_a_spec_no_active_slot_gates_is_recorded_not_dropped_in_silence(self) -> None:
-        """'Did not apply' and 'passed' are different claims, and only the
-        report can tell them apart."""
         rules = build_rule_set(
             context(slot("producer", HostId.HEK293, Modality.IVT_MRNA, 1)),
             default_services(seed=1, autoload_fold=False),
@@ -143,8 +146,8 @@ class TestTheSlotLoopIsTheRulesJob:
 
     def test_enforcement_is_resolved_per_slot_not_read_off_the_classvar(self) -> None:
         """D4 and D6 return HARD_REPAIR in some modalities and SOFT in others.
-        Reading the ClassVar would demote a lentiviral polyA signal -- which cut
-        functional titer 8-9x -- to a weighted preference."""
+        Reading the ClassVar would demote a lentiviral polyA signal to a
+        weighted preference."""
         d4 = Fake(
             "d4_like",
             enforcement=Enforcement.SOFT,
@@ -162,10 +165,10 @@ class TestTheSlotLoopIsTheRulesJob:
         assert len(lentiviral.findings(c).repairable) == 1
 
 
-class TestRoutingAwayFromTheSolver:
-    """Hazard 7 and the `passes` trap. What the solver must NOT be handed."""
+class TestRoutingToTheSolver:
+    """What the breach finder must and must not hand to `repair()`."""
 
-    def test_a_passing_rules_sub_threshold_breaches_are_reported_not_repaired(self) -> None:
+    def test_a_passing_rule_contributes_nothing_to_the_solver(self) -> None:
         """`Evaluation.passes` is NOT `not breaches`: E5 passes on a warn-band
         finding, E7 under its hard tract, F1 under its hard length. Chasing those
         stagnates the search and reports a design the catalog accepts as
@@ -173,9 +176,21 @@ class TestRoutingAwayFromTheSolver:
         warn = Fake("e5_like", passes=True, breaches=(breach("e5_like", 6, 0.5),))
         found = ruleset(warn).findings(linear_cds(CDS, PROTEIN))
         assert found.repairable == ()
-        assert len(found.advisory) == 1
+        assert found.hard_check == ()
+
+    def test_an_unfixable_hard_repair_breach_reaches_the_finder_for_partitioning(self) -> None:
+        """It belongs in the finder output so `repair()._partition` can carry it
+        on `RepairOutcome.advisory` -- a polyA hexamer in the user's own LTR is
+        reported, not chased. Keeping it OUT of the finder is the old bug where an
+        unfixable backbone breach aborted the whole pass."""
+        rules = ruleset(Fake("d4_like", breaches=(breach("d4_like", 0, 2.0, fixable=False),)))
+        found = rules.findings(linear_cds(CDS, PROTEIN))
+        assert len(found.repairable) == 1
+        assert found.repairable[0].fixable_by_codon_choice is False
 
     def test_hard_check_findings_never_reach_the_finder(self) -> None:
+        """HARD_CHECK means real, reported, never chased -- an over-length
+        fragment, an ITR palindrome. It routes to `hard_check`, not the solver."""
         e9 = Fake(
             "e9_like",
             enforcement=Enforcement.HARD_CHECK,
@@ -186,128 +201,65 @@ class TestRoutingAwayFromTheSolver:
         assert rules.breach_finder()(c) == ()
         assert len(rules.advise()(c)) == 1
 
-    def test_an_unfixable_breach_never_reaches_the_finder(self) -> None:
-        """Routing one into the solver exhausts the mutation space chasing a fix
-        that does not exist, and reports a fine design infeasible."""
-        rules = ruleset(Fake("f", breaches=(breach("f", 0, 2.0, fixable=False),)))
-        found = rules.findings(linear_cds(CDS, PROTEIN))
-        assert found.repairable == ()
-        assert len(found.advisory) == 1
-
     def test_soft_findings_are_neither_repaired_nor_advised(self) -> None:
         soft = Fake("soft", enforcement=Enforcement.SOFT, breaches=(breach("soft", 0, 9.0),))
         found = ruleset(soft).findings(linear_cds(CDS, PROTEIN))
         assert found.repairable == ()
-        assert found.advisory == ()
+        assert found.hard_check == ()
         assert len(found.evaluations) == 1
-
-    def test_the_finder_skips_rules_that_cannot_contribute(self) -> None:
-        """The finder runs once per candidate, up to 256 per iteration. A SOFT
-        rule cannot return a repairable breach, so evaluating it here is a
-        quarter of a million wasted k-mer indexes."""
-        soft = Fake("soft", enforcement=Enforcement.SOFT)
-        hard = Fake("hard")
-        rules = ruleset(soft, hard)
-        rules.breach_finder()(linear_cds(CDS, PROTEIN))
-        assert soft.calls == 0
-        assert hard.calls == 1
-
-
-class TestTheCostReduction:
-    """Hazard 2. `sum(b.magnitude)` mixed nucleotides with GC fractions."""
-
-    def test_clearing_a_breach_beats_shrinking_one_in_another_rules_units(self) -> None:
-        cost = BreachCost()
-        cost([breach("nt", 0, 4.0), breach("gc", 9, 0.05)])  # freeze the scale
-        cleared = cost([breach("nt", 0, 4.0)])
-        shrunk = cost([breach("nt", 0, 3.0), breach("gc", 9, 0.04)])
-        assert cleared < shrunk
-
-    def test_a_small_magnitude_in_its_own_units_is_not_starved_by_a_large_one(self) -> None:
-        """Under `sum(magnitude)` a GC delta of 0.05 is invisible beside a
-        repeat finding of 4.0, so the search never works on it."""
-        cost = BreachCost()
-        cost([breach("nt", 0, 4.0), breach("gc", 9, 0.05)])
-        assert cost.normalised(breach("gc", 9, 0.05)) == pytest.approx(1.0)
-        assert cost.normalised(breach("nt", 0, 4.0)) == pytest.approx(1.0)
-        assert cost.normalised(breach("gc", 9, 0.025)) == pytest.approx(0.5)
-
-    def test_the_scale_does_not_move_between_iterations(self) -> None:
-        """A moving normaliser makes the objective non-stationary: the same two
-        states compare one way early and the other way late, so `best_cost`
-        stops being a bound the search can descend."""
-        cost = BreachCost()
-        start = [breach("a", 0, 10.0), breach("b", 9, 1.0)]
-        cost(start)
-        later = [breach("a", 0, 1.0)]
-        cost(later)  # 'a' is now the only rule; a moving scale would rescale it
-        assert cost(later) == cost(later)
-        assert cost.normalised(breach("a", 0, 1.0)) == pytest.approx(0.1)
-
-    def test_a_rule_first_seen_late_is_recorded_rather_than_rescaling_the_run(self) -> None:
-        cost = BreachCost()
-        cost([breach("a", 0, 2.0)])
-        cost([breach("a", 0, 2.0), breach("late", 9, 1.0)])
-        assert cost.late == ("late",)
-
-    def test_an_empty_breach_set_is_the_minimum(self) -> None:
-        cost = BreachCost()
-        cost([breach("a", 0, 1.0)])
-        assert cost(()) < cost([breach("a", 0, 0.001)])
 
 
 class TestThePolicies:
-    """Hazard 4. Two policies, joined in opposite directions."""
+    """Hazard 4. `repair()` solves it per rule; the catalog supplies the map."""
 
-    def test_localization_is_looked_up_per_rule(self) -> None:
+    def test_each_hard_repair_rule_gets_its_own_localization(self) -> None:
         rules = ruleset(
             Fake("wide", localization=LocalizationPolicy.WHOLE_SCOPE),
             Fake("paired", localization=LocalizationPolicy.PAIRED_SEGMENTS),
         )
-        assert rules.localization_for("wide") is LocalizationPolicy.WHOLE_SCOPE
-        assert rules.localization_for("paired") is LocalizationPolicy.PAIRED_SEGMENTS
+        pols = rules.policies()
+        assert pols["wide"].localization is LocalizationPolicy.WHOLE_SCOPE
+        assert pols["paired"].localization is LocalizationPolicy.PAIRED_SEGMENTS
 
-    def test_an_unknown_spec_id_falls_back_to_the_generic_policy(self) -> None:
-        assert ruleset().localization_for("nobody") is LocalizationPolicy.WINDOW_MINUS_1
+    def test_a_rules_instance_window_travels_in_its_policy(self) -> None:
+        rules = ruleset(Fake("windowed", window=80))
+        assert rules.policies(default_window=50)["windowed"].window == 80
 
-    def test_the_shipped_hard_repair_rules_declare_three_different_policies(self) -> None:
-        """The reason per-breach lookup is needed rather than tidy: one global
+    def test_a_rule_without_a_window_falls_back_to_the_default(self) -> None:
+        rules = ruleset(Fake("plain"))
+        assert rules.policies(default_window=42)["plain"].window == 42
+
+    def test_each_rules_repair_discipline_travels_per_rule(self) -> None:
+        """No global escalation: a FIXED_POINT rule declares it on itself, which
+        is where CLAUDE.md 3.6 puts the splice-removal requirement."""
+        rules = ruleset(
+            Fake("single", repair=RepairPolicy.SINGLE_PASS),
+            Fake("fixed", repair=RepairPolicy.FIXED_POINT),
+        )
+        pols = rules.policies()
+        assert pols["single"].repair is RepairPolicy.SINGLE_PASS
+        assert pols["fixed"].repair is RepairPolicy.FIXED_POINT
+
+    def test_only_hard_repair_rules_get_a_policy(self) -> None:
+        rules = ruleset(
+            Fake("hard", enforcement=Enforcement.HARD_REPAIR),
+            Fake("soft", enforcement=Enforcement.SOFT),
+            Fake("check", enforcement=Enforcement.HARD_CHECK),
+        )
+        assert set(rules.policies()) == {"hard"}
+
+    def test_the_shipped_hard_repair_rules_declare_three_localizations(self) -> None:
+        """The reason a per-rule map is needed rather than one global policy: one
         value gives at least two of these the wrong repair window."""
         rules = build_rule_set(context(slot()), default_services(seed=1, autoload_fold=False))
-        declared = {s.id: s.localization for s in rules.repair_specs()}
-        assert len(set(declared.values())) >= 3
-
-    def test_an_all_single_pass_catalog_does_not_downgrade_a_fixed_point_request(self) -> None:
-        """Every rule shipped today declares SINGLE_PASS while `repair()`
-        defaults to FIXED_POINT, so a plain min-join would silently weaken Tier B
-        from iterate-to-convergence to stop-on-first-stall."""
-        rules = ruleset(Fake("a", repair=RepairPolicy.SINGLE_PASS))
-        assert rules.repair_policy(RepairPolicy.FIXED_POINT) is RepairPolicy.FIXED_POINT
-
-    def test_one_rule_asking_for_fixed_point_escalates_a_single_pass_request(self) -> None:
-        rules = ruleset(Fake("splice", repair=RepairPolicy.FIXED_POINT))
-        assert rules.repair_policy(RepairPolicy.SINGLE_PASS) is RepairPolicy.FIXED_POINT
-
-    def test_two_contributors_escalate_even_when_both_claim_single_pass(self) -> None:
-        """SINGLE_PASS is a rule's claim about ITSELF. It says nothing about
-        whether recoding a window for E2 creates a repeat E5 refuses."""
-        rules = ruleset(
-            Fake("a", repair=RepairPolicy.SINGLE_PASS),
-            Fake("b", repair=RepairPolicy.SINGLE_PASS),
-        )
-        assert rules.repair_policy(RepairPolicy.SINGLE_PASS) is RepairPolicy.FIXED_POINT
-
-    def test_a_lone_single_pass_rule_stays_single_pass_when_asked(self) -> None:
-        rules = ruleset(Fake("a", repair=RepairPolicy.SINGLE_PASS))
-        assert rules.repair_policy(RepairPolicy.SINGLE_PASS) is RepairPolicy.SINGLE_PASS
+        declared = {p.localization for p in rules.policies().values()}
+        assert len(declared) >= 3
 
 
 class TestTheOracleGetsTheSameNumbers:
     """The #59 failure was the oracle and a rule enforcing different contracts."""
 
     def test_gc_bounds_come_from_the_e2_instance_not_its_classvar(self) -> None:
-        """E2 says in as many words that its ClassVar is the loosest demonstrated
-        envelope and the gate is the selected vendors' intersection."""
         rules = build_rule_set(context(slot()), default_services(seed=1, autoload_fold=False))
         e2 = next(s for s in rules.specs if s.id == "e2_gc_band")
         assert rules.oracle_bounds().gc_bounds == (e2.gc_min, e2.gc_max)  # type: ignore[attr-defined]
@@ -317,16 +269,11 @@ class TestTheOracleGetsTheSameNumbers:
         svc = default_services(seed=1, autoload_fold=False)
         gblocks = build_rule_set(context(slot()), svc)
         twist = build_rule_set(
-            context(slot()),
-            svc,
-            vendors=VendorSelection.of("twist_gene_fragment"),
+            context(slot()), svc, vendors=VendorSelection.of("twist_gene_fragment")
         )
         assert gblocks.oracle_bounds().gc_bounds != twist.oracle_bounds().gc_bounds
 
     def test_an_adapter_on_selection_disarms_i7_rather_than_half_arming_it(self) -> None:
-        """E2 measures the fragment including adapters; I7 measures the
-        designable span alone. With adapters those are different bases, so a
-        shared number would be #59 from a third side."""
         rules = build_rule_set(
             context(slot()),
             default_services(seed=1, autoload_fold=False),
@@ -338,13 +285,10 @@ class TestTheOracleGetsTheSameNumbers:
         assert ruleset(Fake("x")).oracle_bounds().gc_bounds is None
 
     def test_forbidden_motifs_come_from_the_hard_lattice_rules_only(self) -> None:
-        """Letting a SOFT rule contribute here would turn a weighted preference
-        into an absolute guarantee the user cannot trade away."""
         rules = build_rule_set(context(slot()), default_services(seed=1, autoload_fold=False))
         motifs = rules.forbidden()
         assert "GAATTC" in motifs  # D1, EcoRI
-        e1 = Homopolymers()
-        assert "A" * (e1.max_at_run + 1) in motifs
+        assert "A" * (Homopolymers().max_at_run + 1) in motifs
         assert all(len(m) >= 6 for m in motifs)
 
 
@@ -379,9 +323,6 @@ class TestBuildingTheSet:
         assert rules.oracle_bounds().gc_bounds == (0.35, 0.65)
 
     def test_a_calibrated_rule_with_no_engine_is_recorded_rather_than_vanishing(self) -> None:
-        """`check_engine_calibration` skips these silently; a constraint that
-        disappears without comment is the same failure as a repair that never
-        ran."""
         rules = build_rule_set(context(slot()), default_services(seed=1, autoload_fold=False))
         assert "b1_five_prime" in rules.unrunnable
 

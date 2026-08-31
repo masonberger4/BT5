@@ -5,55 +5,45 @@ nothing: fifteen rules and every vendor profile were exercised only from tests,
 and the `BreachFinder` seam in `repair.py` had no constructor. A rule that no
 production code path calls is a rule that cannot refuse anything.
 
-FOUR THINGS MUST COME FROM ONE PLACE or they can disagree, and one of them
-already did (#59): the Tier-A forbidden set, the Tier-B breach finder, the
-repair policies, and the parameters handed to the independent validator. E2
-gates the GC of an ordered fragment against the selected vendor's band while
-invariant I7 gates the same span against `gc_bounds`; supply those from two
-sources and the optimizer and its own oracle enforce different contracts, in
-both directions. So this module is one object built from one `VendorSelection`,
-not a bag of functions each resolving its own defaults.
+THIS IS THE CALLER `repair.py` WAS BUILT FOR. `RulePolicy`'s own docstring says
+the per-rule policies must be *caller-supplied* -- because importing the registry
+to read them would pull the whole 15-rule catalog, Biopython and the vendor
+registry into the solver, and because the values live on rule INSTANCES
+(`e2.window` is `self.window`), not the classes. This module is that caller: the
+one place #58 sanctions the solver lane reaching the rules, and it hands
+`repair()` and `optimize()` a `forbidden` set, a `find_breaches`, a
+`policies` map and a `gc_bounds` -- all derived from ONE `VendorSelection` so
+they cannot disagree, which is how #59 happened when E2 and the oracle resolved
+the same band from two places.
 
 WHAT THIS MODULE DOES NOT DO. It does not loop over context slots -- rules do
 that themselves (`b1:219`, `d4:237`, `f3:174`), so a caller that also looped
 would double-count every finding. It does not decide weights; the weighted sum
-is M3's and only ever sees SOFT rules. And it does not send an unfixable
-finding to the solver: `Breach.fixable_by_codon_choice` exists precisely so a
-uAUG in the user's own 5'UTR or an over-length fragment is reported rather than
-chased through a mutation space that cannot contain a fix.
+is M3's and only ever sees SOFT rules. And it does not hand the solver a finding
+no codon can fix: a HARD_CHECK (an over-length fragment, an ITR palindrome)
+never enters the breach finder, and an unfixable HARD_REPAIR (a polyA hexamer in
+the user's own LTR) is routed by `repair()`'s own `_partition` onto
+`RepairOutcome.advisory`, not chased.
 """
 
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from bt5.core.registry import all_specs, check_engine_calibration, discover
 from bt5.core.services import Services, TableProvider
-from bt5.core.spec import (
-    Breach,
-    Enforcement,
-    Evaluation,
-    LocalizationPolicy,
-    RepairPolicy,
-    Spec,
-)
+from bt5.core.spec import Breach, Enforcement, Evaluation, Spec
 from bt5.rules.vendors import DEFAULT_SELECTION, VendorSelection
 from bt5.solver.pipeline import OptimizeResult, optimize
 from bt5.solver.reference import CodonScorer
-from bt5.solver.repair import (
-    NO_RULES,
-    Assembler,
-    BreachCost,
-    BreachFinder,
-    no_rules,
-)
+from bt5.solver.repair import Assembler, BreachFinder, RulePolicy
 
 if TYPE_CHECKING:
     from bt5.codon.tables import NcbiGeneticCode
-    from bt5.core.context import ContextSlot, DesignContext
+    from bt5.core.context import DesignContext
     from bt5.core.services import FoldEngine
     from bt5.core.types import Construct
 
@@ -70,6 +60,12 @@ _SEVERITY: Mapping[Enforcement, int] = {
     Enforcement.REPORT_ONLY: 0,
 }
 
+#: The hexamer default for MOTIF_LEN_MINUS_1 localisation. Only rules that
+#: localise by motif length read it (D4's polyA is a hexamer), and `repair()`'s
+#: junction guard scans by the longest forbidden *pattern* regardless, so this is
+#: a localisation width, never a correctness bound.
+_DEFAULT_MOTIF_LEN = 6
+
 
 @dataclass(frozen=True, slots=True)
 class OracleBounds:
@@ -82,19 +78,16 @@ class OracleBounds:
     `A*(max_at+1)` / `G*(max_gc+1)` through `lattice_terms` (`e1:181-190`); those
     reach the oracle as `forbidden`, and I6 proves them absent on both strands
     over the circular construct WHILE HONOURING `Construct.exempt`
-    (`verify.py:148`). I8's homopolymer scan (`verify.py:304-310`) does not honour
-    exemptions and takes a single ceiling for every base, where E1 bands A/T and
-    G/C separately -- 9 and 5 under the gBlocks default. The looser number
-    catches nothing I6 has not already caught; the tighter one refuses runs E1
-    permits. There is no honest single value, and no gap for it to close.
+    (`verify.py:148`). I8's homopolymer scan does not honour exemptions and takes
+    a single ceiling for every base, where E1 bands A/T and G/C separately. The
+    looser number catches nothing I6 has not; the tighter one refuses runs E1
+    permits.
 
     `max_repeat` is not derived either, and that one is measurable rather than
-    arguable: I8's repeat scan (`verify.py:311-319`) walks every k-mer of the
-    whole construct with no reference to `exempt` at all, so on any real
-    lentiviral or AAV vector it fires on the identical LTRs or ITRs -- the
-    `WHITELISTED_REPEAT` segments that exist precisely to be skipped. F1 gets
-    this right by calling `both_arms_exempt` (`f1:206`); I8 has no equivalent.
-    Teaching it one is an oracle change and carries its own label.
+    arguable: I8's repeat scan walks every k-mer of the whole construct with no
+    reference to `exempt`, so on any real lentiviral or AAV vector it fires on the
+    identical LTRs or ITRs -- the `WHITELISTED_REPEAT` segments that exist
+    precisely to be skipped. Filed as an oracle follow-up.
     """
 
     gc_bounds: tuple[float, float] | None = None
@@ -104,14 +97,16 @@ class OracleBounds:
 class Findings:
     """One evaluation of the whole catalog, already routed.
 
-    `repairable` is what Tier B may chase. `advisory` is real and reported and
-    NOT chased -- routing it into the solver is what makes a design with a
-    perfectly good CDS report itself infeasible because the vector is 200 bp
-    too long for the chosen vendor.
+    `repairable` is what the breach finder returns -- every HARD_REPAIR breach
+    from a rule that FAILED, fixable or not; `repair()` partitions those, chasing
+    the fixable ones and carrying the rest on `RepairOutcome.advisory`.
+    `hard_check` is the HARD_CHECK family (over-length fragment, ITR palindrome):
+    real, reported, and NEVER handed to the solver, which would exhaust the
+    mutation space chasing a fix no codon can make.
     """
 
     repairable: tuple[Breach, ...] = ()
-    advisory: tuple[Breach, ...] = ()
+    hard_check: tuple[Breach, ...] = ()
     evaluations: tuple[Evaluation, ...] = ()
 
 
@@ -160,8 +155,8 @@ class RuleSet:
 
     # -- Tier B -------------------------------------------------------------
 
-    def findings(self, c: Construct, specs: Sequence[Spec] | None = None) -> Findings:
-        """Run rules against the assembled construct, once each, and route them.
+    def findings(self, c: Construct) -> Findings:
+        """Run every kept rule against the assembled construct, once each, routed.
 
         THE SOLVER CHASES ONLY BREACHES FROM A RULE THAT SAYS IT FAILED, and
         `Evaluation.passes` is emphatically not `not breaches`. Three of the four
@@ -170,112 +165,83 @@ class RuleSet:
         `worst <= hard_tract` (`e7:264`), F1 on `worst < hard_len` (`f1:251`).
         Handing those to `repair()` sets it chasing findings the rule itself
         calls acceptable -- and since no codon choice can clear a threshold that
-        was never crossed, the search stagnates and raises
-        `InfeasibleConstraints` on a design the catalog accepts.
+        was never crossed, the search stagnates and raises `InfeasibleConstraints`
+        on a design the catalog accepts.
 
-        A passing rule's breaches are still REPORTED. "Not a failure" and "not
-        worth mentioning" are different claims, and a warn-band repeat is exactly
-        what a user wants to see before paying for a tube.
+        HARD_REPAIR breaches -- fixable or not -- go to `repairable`; `repair()`'s
+        own `_partition` splits them. HARD_CHECK breaches go to `hard_check` and
+        never near the solver. SOFT and REPORT_ONLY are M3's business.
         """
         repairable: list[Breach] = []
-        advisory: list[Breach] = []
+        hard_check: list[Breach] = []
         evaluations: list[Evaluation] = []
-        for spec in self.specs if specs is None else specs:
+        for spec in self.specs:
             ev = spec.evaluate(c, self.ctx, self.svc)
             evaluations.append(ev)
+            if ev.passes:
+                continue  # the rule's own verdict; a warn-band finding is not a failure
             for breach in ev.breaches:
                 enforcement = self._enforcement_of(spec, breach)
-                if not enforcement.is_hard:
-                    continue  # SOFT and REPORT_ONLY are M3's; see CLAUDE.md 3.5
-                if (
-                    enforcement is Enforcement.HARD_REPAIR
-                    and breach.fixable_by_codon_choice
-                    and not ev.passes
-                ):
+                if enforcement is Enforcement.HARD_REPAIR:
                     repairable.append(breach)
-                else:
-                    advisory.append(breach)
-        return Findings(tuple(repairable), tuple(advisory), tuple(evaluations))
+                elif enforcement is Enforcement.HARD_CHECK:
+                    hard_check.append(breach)
+                # SOFT / REPORT_ONLY: not the solver's business (CLAUDE.md 3.5)
+        return Findings(tuple(repairable), tuple(hard_check), tuple(evaluations))
 
     def breach_finder(self) -> BreachFinder:
-        """The HARD_REPAIR, codon-fixable breaches. This is what Tier B repairs.
+        """The HARD_REPAIR breaches Tier B repairs.
 
-        SCOPED TO `repair_specs()`, AND THAT IS A PERFORMANCE DECISION WITH A
-        CORRECTNESS ARGUMENT UNDER IT. This callable runs once per candidate --
-        up to 256 per iteration in the guided-random branch, for up to a thousand
-        iterations -- so every rule it touches is paid for a quarter of a million
-        times. E8 builds a k-mer index over the whole construct; F2 extends seeds
-        through mismatches; B1 folds. None of them can ever return a repairable
-        breach, because a SOFT rule's findings are the weighted sum's business
-        and the weighted sum is not in this loop. Evaluating them here buys
-        nothing and costs the interactive budget: with all thirteen rules a
-        repetitive 500 aa design did not converge in two minutes; with the five
-        that can contribute, it is seconds.
+        Both fixable and unfixable -- `repair()._partition` routes the fixable
+        ones into the search and carries the rest on `RepairOutcome.advisory`,
+        which is where a polyA hexamer in the user's own LTR belongs: reported,
+        never chased.
 
-        `advise()` still runs the full set, once, on the construct that actually
-        ships -- so nothing is dropped from the report, only from the inner loop.
+        SCOPED TO THE HARD_REPAIR RULES, which is a performance decision with a
+        correctness argument under it. This callable runs once per candidate --
+        up to `max_candidates` per iteration -- so every rule it touches is paid
+        for hundreds of times per iteration. A SOFT rule can never return a
+        repairable breach (the weighted sum is not in this loop), and E8's k-mer
+        index or B1's fold evaluated here would be pure waste.
         """
-        specs = self.repair_specs()
-        return lambda c: self.findings(c, specs).repairable
+        return lambda c: self.findings(c).repairable
 
     def advise(self) -> Callable[[Construct], tuple[Breach, ...]]:
-        """The hard findings no codon can fix. Reported, never chased.
+        """The HARD_CHECK findings no codon can fix. Reported, never chased.
 
-        Every rule, not just the repairable ones, and evaluated on the final
-        construct: an advisory describes what shipped.
+        Distinct from `RepairOutcome.advisory` (unfixable HARD_REPAIR, carried by
+        the search): these never enter `repair()` at all. Surfaced for the report
+        layer; there is no consumer in the solver.
         """
-        return lambda c: self.findings(c).advisory
+        return lambda c: self.findings(c).hard_check
 
-    def cost(self) -> BreachCost:
-        """A FRESH cost function: the scale freezes per repair run, not per RuleSet."""
-        return BreachCost()
+    def policies(self, default_window: int = 50) -> dict[str, RulePolicy]:
+        """A `RulePolicy` per HARD_REPAIR rule, for `repair()`.
 
-    def localization_for(self, spec_id: str) -> LocalizationPolicy:
-        """The rule's own declared policy, or the generic default.
+        This is hazard 4 of #58, and `repair()`'s per-rule machinery is where it
+        is solved: the four HARD_REPAIR rules declare three different
+        localisations (E2 `WINDOW_MINUS_1`, E5 and F1 `PAIRED_SEGMENTS`, E7
+        `WHOLE_SCOPE`), so one global `policy=` gives at least two of them the
+        wrong repair window. Each rule's own `localization`, `repair` discipline
+        and instance `window` travel in its policy.
 
-        Per breach rather than per run because the four HARD_REPAIR rules
-        currently declare three different policies -- E2 `WINDOW_MINUS_1`, E5 and
-        F1 `PAIRED_SEGMENTS`, E7 `WHOLE_SCOPE`. One global value gives at least
-        two of them the wrong repair window on every run: a repeat pair is only
-        fixable by editing one copy, and widening it by `window - 1` instead
-        searches a region that does not contain the fix.
+        `repair` is read per rule and never globally escalated: `repair()` applies
+        each rule's discipline to its own breaches (SINGLE_PASS retires a breach
+        after one attempt, FIXED_POINT re-targets until the rule stops producing
+        it), so a splice-removal rule that needs FIXED_POINT declares it on itself
+        -- the escalation is per rule, where CLAUDE.md 3.6 puts it.
         """
-        for spec in self.specs:
-            if spec.id == spec_id:
-                return spec.localization
-        return LocalizationPolicy.WINDOW_MINUS_1
-
-    def repair_policy(self, requested: RepairPolicy = RepairPolicy.FIXED_POINT) -> RepairPolicy:
-        """Escalate to FIXED_POINT if any kept rule needs it. NEVER de-escalate.
-
-        Unlike localisation this cannot be per breach: it controls when the one
-        shared search loop stops, so there is exactly one value and it has to be
-        the safe one. CLAUDE.md section 3.6 fixes the direction -- a single pass
-        over a set containing a FIXED_POINT rule ships a construct whose cryptic
-        donors were removed INTO NEW DONORS, and the validator passes it because
-        the specific 9-mer it was told about is gone. The reverse mistake, running
-        a SINGLE_PASS rule to convergence, costs iterations and nothing else.
-
-        This is also why the join only ever goes up. Every rule shipped today
-        declares SINGLE_PASS while `repair()` defaults to FIXED_POINT, so a plain
-        "join over the contributing rules" would compute SINGLE_PASS and quietly
-        downgrade Tier B from iterate-to-convergence to stop-on-first-stall -- a
-        regression introduced by wiring the catalog in, which is the opposite of
-        the point.
-        """
-        if requested is RepairPolicy.FIXED_POINT:
-            return RepairPolicy.FIXED_POINT
-        repairing = self.repair_specs()
-        if any(spec.repair is RepairPolicy.FIXED_POINT for spec in repairing):
-            return RepairPolicy.FIXED_POINT
-        # A rule declaring SINGLE_PASS is making a claim about ITSELF: "fixing one
-        # of my breaches cannot create another of mine." It says nothing about
-        # whether recoding a window to bring GC into E2's band creates a 20 bp
-        # repeat E5 refuses. Two such rules in one loop invalidate each other's
-        # claim, so more than one contributor promotes unconditionally.
-        if len(repairing) > 1:
-            return RepairPolicy.FIXED_POINT
-        return requested
+        out: dict[str, RulePolicy] = {}
+        for spec in self.repair_specs():
+            window = getattr(spec, "window", default_window)
+            out[spec.id] = RulePolicy(
+                localization=spec.localization,
+                repair=spec.repair,
+                window=int(window) if isinstance(window, int) else default_window,
+                motif_len=_DEFAULT_MOTIF_LEN,
+                priority=0,  # pure round-robin; repair() already prevents starvation
+            )
+        return out
 
     def repair_specs(self) -> tuple[Spec, ...]:
         """The rules that can put work into Tier B, in any active slot."""
@@ -286,12 +252,6 @@ class RuleSet:
                 spec.enforcement_for(slot) is Enforcement.HARD_REPAIR
                 for slot in self.ctx.active_slots
             )
-        )
-
-    def demands_fixed_point(self) -> tuple[str, ...]:
-        """Which rules force the escalation, for the report."""
-        return tuple(
-            sorted(spec.id for spec in self.specs if spec.repair is RepairPolicy.FIXED_POINT)
         )
 
     # -- The validator ------------------------------------------------------
@@ -313,19 +273,16 @@ class RuleSet:
         its ClassVar (0.28, 0.80) is the loosest demonstrated envelope and that
         the gate is the selected vendors' intersection, computed per instance.
 
-        Three ways this returns None, each of them a refusal to half-arm the
-        oracle rather than an oversight:
+        Three ways this returns None, each a refusal to half-arm the oracle:
 
         - no E2 at all (disabled, excluded, or gated off in every active slot --
           it gates off for IVT mRNA), so there is no band to enforce;
         - E2 could not resolve numbers;
         - an ADAPTER-ON selection. E2 measures the fragment the vendor
-          synthesises, adapters included (`fragments()` splices them on); I7
-          measures the designable span alone, because the oracle has no vendor
-          data and its documented extension point for adapters is a parameter
-          nobody passes yet. With adapters those are different bases and so
-          different numbers, which is #59's contradiction from a third side.
-          `VendorSelection.of()` guarantees an adapter-on selection is
+          synthesises, adapters included; I7 measures the designable span alone,
+          because the oracle has no vendor data. With adapters those are different
+          bases and different numbers, which is #59's contradiction from a third
+          side. `VendorSelection.of()` guarantees an adapter-on selection is
           single-key, so this is exactly one configuration today.
         """
         for spec in self.specs:
@@ -336,8 +293,7 @@ class RuleSet:
             if not (isinstance(lo, float) and isinstance(hi, float)):
                 return None
             # getattr rather than an import: the solver stays free of a
-            # compile-time dependency on the vendor catalogue. Pinned by test, so
-            # a rename in M4 fails loudly instead of silently reading 0.
+            # compile-time dependency on the vendor catalogue. Pinned by test.
             adapters = getattr(getattr(spec, "vendors", None), "adapters", None)
             if getattr(adapters, "total", 0):
                 return None
@@ -355,7 +311,7 @@ class RuleSet:
         which raised expression 3-6.5x while cutting functional titer 8-9x -- to
         a weighted preference.
         """
-        slots = self._gating_slots()
+        slots = self.ctx.active_slots
         if breach.slot_role is not None:
             for slot in slots:
                 if slot.role == breach.slot_role:
@@ -363,9 +319,6 @@ class RuleSet:
         if not slots:
             return spec.enforcement
         return max((spec.enforcement_for(s) for s in slots), key=lambda e: _SEVERITY[e])
-
-    def _gating_slots(self) -> tuple[ContextSlot, ...]:
-        return self.ctx.active_slots
 
 
 def build_rule_set(
@@ -377,8 +330,6 @@ def build_rule_set(
     include: Callable[[type[Spec]], bool] | None = None,
 ) -> RuleSet:
     """Discover, filter, calibrate, instantiate and gate the catalog.
-
-    The order matters and each step earns its place:
 
     1. `discover()` walks `bt5.rules.catalog` so a new rule file needs no edit
        here. There is deliberately no committed catalog list.
@@ -457,9 +408,7 @@ def default_services(
     THE IMPORTS ARE INSIDE THE FUNCTION, and that is not style. Importing this
     module must not drag the vector, codon and structure lanes into the solver's
     module graph: the whole point of `Services` is that a rule RECEIVES its
-    providers rather than importing them, and a top-level import here would make
-    the solver depend on M2, M5 and M6 at import time for a convenience it does
-    not itself use. Every provider stays injectable.
+    providers rather than importing them. Every provider stays injectable.
 
     `fold` stays None when ViennaRNA is absent -- never a stub. Every threshold
     in BT5 is a kcal/mol number, so a stub returning plausible energies would
@@ -470,23 +419,12 @@ def default_services(
     narrow on purpose so that fixing one removes exactly one. Nothing in `src/`
     had ever constructed a `Services` before this module, so no lane's concrete
     provider had ever been checked against the protocol it claims to implement,
-    and all three fail:
-
-      - `ViennaFold.version` is a read-only property where `FoldEngine.version`
-        is a settable `ClassVar[str]` (M6);
-      - `NcbiGeneticCode.table_id` is a read-only property where
-        `GeneticCode.table_id` is a plain attribute (M5);
-      - `FileTableProvider.usage` returns a `CodonUsage`, not the
-        `Mapping[str, float]` the protocol declares, and is `@cache`-wrapped on
-        top (M5). `packages/engine/tests/rules/conftest.py` already papered over
-        this one with a test double returning `dict[str, float]`, so the two
-        implementations of `usage()` do not even agree with each other.
-
-    All three are other lanes' to fix, and correcting the protocols instead
-    would be a `core/` amendment. They are runtime-harmless for every rule
-    shipped today -- nothing calls `svc.tables.usage()` -- but the third would
-    break the first rule that does, which is why it is written down here rather
-    than smoothed over.
+    and all three fail: `ViennaFold.version` is a read-only property where the
+    protocol wants a settable ClassVar (M6); `NcbiGeneticCode.table_id` is a
+    read-only property where the protocol wants a plain attribute (M5); and
+    `FileTableProvider.usage` returns a `CodonUsage`, not the `Mapping[str,float]`
+    the protocol declares, `@cache`-wrapped on top (M5). All three are other
+    lanes' to fix, and correcting the protocols would be a `core/` amendment.
     """
     import numpy as np
 
@@ -515,8 +453,8 @@ def optimize_with(
     assemble: Assembler,
     score: CodonScorer | None = None,
     original_backbone: Construct | None = None,
-    repair_policy: RepairPolicy = RepairPolicy.FIXED_POINT,
     gc_window: int = 50,
+    max_candidates: int = 256,
     left_flank: str = "",
     right_flank: str = "",
     seed: int = 0,
@@ -525,8 +463,8 @@ def optimize_with(
     """`optimize()` with every argument derived from ONE rule set.
 
     This is the call that makes the catalog real, and the reason it exists here
-    rather than in `pipeline` is that all seven derived arguments have to come
-    from the same instantiated rules. Supply the motifs from one place and the
+    rather than in `pipeline` is that all four derived arguments have to come from
+    the same instantiated rules. Supply the motifs from one place and the
     validator's GC band from another and you get #59 again: E2 gating a fragment
     against the selected vendor's band while I7 gates the same span against a
     different one, refusing constructs the rules pass and passing constructs the
@@ -535,6 +473,11 @@ def optimize_with(
     Pass `original_backbone` -- `vector.assemble()` returns it as
     `Assembly.reference` -- to arm I9. Without it the invariant that proves BT5
     did not touch a single backbone base does not run.
+
+    HARD_REPAIR advisories (a polyA in the user's LTR) come back on
+    `result.repair_outcome.advisory`; HARD_CHECK findings (an over-length
+    fragment) are read separately with `rules.advise()(result.construct)`, since
+    `OptimizeResult` carries only the search's own outcome.
     """
     bounds = rules.oracle_bounds()
     return optimize(
@@ -546,10 +489,8 @@ def optimize_with(
         score=score,
         gc_bounds=bounds.gc_bounds,
         gc_window=gc_window,
-        localization=rules.localization_for,
-        repair_policy=rules.repair_policy(repair_policy),
-        cost=rules.cost(),
-        advise=rules.advise(),
+        policies=rules.policies(gc_window),
+        max_candidates=max_candidates,
         original_backbone=original_backbone,
         left_flank=left_flank,
         right_flank=right_flank,
@@ -559,13 +500,10 @@ def optimize_with(
 
 
 __all__ = [
-    "NO_RULES",
-    "BreachCost",
     "Findings",
     "OracleBounds",
     "RuleSet",
     "build_rule_set",
     "default_services",
-    "no_rules",
     "optimize_with",
 ]

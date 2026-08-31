@@ -55,8 +55,15 @@
       "Bash(pytest:*)",
       "Bash(python -m pytest:*)",
       "Edit(.claude/**)",
-      "Write(.claude/**)",
-      "Read(.claude/**)"
+      "Read(.claude/**)",
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(.venv/bin/ruff:*)",
+      "Bash(.venv/bin/mypy:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(bash scripts/gates.sh:*)",
+      "Bash(scripts/gates.sh:*)",
+      "Bash(wc:*)",
+      "Bash(comm:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
@@ -65,6 +72,83 @@
       "Bash(git reset --hard:*)",
       "Bash(git clean -fdx:*)",
       "Bash(git filter-branch:*)"
+    ],
+    "ask": [
+      "Edit(/packages/engine/src/bt5/verify.py)",
+      "Edit(/packages/engine/src/bt5/core/**)",
+      "Edit(/tests/contract/**)",
+      "Edit(/tests/invariants/**)",
+      "Edit(/tests/data_integrity/**)",
+      "Edit(/data/**)",
+      "Edit(/benchmarks/**)",
+      "Edit(/.github/**)",
+      "Edit(/pyproject.toml)",
+      "Edit(/uv.lock)"
+    ]
+  },
+  "model": "opus",
+  "effortLevel": "high",
+  "env": {
+    "PYTHONHASHSEED": "0"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "python3 .claude/hooks/statusline.py"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/session_start.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/compact_output.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/push_gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/protect_paths.py"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__create_pull_request|mcp__github__update_pull_request|mcp__github__update_pull_request_branch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/push_gate.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/ruff_format.sh"
+          }
+        ]
+      }
     ]
   }
 }

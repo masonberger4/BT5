@@ -2,21 +2,19 @@
 the rule catalog against them.
 
 `catalog` is the entry point for real use -- it turns the registered rules into
-the motifs Tier A forbids, the breaches Tier B repairs, the policies each rule
-declares and the bounds the independent validator is given, all from one
+the motifs Tier A forbids, the breaches Tier B repairs, the per-rule policies each
+rule declares and the bounds the independent validator is given, all from one
 selection so they cannot disagree. `pipeline.optimize` stays underneath it,
 taking those as plain values, so a caller with three hand-written constraints
 never has to load the catalog at all.
 """
 
 from bt5.solver.catalog import (
-    NO_RULES,
     Findings,
     OracleBounds,
     RuleSet,
     build_rule_set,
     default_services,
-    no_rules,
     optimize_with,
 )
 from bt5.solver.lattice import (
@@ -39,27 +37,26 @@ from bt5.solver.reference import (
 )
 from bt5.solver.repair import (
     Assembler,
-    BreachCost,
     BreachFinder,
-    Cost,
+    RepairNotConverged,
     RepairOutcome,
+    RulePolicy,
     codon_span,
     localize,
     repair,
 )
 
 __all__ = [
-    "NO_RULES",
     "Assembler",
     "Automaton",
-    "BreachCost",
     "BreachFinder",
     "CodonScorer",
-    "Cost",
     "Findings",
     "OptimizeResult",
     "OracleBounds",
+    "RepairNotConverged",
     "RepairOutcome",
+    "RulePolicy",
     "RuleSet",
     "achievable_gc_range",
     "back_translate",
@@ -73,7 +70,6 @@ __all__ = [
     "gc_steering_scorer",
     "localize",
     "longest_repeat",
-    "no_rules",
     "optimal_back_translate",
     "optimize",
     "optimize_with",

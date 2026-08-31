@@ -34,7 +34,7 @@ iterations with a stagnation tolerance of 100.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -64,117 +64,98 @@ BreachFinder = Callable[[Construct], tuple[Breach, ...]]
 """Evaluates the HARD_REPAIR rules against an assembled construct."""
 
 
-def no_rules(_c: Construct) -> tuple[Breach, ...]:
-    """The EXPLICIT opt-out from Tier B.
-
-    `optimize()` used to accept `find_breaches=None` and fabricate
-    `RepairOutcome(cds, 0, converged=True)`, which is byte-identical to "repair
-    ran and found nothing to fix" -- so a caller who forgot the argument got a
-    construct that looked proven and had never been checked. Passing this is the
-    same behaviour said out loud, and `optimize()` reports `ran is False` for it.
-    """
-    return ()
-
-
-NO_RULES: BreachFinder = no_rules
-
-
 @dataclass(frozen=True)
 class RepairOutcome:
     cds: str
     iterations: int
     converged: bool
+    #: HARD_REPAIR breaches the solver could not clear -- fixable by codon choice
+    #: in principle, but the search did not reach a construct without them. A
+    #: non-empty `remaining` is what makes the design infeasible.
     remaining: tuple[Breach, ...] = ()
     exhaustive_windows: int = 0
     random_windows: int = 0
-    #: Did Tier B actually run? REQUIRED to distinguish "repaired, nothing to
-    #: fix" from "never checked". `optimize()` used to fabricate
-    #: `RepairOutcome(cds, 0, True)` when no breach finder was supplied, which is
-    #: byte-identical to a clean repair -- so a caller who forgot the argument
-    #: got a construct that looked proven and had never been looked at. The two
-    #: states are now different values, not the same one.
-    ran: bool = True
-    #: The policy the loop actually ran under, after any escalation. Recorded
-    #: because the escalation is a safety decision made somewhere else -- a test
-    #: that cannot see it cannot prove the join went the right way.
-    effective_repair_policy: RepairPolicy = RepairPolicy.FIXED_POINT
+    #: Breaches the solver was never asked to fix, because their author marked
+    #: them `fixable_by_codon_choice=False`: a polyA hexamer in the user's own
+    #: LTR, a repeat wholly in the backbone. Reading this field is what stops one
+    #: unfixable backbone breach from aborting the whole pass; downstream it is
+    #: what `QcReport.advisories` is for.
+    advisory: tuple[Breach, ...] = ()
+    #: Why the pass stopped. `clean` (nothing actionable left), `not_run` (Tier B
+    #: was never invoked -- set by the pipeline, not here), `exhausted_targets`
+    #: (every actionable breach was attempted and none remained workable),
+    #: `stagnation` / `iterations` (a resource cap was hit before the space was
+    #: searched out -- the search GAVE UP, and `converged` is False).
+    stop_reason: str = "clean"
+    #: Present only on a non-clean outcome: the honest certificate of what was
+    #: worked last and searched. `None` when `clean`.
+    certificate: InfeasibilityCertificate | None = None
 
     @property
     def clean(self) -> bool:
+        """No breach the solver could act on remains.
+
+        Advisory breaches never count against `clean`: no codon choice can move
+        them, so a construct carrying only advisories is as clean as this stage
+        can make it, and the independent validator -- not repair -- is what
+        decides whether an unfixable finding blocks the emit.
+        """
         return not self.remaining
 
 
-#: A repair cost. Compared lexicographically, never summed. See `BreachCost`.
-Cost = tuple[float, float, float, float]
+class RepairNotConverged(InfeasibleConstraints):
+    """The search hit a resource cap (stagnation or the iteration limit) before
+    it could search the mutation space out.
 
-
-class BreachCost:
-    """The repair objective: a lexicographic tuple, with a scale frozen at first use.
-
-    This loop used to minimise `sum(b.magnitude)`, but `Breach.magnitude` is
-    documented rule-native: E1's is nucleotides over a run limit, E9's is a
-    dimensionless 1.0/0.5/0.25 tier, E2's is a GC fraction delta. Summing them
-    makes one nucleotide worth thirty-three percentage points of GC, so the
-    search chases whichever rule happens to report in the largest units -- and
-    the same arithmetic picked the breach to work next, so the rule with the
-    biggest units also monopolised the search.
-
-    Four terms, compared in order:
-
-      1. how many breaches -- already unit-free, and clearing one is
-         unambiguously better than shrinking one;
-      2. summed magnitude, each divided by its own rule's scale;
-      3. how much sequence is implicated, preferring the more localised of two
-         otherwise equal states;
-      4. leftmost breach, so ties break deterministically.
-
-    THE SCALE IS FROZEN, and that is the load-bearing part. Normalising by a
-    moving maximum makes the objective non-stationary: the same two breach sets
-    compare one way at iteration 3 and the other way at iteration 40, so
-    `best_cost` stops being a monotone bound and the stagnation counter measures
-    nothing. The scale comes from the first call -- the initial breach set,
-    before any candidate -- and never moves. A rule first seen later gets 1.0 and
-    is recorded in `late` rather than silently rescaling the run.
+    A subclass of InfeasibleConstraints so every existing caller and test that
+    catches the base type still catches this, but a distinct type on PURPOSE: the
+    base class asserts a PROOF of infeasibility, and a search that merely gave up
+    has not proven anything. Until `InfeasibilityCertificate.proof` gains a
+    `search_not_converged` member (a MAJOR contract change, filed separately),
+    the type name and this message are what keep the certificate from claiming
+    the mutation space was empty when it was only unsearched.
     """
 
-    __slots__ = ("_scale", "late")
 
-    def __init__(self) -> None:
-        self._scale: dict[str, float] | None = None
-        self.late: tuple[str, ...] = ()
+@dataclass(frozen=True)
+class RulePolicy:
+    """How Tier B localizes, budgets and orders ONE rule's breaches.
 
-    def normalised(self, breach: Breach) -> float:
-        """`breach.magnitude` in units of its own rule's initial worst case."""
-        if self._scale is None:
-            return abs(breach.magnitude)
-        return abs(breach.magnitude) * self._scale.get(breach.spec_id, 1.0)
+    Repair works many rules at once, and they do not share a localization
+    heuristic (a windowed GC statistic widens by `window - 1`; a motif by
+    `motif_len - 1`), a repair discipline (SINGLE_PASS retires a breach after one
+    attempt; FIXED_POINT re-targets until the rule stops producing it, which is
+    what splice removal requires), or a place in the queue (a hard rule should be
+    cleared before a soft one gets a turn). A caller supplies one of these per
+    `spec_id`; the scalar `policy`/`repair_policy`/`window`/`motif_len` arguments
+    to `repair()` are the fallback for any rule without one.
 
-    def __call__(self, breaches: Sequence[Breach]) -> Cost:
-        if self._scale is None:
-            self._scale = _initial_scale(breaches)
-        else:
-            unseen = {b.spec_id for b in breaches} - set(self._scale)
-            if unseen:
-                self.late = tuple(sorted(set(self.late) | unseen))
-        if not breaches:
-            return (0.0, 0.0, 0.0, 0.0)
-        return (
-            float(len(breaches)),
-            # Rounded so the epsilon the scalar comparison carried survives into
-            # a lexicographic one: without it two states differing by 1e-16 of
-            # normalised magnitude read as an improvement forever.
-            round(sum(self.normalised(b) for b in breaches), 12),
-            float(sum(b.interval.length for b in breaches)),
-            float(min(b.interval.start for b in breaches)),
-        )
+    This is caller-supplied on PURPOSE: importing the registry to read the
+    policies off the rule classes would pull the whole 15-rule catalog, Biopython
+    and the vendor registry into the solver, make Tier A untestable without the
+    catalog, and violate the lane boundary -- and the values live on rule
+    INSTANCES (`e2`'s window is `self.window`), which the classes do not carry.
+    """
+
+    localization: LocalizationPolicy
+    repair: RepairPolicy
+    window: int
+    motif_len: int
+    priority: int = 0
 
 
-def _initial_scale(breaches: Sequence[Breach]) -> dict[str, float]:
-    """1 / (this rule's worst magnitude in the initial set), per rule."""
-    worst: dict[str, float] = {}
-    for b in breaches:
-        worst[b.spec_id] = max(worst.get(b.spec_id, 0.0), abs(b.magnitude))
-    return {spec_id: (1.0 / m if m > 0.0 else 1.0) for spec_id, m in worst.items()}
+def _partition(breaches: Sequence[Breach]) -> tuple[list[Breach], tuple[Breach, ...]]:
+    """Split breaches into the ones the solver can act on and the ones it cannot.
+
+    `fixable_by_codon_choice` is REQUIRED on every Breach with no default
+    precisely so this split is always answerable. Ignoring it -- as the search
+    did before -- lets `target = max(breaches, ...)` pick an unfixable backbone
+    breach whose window touches no editable codon, then abort the entire pass
+    having done zero work.
+    """
+    actionable = [b for b in breaches if b.fixable_by_codon_choice]
+    advisory = tuple(b for b in breaches if not b.fixable_by_codon_choice)
+    return actionable, advisory
 
 
 def localize(
@@ -261,18 +242,167 @@ def _introduces_forbidden(
     return automaton.consume(state, right_flank)[1]
 
 
-def _normalised(measure: Callable[[Sequence[Breach]], Cost], breach: Breach) -> float:
-    """A breach's magnitude in its own rule's units, if the cost object knows how.
+def _codon_map_of(construct: Construct, cds: str) -> Sequence[Interval]:
+    return (
+        construct.translation_units[0].codon_map
+        if construct.translation_units
+        else tuple(Interval(i, i + 3) for i in range(0, len(cds), 3))
+    )
 
-    A caller may inject any callable as the cost, so the scale is read through a
-    duck-typed hook rather than requiring `BreachCost` specifically. Falling back
-    to the raw magnitude reproduces the old ordering exactly, which is the right
-    default for a cost function that does not model rules at all.
+
+def _aggregate(actionable: Sequence[Breach]) -> dict[str, tuple[int, float]]:
+    """Per-rule (count, magnitude-sum). The cost the search actually compares.
+
+    Breach COUNT is the cross-rule currency -- one `Breach` is "one localized
+    problem" by contract, so a GC deviation of 0.05 and a repeat of magnitude 4.0
+    are each worth exactly one. Summing magnitudes across rules would put
+    kcal/mol, CAI and integer motif counts on one axis and let the largest-unit
+    rule silently dominate. Magnitude therefore stays INSIDE its rule, as the
+    within-rule gradient the tie-break uses.
     """
-    normalise = getattr(measure, "normalised", None)
-    if normalise is None:
-        return abs(breach.magnitude)
-    return float(normalise(breach))
+    agg: dict[str, tuple[int, float]] = {}
+    for b in actionable:
+        count, magsum = agg.get(b.spec_id, (0, 0.0))
+        agg[b.spec_id] = (count + 1, magsum + b.magnitude)
+    return agg
+
+
+def _accepts(
+    current: Mapping[str, tuple[int, float]],
+    trial: Mapping[str, tuple[int, float]],
+    target_spec: str,
+) -> bool:
+    """Is `trial` a strict improvement the search should take?
+
+    The rules, in order, are what make the search monotone and terminating while
+    keeping magnitude inside its rule:
+
+    - Never let ANY rule's breach count rise. Count is the currency, so an
+      accepted move cannot trade one rule's breach for another's. This is also
+      the invariant the termination proof rests on: the per-rule count vector is
+      non-increasing, and integer, so only finitely many count-reducing moves
+      exist.
+    - If total count falls, take it -- fewer localized problems is unambiguously
+      better across rules.
+    - If total count is unchanged (and, from the first rule, no single count
+      rose, so every count is identical), require within-rule progress: the
+      TARGET rule's magnitude-sum strictly falls and no other rule's rises. This
+      is the GC-gradient step, and it never compares magnitudes between rules.
+    """
+    for spec, (tc, _tm) in trial.items():
+        if tc > current.get(spec, (0, 0.0))[0]:
+            return False
+
+    cur_total = sum(c for c, _ in current.values())
+    trial_total = sum(c for c, _ in trial.values())
+    if trial_total < cur_total:
+        return True
+    if trial_total > cur_total:
+        return False
+
+    # Counts are identical rule-by-rule; this is a pure magnitude move.
+    cur_mag = current.get(target_spec, (0, 0.0))[1]
+    trial_mag = trial.get(target_spec, (0, 0.0))[1]
+    if trial_mag >= cur_mag - 1e-12:
+        return False
+    return all(
+        tm <= current.get(spec, (0, 0.0))[1] + 1e-12
+        for spec, (_c, tm) in trial.items()
+        if spec != target_spec
+    )
+
+
+def _window_for(
+    breach: Breach,
+    *,
+    policy: LocalizationPolicy,
+    window: int,
+    motif_len: int,
+    codon_map: Sequence[Interval],
+    construct_length: int,
+    circular: bool,
+    protein_len: int,
+) -> tuple[Interval, int, int] | None:
+    """A breach's repair window and its codon span, or None if it spans no whole
+    editable codon (so the search must skip it, never abort on it)."""
+    repair_window = localize(
+        breach,
+        policy,
+        window=window,
+        motif_len=motif_len,
+        construct_length=construct_length,
+        circular=circular,
+    )
+    first, last = codon_span(repair_window, codon_map, construct_length)
+    last = min(last, protein_len)
+    if first >= last:
+        return None
+    return repair_window, first, last
+
+
+def _breach_key(breach: Breach) -> tuple[str, int, int]:
+    """A breach's identity across iterations: rule plus reported span."""
+    return (breach.spec_id, breach.interval.start, breach.interval.end)
+
+
+def _select_target(
+    actionable: Sequence[Breach],
+    *,
+    resolve: Callable[[str], RulePolicy],
+    turns: dict[str, int],
+    retired: set[tuple[str, int, int]],
+    codon_map: Sequence[Interval],
+    construct_length: int,
+    circular: bool,
+    protein_len: int,
+) -> tuple[Breach, Interval, int, int, RulePolicy] | None:
+    """Pick the next breach to work, round-robin over rules, priority first.
+
+    Worst-first over raw magnitude STARVES a rule whose findings are small: a GC
+    deviation of 0.05 never outranks a repeat of magnitude 4.0, so with both
+    present the GC window is never targeted and the design is emitted with it
+    still out of band. Selection is therefore two-level: among the highest
+    `priority` rules that currently have a workable, un-retired breach, take the
+    one served least often (round-robin, ties by spec_id); within that rule, take
+    its worst breach (magnitude, then earliest). Each rule's window comes from
+    ITS own `RulePolicy`. Default priority 0 for every rule is pure round-robin,
+    so a single-rule pass is unchanged.
+
+    Returns None only when NO actionable breach has a workable window that is not
+    already retired -- the honest "nothing left to do" signal.
+    """
+    workable: dict[str, list[tuple[Breach, Interval, int, int]]] = {}
+    priority: dict[str, int] = {}
+    for breach in actionable:
+        if _breach_key(breach) in retired:
+            continue
+        pol = resolve(breach.spec_id)
+        found = _window_for(
+            breach,
+            policy=pol.localization,
+            window=pol.window,
+            motif_len=pol.motif_len,
+            codon_map=codon_map,
+            construct_length=construct_length,
+            circular=circular,
+            protein_len=protein_len,
+        )
+        if found is None:
+            continue
+        repair_window, first, last = found
+        workable.setdefault(breach.spec_id, []).append((breach, repair_window, first, last))
+        priority[breach.spec_id] = pol.priority
+    if not workable:
+        return None
+
+    top = max(priority.values())
+    eligible = [spec for spec in workable if priority[spec] == top]
+    chosen = min(eligible, key=lambda spec: (turns.get(spec, 0), spec))
+    turns[chosen] = turns.get(chosen, 0) + 1
+    breach, repair_window, first, last = max(
+        workable[chosen], key=lambda t: (t[0].magnitude, -t[0].interval.start)
+    )
+    return breach, repair_window, first, last, resolve(chosen)
 
 
 def repair(
@@ -283,72 +413,98 @@ def repair(
     assemble: Assembler,
     find_breaches: BreachFinder,
     forbidden: Sequence[str] = (),
-    policy: LocalizationPolicy | Callable[[str], LocalizationPolicy] = (
-        LocalizationPolicy.WINDOW_MINUS_1
-    ),
+    policy: LocalizationPolicy = LocalizationPolicy.WINDOW_MINUS_1,
     repair_policy: RepairPolicy = RepairPolicy.FIXED_POINT,
-    cost: Callable[[Sequence[Breach]], Cost] | None = None,
     window: int = 50,
     motif_len: int = 6,
     left_flank: str = "",
     right_flank: str = "",
     seed: int = 0,
+    priority: Mapping[str, int] | None = None,
+    policies: Mapping[str, RulePolicy] | None = None,
+    max_candidates: int = 256,
+    raise_on_infeasible: bool = True,
     max_iterations: int = MAX_ITERATIONS,
 ) -> RepairOutcome:
     """Repair HARD_REPAIR breaches without ever weakening a Tier-A guarantee.
 
-    Raises InfeasibleConstraints when the search cannot clear the breaches, with
-    the minimal conflicting set rather than a bare failure.
+    Only breaches marked `fixable_by_codon_choice` are chased; the rest are
+    carried on `RepairOutcome.advisory` untouched, because no codon choice can
+    move them. Breach count is the cross-rule cost; a rule's breaches are worked
+    round-robin so a small-magnitude rule is never starved by a large-magnitude
+    one. `policies` supplies a `RulePolicy` per `spec_id` (localization, repair
+    discipline, window, motif length, priority); the scalar `policy`/
+    `repair_policy`/`window`/`motif_len`/`priority` arguments are the fallback for
+    any rule without one.
 
-    `policy` may be one `LocalizationPolicy` for every breach, or a callable
-    resolving one PER RULE. The catalog needs the second form: the four
-    HARD_REPAIR rules shipped today declare three different policies between
-    them -- E2 `WINDOW_MINUS_1`, E5 and F1 `PAIRED_SEGMENTS`, E7 `WHOLE_SCOPE` --
-    and a repeat pair widened by `window - 1` instead of localised to the copy
-    being edited searches a region that does not contain the fix.
+    On failure the behaviour is the caller's choice. `raise_on_infeasible=True`
+    (the default, so every existing caller is unchanged) raises: Infeasible
+    Constraints when the actionable breaches were searched out and genuinely
+    cannot be cleared, RepairNotConverged when a resource cap stopped the search
+    first. `raise_on_infeasible=False` returns the non-clean RepairOutcome with
+    the same honest certificate on it instead -- the pipeline uses this so the
+    independent validator, not an exception, is what refuses to emit.
     """
     rng = np.random.default_rng(seed)  # explicit; never the global RNG
     patterns = expand_forbidden(forbidden)
     automaton = Automaton(patterns)
-    measure = cost if cost is not None else BreachCost()
-    localization = policy if callable(policy) else (lambda _spec_id: policy)
+    priority = priority or {}
+    policies = policies or {}
+
+    def resolve(spec_id: str) -> RulePolicy:
+        return policies.get(
+            spec_id,
+            RulePolicy(policy, repair_policy, window, motif_len, priority.get(spec_id, 0)),
+        )
+
+    # A recoded block can create a forbidden motif that runs into the immutable
+    # suffix, and a motif of length L needs up to L - 1 suffix bases to do it.
+    # The guard is therefore fixed by the longest PATTERN, never by a rule's
+    # motif_len: working a 6 nt polyA window while GCGGCCGC (8 nt) is forbidden
+    # would otherwise scan only 6 suffix bases and let a junction NotI site slip
+    # past the very guarantee Tier A made.
+    guard_len = max((len(p) for p in patterns), default=1) - 1
 
     current = cds
     construct = assemble(current)
     breaches = find_breaches(construct)
-    if not breaches:
-        return RepairOutcome(current, 0, True, effective_repair_policy=repair_policy)
+    actionable, advisory = _partition(breaches)
+    # Advisory-only (or clean): nothing the solver can act on. Not a failure --
+    # an unfixable backbone polyA is the validator's call, not repair's.
+    if not actionable:
+        return RepairOutcome(current, 0, True, advisory=advisory)
 
     stagnant = 0
     exhaustive_windows = random_windows = 0
-    best_cost = measure(breaches)
+    cur_agg = _aggregate(actionable)
+    turns: dict[str, int] = {}
+    retired: set[tuple[str, int, int]] = set()
+    # The certificate is built from what was ACTUALLY worked last, not from
+    # `breaches[0]` and the whole protein. These record it.
+    last_target: Breach | None = None
+    last_span: tuple[int, int] = (0, len(protein))
+    stop_reason = "iterations"  # the for-loop completing without a break
+    iteration = 0
 
     for iteration in range(1, max_iterations + 1):
-        # Work the worst breach first; deterministic tie-break on position.
-        # NORMALISED, not raw: ranking by `magnitude` across rules compares a
-        # nucleotide count against a GC fraction, so the rule reporting in the
-        # largest units would be the only one ever worked on.
-        target = max(
-            breaches,
-            key=lambda b: (_normalised(measure, b), -b.interval.start),
-        )
-        repair_window = localize(
-            target,
-            localization(target.spec_id),
-            window=window,
-            motif_len=motif_len,
+        codon_map = _codon_map_of(construct, current)
+        selected = _select_target(
+            actionable,
+            resolve=resolve,
+            turns=turns,
+            retired=retired,
+            codon_map=codon_map,
             construct_length=construct.length,
             circular=construct.is_circular,
+            protein_len=len(protein),
         )
-        codon_map = (
-            construct.translation_units[0].codon_map
-            if construct.translation_units
-            else tuple(Interval(i, i + 3) for i in range(0, len(current), 3))
-        )
-        first, last = codon_span(repair_window, codon_map, construct.length)
-        last = min(last, len(protein))
-        if first >= last:
-            break
+        if selected is None:
+            stop_reason = "exhausted_targets"
+            break  # no actionable breach has a workable, un-retired window
+        target, _repair_window, first, last, target_policy = selected
+        target_spec = target.spec_id
+        last_target = target
+        last_span = (first, last)
 
         options = _mutation_space(protein, code, first, last)
         size = _space_size(options)
@@ -356,7 +512,12 @@ def repair(
         suffix = current[3 * last :] + right_flank
         left_state = automaton.consume(0, prefix)[0]
 
-        if size <= EXHAUSTIVE_LIMIT:
+        # A window whose full enumeration exceeds the budget is searched by
+        # guided random, NOT enumerated -- so `find_breaches` calls per iteration
+        # are bounded by `max_candidates` on both branches, and "empty mutation
+        # space" is only ever claimed for a space that was actually enumerated.
+        exhaustive = size <= EXHAUSTIVE_LIMIT and size <= max_candidates
+        if exhaustive:
             exhaustive_windows += 1
             candidates = _enumerate(options)
         else:
@@ -364,7 +525,7 @@ def repair(
             # Guided random: perturb MUTATIONS_PER_ITERATION positions.
             base = [current[3 * (first + k) : 3 * (first + k) + 3] for k in range(last - first)]
             candidates = []
-            for _ in range(256):
+            for _ in range(max_candidates):
                 trial = list(base)
                 for pos in rng.choice(
                     len(trial), size=min(MUTATIONS_PER_ITERATION, len(trial)), replace=False
@@ -375,16 +536,17 @@ def repair(
         improved = False
         for combo in candidates:
             block = "".join(combo)
-            if _introduces_forbidden(automaton, left_state, block, suffix[: max(1, motif_len)]):
+            if _introduces_forbidden(automaton, left_state, block, suffix[:guard_len]):
                 continue  # never weaken a Tier-A guarantee
             trial_cds = current[: 3 * first] + block + current[3 * last :]
-            trial_breaches = find_breaches(assemble(trial_cds))
-            trial_cost = measure(trial_breaches)
-            if trial_cost < best_cost:
-                current, best_cost, breaches = trial_cds, trial_cost, trial_breaches
+            trial_actionable, trial_advisory = _partition(find_breaches(assemble(trial_cds)))
+            trial_agg = _aggregate(trial_actionable)
+            if _accepts(cur_agg, trial_agg, target_spec):
+                current, cur_agg = trial_cds, trial_agg
+                actionable, advisory = trial_actionable, trial_advisory
                 construct = assemble(current)
                 improved = True
-                if not breaches:
+                if not actionable:
                     return RepairOutcome(
                         current,
                         iteration,
@@ -392,31 +554,75 @@ def repair(
                         (),
                         exhaustive_windows,
                         random_windows,
-                        effective_repair_policy=repair_policy,
+                        advisory=advisory,
+                        stop_reason="clean",
                     )
                 break
 
-        stagnant = 0 if improved else stagnant + 1
+        # SINGLE_PASS retires the breach after one attempt: the run continues to
+        # other targets but never re-attacks this one. FIXED_POINT leaves it
+        # eligible, so round-robin re-targets it until the rule stops producing
+        # it -- what splice-site removal requires (a point mutation can create a
+        # new cryptic donor, and a single pass would ship it). Retirement is also
+        # the perf fix: without it, a hopeless breach is re-attacked every
+        # iteration until STAGNATION_TOLERANCE.
+        retired_this_iteration = target_policy.repair is RepairPolicy.SINGLE_PASS
+        if retired_this_iteration:
+            retired.add(_breach_key(target))
+
+        # Stagnation is for a FIXED_POINT rule re-targeting a breach it cannot
+        # clear. A SINGLE_PASS retirement shrinks the eligible set, so it is
+        # progress even without an improvement, and `_select_target` returning
+        # None is what ends the pass once every breach has had its attempt.
+        stagnant = 0 if (improved or retired_this_iteration) else stagnant + 1
         if stagnant >= STAGNATION_TOLERANCE:
-            break
-        if repair_policy is RepairPolicy.SINGLE_PASS and not improved:
+            stop_reason = "stagnation"
             break
 
-    if breaches:
-        raise InfeasibleConstraints(
-            InfeasibilityCertificate(
-                interval=breaches[0].interval,
-                protein_span=(0, len(protein)),
-                minimal_conflicting_specs=tuple(sorted({b.spec_id for b in breaches})),
-                proof="empty_mutation_space",
-            )
+    # One exit. If nothing actionable remains the pass is clean regardless of why
+    # the loop ended; otherwise build the honest certificate from real state.
+    if not actionable:
+        return RepairOutcome(
+            current,
+            iteration,
+            True,
+            (),
+            exhaustive_windows,
+            random_windows,
+            advisory=advisory,
+            stop_reason="clean",
         )
-    return RepairOutcome(
+
+    # `converged` distinguishes "searched the space out and it cannot be cleared"
+    # from "a resource cap stopped the search first". The certificate points at
+    # the breach worked LAST and the codon window actually searched -- never
+    # `breaches[0]` and the whole protein, which named a span the search never
+    # touched.
+    converged = stop_reason == "exhausted_targets"
+    anchor = last_target if last_target is not None else actionable[0]
+    certificate = InfeasibilityCertificate(
+        interval=anchor.interval,
+        protein_span=last_span,
+        minimal_conflicting_specs=tuple(sorted({b.spec_id for b in actionable})),
+        # The only Tier-B-relevant proof in the frozen Literal. When the search
+        # merely gave up (not `converged`), RepairNotConverged is what signals
+        # the space was not actually enumerated -- see that class and the RFC it
+        # names. A defaulted member cannot be added here without a MAJOR change.
+        proof="empty_mutation_space",
+    )
+    outcome = RepairOutcome(
         current,
-        max_iterations,
-        True,
-        (),
+        iteration,
+        converged,
+        tuple(actionable),
         exhaustive_windows,
         random_windows,
-        effective_repair_policy=repair_policy,
+        advisory=advisory,
+        stop_reason=stop_reason,
+        certificate=certificate,
     )
+    if not raise_on_infeasible:
+        return outcome
+    if converged:
+        raise InfeasibleConstraints(certificate)
+    raise RepairNotConverged(certificate)
