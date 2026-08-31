@@ -28,9 +28,10 @@ A `database=` parameter added **here** would:
 - still satisfy structural conformance — a widened signature with a default conforms;
 - require no approval label, because `.github/scripts/check-approval-labels.sh` has **no
   rule matching `packages/engine/src/bt5/vector/`**;
-- and evade the one remaining check, `kmers.py:461`'s
-  `_protocol_conformance: type[KmerIndex] = ConstructKmerIndex`, which sits under
-  `if TYPE_CHECKING` — mypy-only, and **mypy runs in no CI job**.
+- and still satisfy `kmers.py:461`'s
+  `_protocol_conformance: type[KmerIndex] = ConstructKmerIndex`. mypy became a required
+  CI job in #63, so that assertion is now actually enforced — but a widened signature
+  with a default conforms, so it catches a *broken* signature, not a *widened* one.
 
 So `ConstructKmerIndex.of()` takes a `Construct` and nothing else, and that is a rule you
 hold yourself. Any change to its signature goes to `security-reviewer` via `/pre-pr`.

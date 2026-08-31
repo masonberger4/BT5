@@ -16,8 +16,9 @@
 # This script's own exit is 10 when there is no usable venv, 1 if any gate was
 # non-zero, 0 only when every gate passed.
 #
-# mypy is included and is LOCAL-ONLY: no CI job runs it, and it is the only
-# thing that checks kmers.py's KmerIndex conformance assertion.
+# mypy is a required CI job as of #63. Running it here turns a merge-gate
+# failure into a local one; it is also the only check on kmers.py's
+# TYPE_CHECKING-only KmerIndex conformance assertion.
 set -u
 
 VENV_PY=".venv/bin/python"
@@ -55,7 +56,10 @@ run_gate() {
 run_gate ruff-check      .venv/bin/ruff check . --output-format=concise
 run_gate ruff-format     .venv/bin/ruff format --check .
 run_gate mypy            .venv/bin/mypy
-run_gate invariants      .venv/bin/pytest tests/invariants -q -p no:randomly --tb=short
+# No -q, matching ci.yml: -q suppresses the run header, and the header is where
+# pytest_report_header prints the Hypothesis profile and max_examples. That number
+# being visible is what stops a silent budget regression recurring.
+run_gate invariants      .venv/bin/pytest tests/invariants -p no:randomly --tb=short
 run_gate data-integrity  .venv/bin/pytest tests/data_integrity -q --tb=short
 run_gate contract        .venv/bin/pytest tests/contract -q --tb=short
 run_gate engine-tests    .venv/bin/pytest packages/engine/tests -q -m "not slow" --tb=short --maxfail=10
@@ -63,7 +67,7 @@ run_gate engine-tests    .venv/bin/pytest packages/engine/tests -q -m "not slow"
 echo
 if [ "$FAILED" -eq 0 ]; then
   echo "ALL GATES PASSED"
-  echo "NOTE mypy is local-only; no CI job runs it."
+  echo "NOTE local Hypothesis runs 50 examples; CI runs 200."
   exit 0
 fi
 echo "ONE OR MORE GATES FAILED -- see the GATE ... EXIT lines above."

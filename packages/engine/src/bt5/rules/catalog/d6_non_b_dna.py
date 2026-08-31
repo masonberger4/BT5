@@ -218,8 +218,15 @@ class NonBDna:
                 for match in pattern.finditer(scan):
                     if match.start() >= n:
                         continue  # the wrap overlap, already reported at its real position
-                    lo = match.start() if strand == 1 else n - match.end()
-                    iv = Interval(max(0, lo), max(0, lo) + (match.end() - match.start()), strand)
+                    # `% n`, never `max(0, ...)`. A minus-strand motif crossing
+                    # the origin maps to a negative forward coordinate -- and a
+                    # G4 runs to MAX_MOTIF, so it reaches -99. Clamping relocated
+                    # the whole motif to position 0, which then fed the wrong
+                    # bases to `overlaps_editable` and to the repair window. The
+                    # modulo produces the one wrapping representation `Interval`
+                    # defines (start inside the sequence, end past it).
+                    lo = (match.start() if strand == 1 else n - match.end()) % n
+                    iv = Interval(lo, lo + (match.end() - match.start()), strand)
                     found.append((label, iv, peak_g4hunter(match.group()), kind))
         return found
 

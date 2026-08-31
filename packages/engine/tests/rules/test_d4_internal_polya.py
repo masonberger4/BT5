@@ -224,6 +224,40 @@ def test_the_same_construct_linear_has_no_origin_hit() -> None:
     assert not hits(InternalPolyA(), c, context())
 
 
+def minus_wrapped_hexamer():
+    """A construct whose REVERSE COMPLEMENT ends AATA and starts AA, so AATAAA
+    exists only across the origin and only on the minus strand."""
+    from bt5.core.types import Construct, Interval, Segment, SegmentKind, Topology
+
+    seq = reverse_complement("AA" + PAD + "AATA")
+    return Construct(
+        seq,
+        Topology.CIRCULAR,
+        (Segment(Interval(0, len(seq)), SegmentKind.DESIGNABLE_CDS, "cds"),),
+    )
+
+
+def test_a_minus_strand_hexamer_spanning_the_origin_reports_its_real_position() -> None:
+    """The plus strand already wraps correctly; the minus strand did not.
+
+    `lo = n - start - 6` goes negative for an origin-spanning minus-strand hit,
+    and clamping it to 0 teleported the breach to position 0 -- an interval whose
+    bases are not the hexamer it names, on exactly the reverse-oriented cassette
+    this rule exists for. `Interval` already has one representation for a
+    wrapping interval (start inside the sequence, end past it), so the clamp was
+    a bug rather than a limitation.
+    """
+    c = minus_wrapped_hexamer()
+    found = hits(InternalPolyA(), c, context(cassette_orientation=-1))
+    wrapping = [b for b in found if b.interval.end > c.length]
+    assert wrapping, f"expected a wrapping minus-strand hit, got {[b.interval for b in found]}"
+    breach = wrapping[0]
+    assert breach.interval.strand == -1
+    assert c.slice(breach.interval) == breach.detail["hexamer"], (
+        "the reported interval must contain the hexamer it names"
+    )
+
+
 def test_slot_role_travels_with_the_breach() -> None:
     """Two slots can disagree about which strand matters, so the conflict
     detector needs to know which context produced each finding."""

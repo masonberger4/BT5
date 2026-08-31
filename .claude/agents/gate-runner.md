@@ -58,7 +58,7 @@ ENV: OK (.venv, py3.11.x) | MISSING | INCOMPLETE: <missing modules>
 ruff check          PASS
 ruff format         FAIL   3 files would be reformatted
                              packages/engine/src/bt5/rules/catalog/e2_gc_band.py
-mypy (LOCAL ONLY)   PASS   # not a CI gate; green here does not mean CI-safe
+mypy                PASS   # required CI job as of #63
 invariants          PASS   6 passed
 data_integrity      PASS   181 passed
 contract            PASS   32 passed
@@ -68,7 +68,6 @@ engine tests        FAIL   exit 1
   ... 3 more, all under packages/engine/tests/vector/
 
 BLOCKS MERGE: ruff format, python-tests
-LOCAL ONLY:   mypy
 ```
 
 If `--maxfail` stopped the run, say so — the count shown is not the total.
@@ -79,6 +78,7 @@ If `--maxfail` stopped the run, say so — the count shown is not the total.
 - Do not list passing test names, or the warnings summary.
 - Do not re-run a gate with looser flags to get it green.
 - Do not edit any file. You report; the caller fixes.
-- Do not claim CI parity on invariants: `HYPOTHESIS_PROFILE` is inert in this repo
-  (`tests/conftest.py` calls `load_profile("dev")` unconditionally), so every run is
-  50 examples, local and CI alike.
+- Do not claim CI parity on invariants. Locally Hypothesis runs the `dev` profile at
+  50 examples; CI's `invariants` job sets `HYPOTHESIS_PROFILE=ci` for 200. A green local
+  run has had a quarter of CI's search. The profile and budget are printed in pytest's
+  run header — quote that line rather than assuming.

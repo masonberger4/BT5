@@ -114,6 +114,32 @@ class TestDetection:
         )
         assert not [b for b in hits(NonBDna(), c) if b.detail["motif"] == "G4"]
 
+    def test_a_minus_strand_g4_spanning_the_origin_reports_its_real_position(self) -> None:
+        """The docstring on `_hits` says "wrap-aware"; the plus branch was.
+
+        `lo = n - match.end()` goes negative when a minus-strand motif crosses
+        the origin -- and a G4 can run to MAX_MOTIF, so it goes as far as -99.
+        Clamping relocated the whole motif to position 0, which then fed the
+        wrong bases to `overlaps_editable` and to the repair window.
+        """
+        from bt5.core.types import reverse_complement
+
+        seq = reverse_complement(G4[10:] + PAD + G4[:10])
+        c = Construct(
+            seq,
+            Topology.CIRCULAR,
+            (Segment(Interval(0, len(seq)), SegmentKind.DESIGNABLE_CDS, "cds"),),
+        )
+        found = [
+            b for b in hits(NonBDna(), c) if b.detail["motif"] == "G4" and b.interval.strand == -1
+        ]
+        assert found, "a minus-strand G4 assembled across position 0 is still a G4"
+        breach = found[0]
+        assert breach.interval.end > c.length, "an origin-spanning interval wraps, never clamps"
+        assert "GGG" in c.slice(breach.interval), (
+            "the reported interval must contain the G-rich motif it names"
+        )
+
 
 class TestSeverity:
     def test_a_strong_g4_outranks_a_weak_match(self) -> None:

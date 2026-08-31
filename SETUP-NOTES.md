@@ -178,40 +178,49 @@ Start conservative; promote only the agents that underperform. Signals:
   committed and reviewed; `/pre-pr` greps for it so it never lands unread. Trim it
   periodically — it is an instruction channel.
 
-## Findings — reported, not fixed
+## Findings
 
 All verified in this checkout. Each is application, test or CI source, so all are out of
-scope for a configuration change. The first four are the ones with teeth.
+scope for a configuration change.
+
+**Three were fixed on `main` in #63 while this branch was open**, and this branch is
+merged with that commit. They are kept here because the fixes are worth knowing about:
+
+- ~~`HYPOTHESIS_PROFILE` is inert.~~ **Fixed.** `tests/conftest.py` now reads it and
+  raises on an unregistered name, and `pytest_report_header` prints the profile and
+  `max_examples` so a silent budget regression is visible on the first run. Note the
+  consequence for local work: `dev` is 50 examples, CI's `ci` is 200, so **a property
+  passing locally has had a quarter of CI's search**.
+- ~~The RNG grep is narrower than §3.7 implies.~~ **Fixed.** It now matches any
+  `np.random.*` except the explicit-generator constructors, bans importing stdlib
+  `random` at all, and covers the test tree as well as engine source.
+- ~~mypy is in no CI job.~~ **Fixed.** `mypy --strict` is now a job in
+  `required-checks.needs`, installing the `fold` extra because
+  `# type: ignore[import-untyped]` does not suppress `import-not-found`.
+
+### Still open
 
 1. **The biosecurity gate guards the wrong file.**
    `test_kmer_index_takes_no_external_database` reads only `core/services.py` and regexes
    the frozen `KmerIndex` Protocol. The only implementation is `ConstructKmerIndex.of` at
    `vector/kmers.py:158`. A `database=` parameter added there leaves the Protocol
-   untouched, still conforms (a widened signature with a default does), needs no approval
-   label (`check-approval-labels.sh` has no rule matching
-   `packages/engine/src/bt5/vector/`), and evades `kmers.py:461`'s conformance assertion,
-   which is under `if TYPE_CHECKING` — mypy-only, and mypy runs in no CI job.
-2. **`HYPOTHESIS_PROFILE` is inert.** `tests/conftest.py` registers `ci`/`dev`/`nightly`
-   then calls `settings.load_profile("dev")` unconditionally and never reads the variable.
-   CI's `HYPOTHESIS_PROFILE: ci` on the `invariants` job has no effect: **every run, local
-   and CI, is 50 examples, not 200.**
-3. **Every `brief_ref` is unresolvable by literal search.** All 15 catalog values
-   (`2.B1`, `2.E4`, …) return zero `grep -F` hits in `brief.md`. They are
-   section-qualified: `### 2.E` plus a row `E4`, in one of two anchor shapes. The
-   procedure is in `.claude/rules/rules-catalog.md`.
-4. **`mypy` is in no CI job**, despite `strict = true` and the PR checklist asking for it.
-5. **`test_d1_restriction_sites.py` does not exist** — the only catalog rule without a
-   paired test, and `d1` calls itself the shape to copy.
-6. **`brief.md:141` (E4) is struck through** and "corrected 2026-08-28"; a rule encoding
+   untouched and needs no approval label — `check-approval-labels.sh` has no rule matching
+   `packages/engine/src/bt5/vector/`, the hottest directory in the repo. #63's mypy job
+   closes half the gap (`kmers.py:461`'s `TYPE_CHECKING` conformance assertion is now
+   actually enforced) but not the other half: **a widened signature with a default still
+   conforms**, so the check catches a broken signature, not a widened one.
+2. **All 15 `brief_ref` values are unresolvable by literal search** — zero `grep -F` hits
+   in `brief.md`. They are section-qualified (`### 2.E` plus a row `E4`, in one of two
+   anchor shapes). The procedure is in `.claude/rules/rules-catalog.md`.
+3. **`brief.md:141` (E4) is struck through** and "corrected 2026-08-28"; a rule encoding
    the superseded threshold would pass all 11 contract assertions.
-7. **`-p no:randomly` is a silent no-op** (`pytest-randomly` is not installed);
+4. **`test_d1_restriction_sites.py` does not exist** — the only catalog rule without a
+   paired test, and `d1` calls itself the shape to copy.
+5. **`-p no:randomly` is a silent no-op** (`pytest-randomly` is not installed);
    **`-m "not slow"` deselects nothing** (the marker is applied zero times);
    **`fail_under = 85` has never been evaluated** (no `--cov` job);
    **`goldens-not-hand-edited` does not exist**.
-8. **`verify.py:308` and `vector/survey.py:150` default `table_id: int = 1`**, against
+6. **`verify.py:308` and `vector/survey.py:150` default `table_id: int = 1`**, against
    CLAUDE.md §3.1's "explicit and never defaulted". `solver/pipeline.py:52` does it right.
-9. **The `changes` job's outputs are consumed by no job**, yet it is in
+7. **The `changes` job's outputs are consumed by no job**, yet it is in
    `required-checks.needs`, where `skipped` counts as failure.
-10. **The RNG grep is narrower than §3.7 implies** — it covers
-    `seed|rand|randn|choice|randint` under `packages/engine/src/` only, so
-    `np.random.random(`, `.shuffle(`, `.permutation(`, `.normal(` and `.uniform(` pass it.

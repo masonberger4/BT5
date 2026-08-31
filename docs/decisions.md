@@ -49,4 +49,13 @@ alone. Full rationale in `SETUP-NOTES.md`.
 
 **Evidence:** see the findings list in `SETUP-NOTES.md`; each carries a `file:line`.
 
+**Superseded in part:** #63 landed on `main` while this branch was open and fixed three of
+the ten findings — `HYPOTHESIS_PROFILE` is now honored, the RNG grep is broadened to any
+`np.random.*` plus stdlib `random` across source and tests, and `mypy --strict` is a
+required CI job. This branch is merged with it and every affected statement in
+`CLAUDE.md`, `.claude/rules/tests.md`, `.claude/rules/vector.md`, the `gate-runner` and
+`security-reviewer` agents, `/pre-pr`, `scripts/gates.sh` and the SessionStart hook was
+corrected. The lesson worth keeping: **config that asserts repo facts goes stale like
+code**, and nothing gates it — `.claude/verify-setup.sh` checks structure, not truth.
+
 **Where:** branch `claude/model-effort-routing-ovsb5r`.

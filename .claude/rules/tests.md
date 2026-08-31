@@ -24,11 +24,11 @@ fixture is not: re-recording a value does not make the old caller work.
 
 Do not build a workflow, an agent instruction or a claim of CI parity on any of these:
 
-- **`HYPOTHESIS_PROFILE` is inert.** `tests/conftest.py` registers `ci` (200 examples),
-  `dev` (50) and `nightly` (2000), then calls `settings.load_profile("dev")`
-  unconditionally and never reads the environment variable. CI sets
-  `HYPOTHESIS_PROFILE: ci` on the `invariants` job and it has no effect: **every run,
-  local and CI, is 50 examples.** The one upside is that the two sides agree.
+- **`HYPOTHESIS_PROFILE` is honored, as of #63.** `tests/conftest.py` reads it and
+  raises on an unregistered name; `pytest_report_header` prints the profile and
+  `max_examples` so a silent budget regression is visible on the first run. Locally you
+  get `dev` (50 examples); CI's `invariants` job sets `ci` (200). So **local is a
+  quarter of CI's budget** — a property that passes locally has had far less search.
 - **`-p no:randomly` is a silent no-op** — `pytest-randomly` is not in the `dev` extra,
   and `-p no:<uninstalled>` exits 0 without warning.
 - **`-m "not slow"` deselects nothing** — the `slow` marker is registered in
@@ -37,14 +37,16 @@ Do not build a workflow, an agent instruction or a claim of CI parity on any of 
   passes `--cov`.
 - **`goldens-not-hand-edited` does not exist.** `tests/goldens/` holds only `.gitkeep`
   and syrupy is declared with no snapshot fixtures anywhere.
-- **The RNG grep is narrower than §3.7 implies.** CI greps `packages/engine/src/` only,
-  and its alternation covers `seed|rand|randn|choice|randint` — so `np.random.random(`,
-  `.shuffle(`, `.permutation(`, `.normal(` and `.uniform(` pass it. Seed every RNG
-  explicitly with `np.random.default_rng(seed)` because it is correct, not because the
-  grep would catch you.
-- **mypy is in no CI job.** It is `strict` over `packages/engine/src/bt5` and is the only
-  thing that checks `kmers.py:461`'s `KmerIndex` conformance assertion. Running it
-  locally is not optional.
+- **The RNG grep is broad, as of #63.** It matches any `np.random.*` attribute call
+  except the explicit-generator constructors (`default_rng`, `Generator`, `SeedSequence`,
+  `PCG64`), and separately bans importing stdlib `random` at all — across engine source
+  **and** the test tree, because an unseeded draw in a strategy is just as
+  irreproducible. Seed with `np.random.default_rng(seed)`.
+- **mypy is a required CI job, as of #63**, in `required-checks.needs`. It installs the
+  `fold` extra, unlike `python-quality`, because `structure/vienna.py`'s
+  `# type: ignore[import-untyped]` does not suppress `import-not-found` when ViennaRNA is
+  absent. Run it locally too — it is the only check on `kmers.py:461`'s conformance
+  assertion, which lives under `if TYPE_CHECKING`.
 
 ## Environment
 

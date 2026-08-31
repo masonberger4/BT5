@@ -18,11 +18,11 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
   delete a test (CLAUDE.md §4). If a property fails and also fails on the merge base, it
   is a pre-existing bug: record a fixture under `tests/data/regressions/`, open an issue,
   and say so in the PR.
-- **mypy is LOCAL-ONLY.** No CI job runs it. This skill is the only thing standing
-  between a strict-mode error and `main`.
-- The suite is **not** at CI parity on invariants: `HYPOTHESIS_PROFILE` is inert
-  (`tests/conftest.py` calls `load_profile("dev")` unconditionally), so both sides run
-  50 examples. Do not claim otherwise.
+- **mypy is a required CI job** (as of #63) and is in `required-checks.needs`. Running
+  it here turns a merge-gate failure into a local one.
+- **This is not CI parity on invariants.** Locally Hypothesis runs `dev` at 50
+  examples; CI runs `ci` at 200. A property can pass here and fail there. Pytest's run
+  header prints the profile and budget — read it rather than assuming.
 
 ## The chain, in order
 

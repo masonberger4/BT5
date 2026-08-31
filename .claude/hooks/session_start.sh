@@ -33,6 +33,6 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
 DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 echo "  branch   $BRANCH ($DIRTY uncommitted)"
 echo "  gates    bash scripts/gates.sh   (or /pre-pr for the full chain)"
-echo "  note     Hypothesis runs 50 examples everywhere: HYPOTHESIS_PROFILE is inert"
-echo "           (tests/conftest.py calls load_profile(\"dev\") unconditionally)."
+echo "  note     Hypothesis runs the dev profile (50 examples) locally; CI runs ci (200)."
+echo "           A property passing here has had a quarter of CI's search."
 exit 0

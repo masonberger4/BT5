@@ -28,9 +28,12 @@ frozen `KmerIndex` Protocol signature there. The only implementation is
 A `database=` parameter added to the **implementation** would leave the Protocol
 untouched, still satisfy structural conformance (a widened signature with a default
 does), and land in the hottest directory in the repo. Compounding it: the conformance
-assertion at `kmers.py:461` sits under `if TYPE_CHECKING`, so only mypy sees it — and
-**mypy runs in no CI job**. And `.github/scripts/check-approval-labels.sh` has no rule
-matching `packages/engine/src/bt5/vector/`, so no label is required either.
+assertion at `kmers.py:461` sits under `if TYPE_CHECKING`, so only mypy sees it — and mypy became a
+required CI job in #63, which closes half of this gap: a signature change that breaks
+structural conformance now fails the gate. It does **not** close the other half, because
+a widened signature with a default still conforms. And
+`.github/scripts/check-approval-labels.sh` has no rule matching
+`packages/engine/src/bt5/vector/`, so no approval label is required either.
 
 That is the hole. Look there first, every time.
 
