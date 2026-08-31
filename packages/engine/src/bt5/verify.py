@@ -21,7 +21,7 @@ Invariants:
   I5  stops: no interior in-frame stop; terminal stop matches declaration
   I6  forbidden motifs absent on the CIRCULAR construct, both strands, including
       junction- and origin-spanning hits, and including inside the backbone
-  I7  GC band, global and windowed, with windows that wrap the origin
+  I7  GC band on each ORDERED (designable) span -- the DNA a vendor synthesises
   I8  homopolymer / repeat ceilings across the whole construct
   I9  every backbone base is byte-identical to the input backbone   <-- highest value
   I10 cassette frame invariant across the assembled CDS
@@ -29,7 +29,7 @@ Invariants:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import cast
 
 from Bio.Data import CodonTable
@@ -104,19 +104,6 @@ def _translate(dna: str, table_id: int) -> str:
     return "".join(aas)
 
 
-def _windows(seq: str, size: int, step: int, circular: bool) -> Iterable[tuple[int, str]]:
-    n = len(seq)
-    if n == 0:
-        return
-    if circular:
-        doubled = seq + seq[: size - 1] if size > 1 else seq
-        for start in range(0, n, step):
-            yield start, doubled[start : start + size]
-    else:
-        for start in range(0, max(1, n - size + 1), step):
-            yield start, seq[start : start + size]
-
-
 def gc_fraction(seq: str) -> float:
     if not seq:
         return 0.0
@@ -171,11 +158,9 @@ def verify_construct(
     table_id: int,
     forbidden: Sequence[str] = (),
     gc_bounds: tuple[float, float] | None = None,
-    gc_window: int = 50,
     max_homopolymer: int | None = None,
     max_repeat: int | None = None,
     original_backbone: Construct | None = None,
-    expect_terminal_stop: bool = True,
 ) -> None:
     """Re-derive every invariant. Raise VerificationError on the first failure.
 
@@ -189,8 +174,34 @@ def verify_construct(
     if bad:
         raise VerificationError("I1", f"non-ACGT characters present: {bad}")
 
+    # The CALLER's own declaration, checked against the construct's.
+    #
+    # These two arguments were required and then read by nothing: every check
+    # below runs off `tu.protein` and `tu.table_id`, so the oracle validated the
+    # assembler's claim about the construct rather than the caller's claim about
+    # what it should be. Two live holes closed here. A construct with no
+    # translation unit passed I3/I4/I5 VACUOUSLY -- armed and silent, the same
+    # shape of bug I7 above had. And a caller asking for table 12 against a unit
+    # declaring table 1 was verified under table 1 while believing CTG=Ser had
+    # been checked, which is the highest-severity silent bug this project names.
+    units = construct.translation_units or ()
+    if protein and not units:
+        raise VerificationError(
+            "I3",
+            f"a {len(protein)}-residue protein was declared but the construct carries "
+            "no translation unit, so no round trip was verified",
+        )
+    if units and table_id not in {tu.table_id for tu in units}:
+        declared = sorted({tu.table_id for tu in units})
+        raise VerificationError(
+            "I3",
+            f"caller declared NCBI table {table_id} but no translation unit uses it "
+            f"(units declare {declared}); table 12 reassigns CTG to Ser, so a table "
+            "disagreement is a silently wrong protein",
+        )
+
     # I2/I3/I4/I5 -- per translation unit
-    for tu in construct.translation_units or ():
+    for tu in units:
         cds = "".join(construct.slice(iv) for iv in tu.codon_map)
         if len(cds) % 3 != 0:  # I2
             raise VerificationError("I2", f"CDS length {len(cds)} is not a multiple of 3")
@@ -235,20 +246,58 @@ def verify_construct(
                 "I6", f"forbidden motif {pattern!r} present at position {pos} ({len(hits)} total)"
             )
 
-    # I7 -- GC band, global and windowed, windows wrap the origin
+    # I7 -- GC band on each ORDERED (designable) span.
+    #
+    # SCOPE IS WHAT THIS INVARIANT USED TO GET WRONG. A GC band is a
+    # MANUFACTURABILITY bound: it describes what a synthesis vendor's order-entry
+    # checker accepts in one tube, and the tube holds the designable span. Nobody
+    # synthesises the user's backbone. Measured across the whole construct, a
+    # near-neutral backbone drags a GC-extreme insert into band, and the one
+    # invariant whose job is refusing unbuildable DNA never fires on a vector
+    # design: a 900 bp / 90% insert reads 0.629 against a 2 kb / 50% backbone and
+    # passed, though both vendors deny the fragment.
+    #
+    # The 50 bp windowed band that used to live here is GONE, and its removal is a
+    # MEASUREMENT rather than a preference. An 18-sequence ladder through two
+    # vendors' order-entry checkers (docs/design/vendor-gc-calibration.md) put
+    # sixteen probes carrying one extreme 50 bp window -- 4% to 96% local GC on an
+    # otherwise neutral background -- through both, and all sixteen were accepted.
+    # One probe accepted by both carries a 100 bp window at 23% GC, LOWER than a
+    # probe refused at 21% GLOBAL. Only the overall GC of the ordered DNA
+    # separates accepted from refused, so a windowed band refused DNA both vendors
+    # manufacture, without comment. A window is never a breach.
+    #
+    # Two designable spans are two synthesis reactions, so each is held to the
+    # band on its own and the construct passes only if every one of them does.
+    # `slice` is wrap- and strand-aware, and both matter: a designable span may
+    # itself cross the origin (stored as end > length), and a reverse-oriented
+    # cassette's span comes back reverse-complemented -- harmless for GC, which is
+    # invariant under it, but the bases must be the ORDERED ones either way.
+    #
+    # ASSUMPTION, written down so it is falsifiable: one designable span is one
+    # ordered fragment. If the vendor lane ever splits a long span into several
+    # tubes by length limit, a span-level average could hide an out-of-band tube
+    # and this check would become weaker than the rule it backstops.
+    #
+    # Adapter sequence is NOT included: it is vendor data, and this module stays
+    # independent of the lanes it validates. The extension point is a parameter
+    # (`adapters: tuple[str, str]`), never an import.
     if gc_bounds is not None:
         lo, hi = gc_bounds
-        overall = gc_fraction(seq)
-        if not (lo <= overall <= hi):
-            raise VerificationError("I7", f"global GC {overall:.3f} outside [{lo}, {hi}]")
-        step = max(1, gc_window // 5)
-        for start, window in _windows(seq, gc_window, step, construct.is_circular):
-            if len(window) < gc_window:
-                continue
-            frac = gc_fraction(window)
+        spans = sorted(construct.editable)
+        if not spans:
+            raise VerificationError(
+                "I7",
+                "a GC band was requested but this construct declares no designable "
+                "segment, so there is no ordered DNA to hold to it",
+            )
+        for iv in spans:
+            frac = gc_fraction(construct.slice(iv))
             if not (lo <= frac <= hi):
                 raise VerificationError(
-                    "I7", f"GC {frac:.3f} in {gc_window}bp window at {start} outside [{lo}, {hi}]"
+                    "I7",
+                    f"ordered GC {frac:.3f} over the {iv.length}bp designable span "
+                    f"at {iv.start} outside [{lo}, {hi}]",
                 )
 
     # I8 -- homopolymer and repeat ceilings
@@ -305,7 +354,11 @@ def verify_solution(
     protein: str,
     dna: str,
     *,
-    table_id: int = 1,
+    # Required, never defaulted. CLAUDE.md 3.1: NCBI table 12 reassigns CTG to
+    # Ser and table 4 makes TGA Trp, so a defaulted table is a silently wrong
+    # protein that no assay catches for months. `TranslationUnit` has never had a
+    # default; this wrapper quietly did.
+    table_id: int,
     forbidden: Sequence[str] = (),
     require_initiator: bool = False,
 ) -> None:

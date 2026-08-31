@@ -98,7 +98,6 @@ def optimize(
             table_id=tid,
             forbidden=forbidden,
             gc_bounds=gc_bounds,
-            gc_window=gc_window,
         )
 
     return OptimizeResult(cds=cds, construct=construct, repair_outcome=outcome)
