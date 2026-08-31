@@ -130,7 +130,11 @@ jobs:
       - run: uv pip install --python .venv/bin/python -e ".[dev]"
       - name: Property-based invariants
         env: { HYPOTHESIS_PROFILE: ci }
-        run: .venv/bin/pytest tests/invariants -q -p no:randomly
+        # No `-q`: it suppresses the run header, and the header is where the
+        # Hypothesis budget is now printed. This job silently ran at a quarter
+        # budget for months; the number being visible is what stops that
+        # recurring. 50 tests, so the extra output is negligible.
+        run: .venv/bin/pytest tests/invariants -p no:randomly
 
   contract:
     name: contract

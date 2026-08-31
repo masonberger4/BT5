@@ -34,3 +34,15 @@ if _PROFILE not in ("dev", "ci", "nightly"):
         f"expected one of dev, ci, nightly"
     )
 settings.load_profile(_PROFILE)
+
+
+def pytest_report_header() -> str:
+    """Put the Hypothesis budget in the run header, where CI logs it.
+
+    The reason this line exists is the bug it closes: the `ci` profile silently
+    failed to load for the whole life of the repo, and nothing anywhere printed
+    which profile was actually in force, so a gate running at a quarter of its
+    intended budget looked identical to one running at full. A number in the
+    header makes the next such regression visible on the first run.
+    """
+    return f"hypothesis profile: {_PROFILE} (max_examples={settings().max_examples})"
