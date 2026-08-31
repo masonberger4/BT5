@@ -60,7 +60,13 @@ from bt5.core.spec import (
 )
 from bt5.core.types import Construct, Interval
 from bt5.rules.fragment import Fragment, fragments
-from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
+from bt5.rules.vendors import (
+    DEFAULT_SELECTION,
+    DEFAULT_VENDOR,
+    VendorSelection,
+    all_keys,
+    require_selection,
+)
 
 #: Microsatellite unit lengths. 1 is excluded at report time, not here: the scan
 #: needs period 1 in order to recognise a homopolymer and hand it to E1.
@@ -177,10 +183,12 @@ class ShortTandemRepeats:
             "max_unit": {"type": "integer", "default": MAX_UNIT_BP, "minimum": MIN_UNIT_BP},
             "warn_tract": {"type": "integer", "default": WARN_TRACT_BP},
             "hard_tract": {"type": "integer", "default": HARD_TRACT_BP},
-            "vendor": {
-                "type": "string",
-                "default": DEFAULT_VENDOR,
-                "enum": list(all_keys()),
+            "vendors": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": list(all_keys())},
+                "default": [DEFAULT_VENDOR],
                 "description": (
                     "Which vendor product the fragment is ordered as. Only the "
                     "adapter-on options carry adapters; a plain Gene Fragment "
@@ -195,7 +203,7 @@ class ShortTandemRepeats:
         max_unit: int = MAX_UNIT_BP,
         warn_tract: int = WARN_TRACT_BP,
         hard_tract: int = HARD_TRACT_BP,
-        vendor: str = DEFAULT_VENDOR,
+        vendors: VendorSelection = DEFAULT_SELECTION,
     ) -> None:
         if max_unit < MIN_UNIT_BP:
             raise ValueError(
@@ -209,11 +217,10 @@ class ShortTandemRepeats:
             )
         if hard_tract < warn_tract:
             raise ValueError(f"hard_tract {hard_tract} must not be below {warn_tract}")
-        profile(vendor)  # raises on an unknown key, with the real ones listed
         self.max_unit = max_unit
         self.warn_tract = warn_tract
         self.hard_tract = hard_tract
-        self.vendor = vendor
+        self.vendors = require_selection(vendors)
 
     def gate(self, slot: ContextSlot) -> bool:
         return True
@@ -233,7 +240,7 @@ class ShortTandemRepeats:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = profile(self.vendor).adapters
+        adapters = self.vendors.adapters
         breaches: list[Breach] = []
         worst = 0
         scanned = 0
@@ -291,6 +298,7 @@ class ShortTandemRepeats:
                 Interval(start, start + length)
             ),
             detail={
+                "vendor": self.vendors.label,
                 "tract_bp": float(length),
                 "unit_bp": float(period),
                 "unit": unit,

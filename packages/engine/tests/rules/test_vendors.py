@@ -15,6 +15,7 @@ import datetime as dt
 import pytest
 from bt5.rules.fragment import TWIST_ADAPTER_ON, TWIST_GENE_FRAGMENT
 from bt5.rules.vendors import (
+    DEFAULT_SELECTION,
     DEFAULT_VENDOR,
     PROFILES,
     VendorProfile,
@@ -135,10 +136,12 @@ class TestTheOneDefault:
         assert DEFAULT_VENDOR in PROFILES
         assert PROFILES[DEFAULT_VENDOR].is_orderable
 
-    def test_every_rule_that_takes_a_vendor_gets_the_same_one(self) -> None:
+    def test_every_rule_that_takes_a_selection_gets_the_same_one(self) -> None:
         """The bug: E1 defaulted to IDT while E4-E7 and E9 defaulted to Twist, so
         with nothing chosen BT5 answered with IDT's run limits and Twist's
-        lengths. One import, one answer."""
+        lengths. One import, one answer -- and now that answer is a value object,
+        so the property is stronger: every rule holds the SAME selection, not
+        merely the same string."""
         from bt5.rules.catalog.e1_homopolymers import Homopolymers
         from bt5.rules.catalog.e4_gc_extent import GCExtent
         from bt5.rules.catalog.e5_synthesis_repeats import SynthesisRepeats
@@ -154,20 +157,33 @@ class TestTheOneDefault:
             ShortTandemRepeats(),
             LengthTiers(),
         ):
-            assert rule.vendor == DEFAULT_VENDOR, type(rule).__name__
+            assert rule.vendors == DEFAULT_SELECTION, type(rule).__name__
+        assert DEFAULT_SELECTION.keys == (DEFAULT_VENDOR,)
 
     def test_the_schema_enum_offers_only_configurations_that_exist(self) -> None:
+        """The `vendors` array's enum, and its default, must name real products.
+
+        Guarded by the key name: renaming `vendor` -> `vendors` had to move this
+        check with it, or it would pass vacuously on the `if "vendors" not in
+        props: continue` line and stop protecting anything -- the exact way a
+        schema check quietly dies.
+        """
         from bt5.core.registry import all_specs, discover
 
         discover()
+        checked = 0
         for spec in all_specs():
             props = spec.param_schema.get("properties", {})
             assert isinstance(props, dict)
-            if "vendor" not in props:
+            if "vendors" not in props:
                 continue
-            for key in props["vendor"]["enum"]:
+            checked += 1
+            enum = props["vendors"]["items"]["enum"]
+            for key in enum:
                 assert key in PROFILES, f"{spec.id} offers {key!r}, which is not a profile"
-            assert props["vendor"]["default"] in props["vendor"]["enum"], spec.id
+            for key in props["vendors"]["default"]:
+                assert key in enum, f"{spec.id} defaults to {key!r}, not in its own enum"
+        assert checked == 6, f"expected six vendor-taking rules, checked {checked}"
 
 
 class TestLookup:

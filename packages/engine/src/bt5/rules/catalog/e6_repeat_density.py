@@ -79,7 +79,13 @@ from bt5.core.spec import (
 )
 from bt5.core.types import Construct, Interval
 from bt5.rules.fragment import Fragment, fragments
-from bt5.rules.vendors import DEFAULT_VENDOR, all_keys, profile
+from bt5.rules.vendors import (
+    DEFAULT_SELECTION,
+    DEFAULT_VENDOR,
+    VendorSelection,
+    all_keys,
+    require_selection,
+)
 
 #: The model's k. Not tunable downward without leaving the cited feature behind.
 KMER_BP = 9
@@ -197,10 +203,12 @@ class RepeatDensity:
                 "minimum": 0.0,
                 "maximum": 1.0,
             },
-            "vendor": {
-                "type": "string",
-                "default": DEFAULT_VENDOR,
-                "enum": list(all_keys()),
+            "vendors": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": list(all_keys())},
+                "default": [DEFAULT_VENDOR],
                 "description": (
                     "Which vendor product the fragment is ordered as. Only the "
                     "adapter-on options carry adapters; a plain Gene Fragment "
@@ -215,7 +223,7 @@ class RepeatDensity:
         k: int = KMER_BP,
         window: int = WINDOW_BP,
         window_flag: float = WINDOW_FLAG,
-        vendor: str = DEFAULT_VENDOR,
+        vendors: VendorSelection = DEFAULT_SELECTION,
     ) -> None:
         if k < 6:
             raise ValueError(
@@ -226,11 +234,10 @@ class RepeatDensity:
             raise ValueError(f"window {window} must hold at least two {k}-mers")
         if not 0.0 < window_flag <= 1.0:
             raise ValueError(f"window_flag must be a fraction in (0, 1], got {window_flag}")
-        profile(vendor)  # raises on an unknown key, with the real ones listed
         self.k = k
         self.window = window
         self.window_flag = window_flag
-        self.vendor = vendor
+        self.vendors = require_selection(vendors)
 
     def gate(self, slot: ContextSlot) -> bool:
         return True
@@ -243,7 +250,7 @@ class RepeatDensity:
         return None
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
-        adapters = profile(self.vendor).adapters
+        adapters = self.vendors.adapters
         breaches: list[Breach] = []
         windows: list[tuple[Interval, float]] = []
         worst_density = 0.0
@@ -341,6 +348,7 @@ class RepeatDensity:
             ),
             fixable_by_codon_choice=frag.construct.overlaps_editable(iv),
             detail={
+                "vendor": self.vendors.label,
                 "peak_repeated_fraction": round(frac, 3),
                 "longest_repeated_bp": float(run + self.k - 1),
                 "k": float(self.k),

@@ -31,6 +31,7 @@ from bt5.rules.catalog.e5_synthesis_repeats import (
 )
 from bt5.rules.catalog.f1_direct_repeats import DirectRepeats
 from bt5.rules.fragment import TWIST_FIVE_PRIME
+from bt5.rules.vendors import VendorSelection
 from bt5.vector.kmers import ConstructKmerIndex
 from conftest import construct, context, slot
 
@@ -148,7 +149,7 @@ class TestScopeIsTheFragment:
             Topology.CIRCULAR,
             (Segment(Interval(0, len(seq)), SegmentKind.DESIGNABLE_CDS, "cds"),),
         )
-        assert not hits(c, svc, vendor="none")
+        assert not hits(c, svc, vendors=VendorSelection.of("none"))
         assert DirectRepeats().evaluate(c, context(), svc).breaches
 
     def test_findings_carry_parent_construct_coordinates(self, svc: Services) -> None:
@@ -202,7 +203,7 @@ class TestAdapters:
 
     def test_an_insert_reproducing_the_adapter_is_caught(self, svc: Services) -> None:
         c = construct(dna(150) + TWIST_FIVE_PRIME + dna(150, 5), dna(300, 11))
-        found = hits(c, svc, vendor=ADAPTER_ON)
+        found = hits(c, svc, vendors=VendorSelection.of(ADAPTER_ON))
         assert found, "no whole-plasmid scan can see this: the adapter is not in the plasmid"
         assert any(b.detail["involves_adapter"] == "yes" for b in found)
         assert any("recode the insert side" in b.message for b in found)
@@ -217,18 +218,22 @@ class TestAdapters:
         """
         c = construct(dna(150) + TWIST_FIVE_PRIME + dna(150, 5), dna(300, 11))
         assert not hits(c, svc)
-        assert hits(c, svc, vendor=ADAPTER_ON), "and adapter-on must still find it"
+        assert hits(c, svc, vendors=VendorSelection.of(ADAPTER_ON)), (
+            "and adapter-on must still find it"
+        )
 
     def test_without_adapters_there_is_nothing_to_collide_with(self, svc: Services) -> None:
         c = construct(dna(150) + TWIST_FIVE_PRIME + dna(150, 5), dna(300, 11))
-        assert not hits(c, svc, vendor="none")
+        assert not hits(c, svc, vendors=VendorSelection.of("none"))
 
     def test_an_adapter_colliding_with_itself_is_not_the_designs_problem(
         self, svc: Services
     ) -> None:
         """A finding lying wholly inside vendor sequence has no construct
         coordinate and nothing BT5 can do about it."""
-        assert not hits(construct(dna(400, 21), dna(300, 22)), svc, vendor=ADAPTER_ON)
+        assert not hits(
+            construct(dna(400, 21), dna(300, 22)), svc, vendors=VendorSelection.of(ADAPTER_ON)
+        )
 
 
 class TestDetection:
@@ -283,7 +288,7 @@ class TestContract:
         with pytest.raises(ValueError, match="must not be below"):
             SynthesisRepeats(min_len=20, hard_len=15)
         with pytest.raises(ValueError, match="unknown vendor"):
-            SynthesisRepeats(vendor="acme")
+            SynthesisRepeats(vendors=VendorSelection.of("acme"))
         with pytest.raises(ValueError, match="outside any real PCR"):
             SynthesisRepeats(anneal_c=5.0)
 

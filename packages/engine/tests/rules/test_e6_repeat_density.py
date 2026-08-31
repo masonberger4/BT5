@@ -28,6 +28,7 @@ from bt5.rules.catalog.e6_repeat_density import (
     repetitive_kmers_per_100bp,
 )
 from bt5.rules.catalog.f2_near_perfect_repeats import NearPerfectRepeats
+from bt5.rules.vendors import VendorSelection
 from bt5.vector.kmers import ConstructKmerIndex
 from conftest import construct, context, slot
 
@@ -207,7 +208,7 @@ class TestContract:
         with pytest.raises(ValueError, match="fraction in"):
             RepeatDensity(window_flag=0.0)
         with pytest.raises(ValueError, match="unknown vendor"):
-            RepeatDensity(vendor="acme")
+            RepeatDensity(vendors=VendorSelection.of("acme"))
 
     def test_the_flag_clears_ordinary_sequence_by_a_wide_margin(self) -> None:
         assert WINDOW_FLAG >= 0.2

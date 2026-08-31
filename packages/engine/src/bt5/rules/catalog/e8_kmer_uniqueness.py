@@ -6,6 +6,8 @@ oligo to have one landing site, Gibson needs each junction's homology arm to be
 found in exactly one place, and plasmid stability needs no second copy for
 single-strand annealing to find. Whole construct, backbone included -- a 12-mer
 that is fine inside the insert is disqualifying if the vector already carries it.
+Vendor adapters, which the brief also names, are deliberately out of scope; the
+paragraph before "Boundaries with the rest of the family" says why.
 
 **What the literal rule does, measured before it was written.** "Every 12-mer
 unique" is not achievable and mostly would not be information. Distinct 12-mers
@@ -45,6 +47,21 @@ of the scalar. They are still COUNTED when computing multiplicity, because an
 insert k-mer that collides with an LTR is a real Gibson liability and dropping
 the LTR would hide it; a k-mer is only skipped when every one of its occurrences
 is exempt.
+
+**Vendor adapters are excluded, and that is a decision rather than an oversight.**
+Brief row 2.E8 asks for uniqueness across the whole construct *including vendor
+adapters*, and this rule stops at the backbone. E5 owns the adapter axis -- it
+scans adapter + ordered + adapter and reports insert-versus-adapter collisions
+pairwise from 12 bp, the same k used here. What is given up is exactly one case:
+a 12-mer occurring once in an adapter, once in the insert and once in the
+backbone, which E5 sees as a pair and this rule does not see at all. Buying it
+back is expensive and the price falls in the wrong place. Adapter sequence has no
+parent-construct coordinate (`Fragment.to_construct` returns None for an interval
+inside an adapter, and these findings print positions), and `fragments()` splices
+one adapter copy per designable span -- so a three-span design would give every
+adapter 12-mer three landing sites and this rule would report the vendor's own
+constant as a repeat. One of the five configurations carries adapters at all, and
+it is not the default.
 
 **Boundaries with the rest of the family.** F1 reports PAIRS at 15 bp and up on
 the plasmid; E5 reports pairs at 12 bp and up in the ordered fragment; E7 reports
