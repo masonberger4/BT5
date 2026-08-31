@@ -1,0 +1,72 @@
+LOCUS       pBT5_SYNTH_MCS          2000 bp    DNA     circular SYN 31-AUG-2026
+DEFINITION  Synthetic lentiviral transfer plasmid with a multiple cloning site,
+            for BT5 design-lane tests.
+ACCESSION   .
+VERSION     .
+KEYWORDS    .
+SOURCE      synthetic DNA construct
+  ORGANISM  synthetic DNA construct
+            other sequences; artificial sequences.
+FEATURES             Location/Qualifiers
+     source          1..2000
+                     /organism="synthetic DNA construct"
+                     /mol_type="other DNA"
+     rep_origin      join(1801..2000,1..80)
+                     /label="ori"
+                     /note="high-copy origin; spans the origin of the coordinate
+                     system on purpose"
+     LTR             81..330
+                     /label="5' LTR"
+                     /note="identical to the 3' LTR; carries an internal polyA"
+     misc_feature    331..380
+                     /label="psi"
+                     /note="packaging signal"
+     misc_feature    381..500
+                     /label="RRE"
+     promoter        501..720
+                     /label="EF-1alpha core promoter"
+                     /note="forward expression promoter upstream of the MCS"
+     5'UTR           781..860
+                     /label="5' UTR / polylinker downstream"
+     misc_feature    861..1520
+                     /label="WPRE"
+                     /note="backbone; carries an XbaI site the design cannot recode"
+     LTR             1521..1770
+                     /label="3' LTR"
+                     /note="identical to the 5' LTR"
+ORIGIN
+        1 caggatgtcc ctcgtgccgc tgccctaagt gcaagcccca cgttgcgggc agtacgggta
+       61 aataaaagta tccccttgtg tggtgttaac cttactatac tcccgctccg gggtttggct
+      121 aataaaaaca agtctttgcg cccataaatg tagccagtga gcttagttgg agcaaggggt
+      181 gcggaagcgc aactccgtcg attaaatagc caactactta agacctagga ttctgttgca
+      241 gattagaact tgggactcaa gattgctgcc ctaagctata ctaggcagct gcagcgtctg
+      301 gttttactca gtgtgatctt tatgcttgag tataaataat aacttatgga aaagctaacc
+      361 ccacgtggat gtcggtactt gccactgaga aacttgactc gtattccgga gtcggtccac
+      421 gaggtgcgat tacctccccg ggccctttaa ccttagctat cagagagtat tcctactagc
+      481 cttgggctca gacaccacct gggttactat aggattatac tttatcgtta tgtacgctaa
+      541 gcgggtgtag gcgcccacaa catccatagc cattatttcg gattccgctt gcttcgatca
+      601 ctgcaccttg gccgaagtct taatagttcc cttggaatca ctagttcgct gcggaacaag
+      661 ccctgggtat acgtcggggc tcgaatcgag agtgaggacc ttgatatgca gtcgataagt
+      721 acatagaaga tttctgctct gtttaatggc cgggtcacga cgctagcctg tgcgtgtcat
+      781 tgtgtgtcgt ctcagaccct cctaggaggg cttgtcgaac acccaacgaa attttcagac
+      841 gttgcatgcg ctctccagcc gaacagctgg gttccagctt atcagtggga tgttaagccc
+      901 agtactagtt cgaagctcct tcaatgtgga gcgcatacgg cgcagattag tatacccaca
+      961 atccttgaac gctagaattt aggggtcgtc gtatgacggt tctagacaga cttcgcgtca
+     1021 acaccgcgcc ttcacctaat gcactaggag atcacaatcc gtgtctttcc tcattgtatt
+     1081 ggctactact ctgtcaactg ccaaattaca tgtagcgagc acgcttcccc ctctactaac
+     1141 ataaaactga tcccggtgtt ggtatgagtg ttgatcctac tgtcttgggc gtcagggact
+     1201 gcatacgagt gtttataccc ataagtcatc ctgtagaatg cagatcatgt tgcttcccaa
+     1261 acttagtaaa gcaaatctat tccaagaggc ccccaaagac tctgaagggg cagcgatcct
+     1321 gggttttaaa ttcatctgcg tgtgggtcat cgcttttata ctgatatttg gactgagttc
+     1381 cacagcttgc cggactccgc tctatatatg tccacggtag ctgtctggag aaattgactt
+     1441 tactatgtga atcagatctt aagtgagtat tcaataacga atttgggagt tggcgccgat
+     1501 gcgtagaaca tgcgtaatct tggtgttaac cttactatac tcccgctccg gggtttggct
+     1561 aataaaaaca agtctttgcg cccataaatg tagccagtga gcttagttgg agcaaggggt
+     1621 gcggaagcgc aactccgtcg attaaatagc caactactta agacctagga ttctgttgca
+     1681 gattagaact tgggactcaa gattgctgcc ctaagctata ctaggcagct gcagcgtctg
+     1741 gttttactca gtgtgatctt tatgcttgag cgctgctaca taaagcaacc agagagcggg
+     1801 gttaggactc ctgggattta tttcaggcta gtcctttatt tggctacaac tttgagcagc
+     1861 gcctcgttcc gttgtatgag cttaagaaca ccttcagcgc aatggagcag ccaaaggcaa
+     1921 gctgcacaac cagaaggccg gagatcagag gttacgtcag cctgattagt tacaacgctc
+     1981 aggtcaatgt tatgttgctg
+//
