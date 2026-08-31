@@ -186,8 +186,16 @@ class InternalPolyA:
                 if start < n:
                     tail = scan[start + 6 + DSE_FROM : start + 6 + DSE_TO]
                     escalated = canonical and _has_downstream_element(tail)
-                    lo = start if strand == 1 else n - start - 6
-                    iv = Interval(max(0, lo), max(0, lo) + 6, strand)
+                    # `% n`, never `max(0, ...)`. Mapping a minus-strand hit back
+                    # to forward coordinates goes NEGATIVE when the hexamer
+                    # crosses the origin, and clamping it to zero moved the
+                    # breach to position 0 -- an interval whose bases are not the
+                    # hexamer it names, on exactly the reverse-oriented cassette
+                    # this rule exists for. `Interval` has one representation for
+                    # a wrapping interval (start inside the sequence, end past
+                    # it), which the modulo produces and the clamp destroyed.
+                    lo = (start if strand == 1 else n - start - 6) % n
+                    iv = Interval(lo, lo + 6, strand)
                     breaches.append(
                         Breach(
                             spec_id=self.id,

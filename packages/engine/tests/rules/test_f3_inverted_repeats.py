@@ -100,6 +100,24 @@ class TestBands:
         breach = hits(InvertedRepeats(), hairpin(dna(35, 13), 10), svc)[0]
         assert breach.detail["severity"] in ("hard", "unbuildable")
 
+    def test_the_total_palindrome_band_is_enforced_and_not_merely_reported(
+        self, svc: Services
+    ) -> None:
+        """The hard band has two terms -- stem >= 30 OR arms+loop >= 60 -- but
+        `passes` tested only the stem, so a pair this rule labels "hard" in its
+        own breach message still reported passes=True. F3 is HARD_CHECK, so
+        `passes` IS the enforcement surface: the second term was reported and
+        never enforced.
+
+        This fixture sits in exactly that gap: a 27 bp stem with a 10 bp loop is
+        under the 30 bp stem threshold and over the 60 bp total.
+        """
+        c = hairpin(dna(25, 41), 10)
+        ev = InvertedRepeats().evaluate(c, context(slot(modality=Modality.PLASMID_TRANSIENT)), svc)
+        hard = [b for b in ev.breaches if b.detail["severity"] == "hard"]
+        assert hard, "27 bp stem + 10 bp loop is 64 bp of palindrome, over the 60 bp band"
+        assert not ev.passes, "a HARD_CHECK rule that calls a finding 'hard' must not pass it"
+
     def test_a_very_long_palindrome_says_do_not_build(self, svc: Services) -> None:
         """SbcCD cleaves long palindromes and destroys the replicon."""
         breach = hits(InvertedRepeats(), hairpin(dna(160, 19), 4), svc)[0]

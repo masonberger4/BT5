@@ -45,7 +45,7 @@ from bt5.core.spec import (
     RepairPolicy,
 )
 from bt5.core.types import Construct, Interval
-from bt5.rules.exempt import both_arms_exempt
+from bt5.rules.exempt import both_arms_exempt, pair_span
 
 #: Report nothing shorter. A chance 15-mer in a 5 kb plasmid has expected
 #: occurrence ~1e-5, so anything found at this length is designed, not luck.
@@ -211,10 +211,10 @@ class DirectRepeats:
             risk = risk_band(length, spacer, tandem=tandem)
             worst = max(worst, length)
             reca_helps = length >= RECA_DEPENDENT_BP
-            # The span from the first copy's start to the second's end: the
-            # region a repair has to work within, and PAIRED_SEGMENTS is the
-            # localisation policy that says so.
-            span = Interval(first.start, max(first.end, second.end))
+            # The arc a repair has to work within, taken the same way round as
+            # the spacer above -- PAIRED_SEGMENTS is the localisation policy that
+            # hands this interval straight to the repair window.
+            span = pair_span(first, second, c.length, c.is_circular)
 
             breaches.append(
                 Breach(

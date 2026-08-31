@@ -21,6 +21,11 @@ object in the file.
 So coverage, not containment: a finding is the user's annotated feature when
 almost all of it is. The threshold is deliberately high -- a genuinely new
 repeat that merely abuts an ITR shares far less than 90% of its length with it.
+
+This module also carries the wrap-aware PAIR GEOMETRY the repeat rules share
+(`pair_span`). Same reason it holds the exemption helpers: both F1 and F3 ask
+the same question of a pair of intervals on a circle, and answering it twice is
+how the two answers drift apart.
 """
 
 from __future__ import annotations
@@ -58,6 +63,37 @@ def coverage(
         return 0.0
     best = max(overlap_length(iv, r, construct_length, circular) for r in regions)
     return best / iv.length
+
+
+def pair_span(first: Interval, second: Interval, construct_length: int, circular: bool) -> Interval:
+    """The arc bounding a repeat pair -- the SAME arc its separation was measured on.
+
+    Two copies on a circle bound two arcs, and the shorter one may be the one
+    through the origin. F1's `_spacer` and F3's `_loop` both already measure the
+    short way round; the breach interval did not, so a pair at 20 and 700 on an
+    800 bp plasmid reported "80 bp apart" while its interval covered the other
+    720 bp. Message and interval described opposite arcs.
+
+    That is not cosmetic. Both rules declare `LocalizationPolicy.PAIRED_SEGMENTS`,
+    and the solver hands this interval straight to the repair window -- so the
+    wrong arc aims repair at the wrong 90% of the plasmid.
+
+    Lives here rather than in either rule because the bug was a duplication bug:
+    the same wrong line was written twice, and copying the fix twice would
+    preserve the conditions for the two to drift apart again.
+    """
+    forward = Interval(first.start, max(first.end, second.end))
+    if not circular or second.end > construct_length:
+        # Linear, or a pair the k-mer index already emitted in wrapped form --
+        # `forward` is then already the wrapping representation.
+        return forward
+    gap = second.start - first.end
+    wrap = construct_length - (second.end - first.start)
+    if 0 <= wrap < gap:
+        # `end` past the construct length is the one representation `Interval`
+        # defines for a wrapping interval (core/types.py:62).
+        return Interval(second.start, first.end + construct_length)
+    return forward
 
 
 def both_arms_exempt(
