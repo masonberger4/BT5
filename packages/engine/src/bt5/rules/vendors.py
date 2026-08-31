@@ -470,6 +470,35 @@ class VendorSelection:
                 out.append(k)
         return tuple(out)
 
+    def gc_band(
+        self,
+    ) -> tuple[tuple[float, tuple[str, ...]], tuple[float, tuple[str, ...]]] | None:
+        """The tightest global-GC band across the selection, and who sets each edge.
+
+        Floor is the HIGHEST published floor, ceiling the LOWEST published ceiling
+        -- the intersection, because a fragment must sit inside every selected
+        vendor's band to be one all of them build. Same min-merge as the run
+        limits, and again the binders are for attribution: naming whose ceiling a
+        GC-rich fragment overran (IDT denies above 77% where Twist ships 80%).
+
+        `None` when no selected member publishes a band -- i.e. `none`, which
+        carries synthesis SCOPE but no vendor to ask. E2 accepts `none` (the scope
+        question has an answer with no vendor chosen) and falls back to its own
+        loosest-envelope ClassVar there.
+        """
+        banded = [
+            (k, p.global_gc)
+            for k, p in zip(self.keys, self.profiles, strict=True)
+            if p.global_gc is not None
+        ]
+        if not banded:
+            return None
+        lo = max(b[0] for _, b in banded)
+        hi = min(b[1] for _, b in banded)
+        lo_keys = tuple(k for k, b in banded if b[0] == lo)
+        hi_keys = tuple(k for k, b in banded if b[1] == hi)
+        return (lo, lo_keys), (hi, hi_keys)
+
     def verdicts_for_length(self, bp: int) -> tuple[tuple[str, str], ...]:
         """Per orderable member, whether it accepts `bp` of ordered DNA.
 
