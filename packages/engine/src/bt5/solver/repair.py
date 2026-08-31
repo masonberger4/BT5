@@ -69,13 +69,43 @@ class RepairOutcome:
     cds: str
     iterations: int
     converged: bool
+    #: HARD_REPAIR breaches the solver could not clear -- fixable by codon choice
+    #: in principle, but the search did not reach a construct without them. A
+    #: non-empty `remaining` is what makes the design infeasible.
     remaining: tuple[Breach, ...] = ()
     exhaustive_windows: int = 0
     random_windows: int = 0
+    #: Breaches the solver was never asked to fix, because their author marked
+    #: them `fixable_by_codon_choice=False`: a polyA hexamer in the user's own
+    #: LTR, a repeat wholly in the backbone. Reading this field is what stops one
+    #: unfixable backbone breach from aborting the whole pass; downstream it is
+    #: what `QcReport.advisories` is for.
+    advisory: tuple[Breach, ...] = ()
 
     @property
     def clean(self) -> bool:
+        """No breach the solver could act on remains.
+
+        Advisory breaches never count against `clean`: no codon choice can move
+        them, so a construct carrying only advisories is as clean as this stage
+        can make it, and the independent validator -- not repair -- is what
+        decides whether an unfixable finding blocks the emit.
+        """
         return not self.remaining
+
+
+def _partition(breaches: Sequence[Breach]) -> tuple[list[Breach], tuple[Breach, ...]]:
+    """Split breaches into the ones the solver can act on and the ones it cannot.
+
+    `fixable_by_codon_choice` is REQUIRED on every Breach with no default
+    precisely so this split is always answerable. Ignoring it -- as the search
+    did before -- lets `target = max(breaches, ...)` pick an unfixable backbone
+    breach whose window touches no editable codon, then abort the entire pass
+    having done zero work.
+    """
+    actionable = [b for b in breaches if b.fixable_by_codon_choice]
+    advisory = tuple(b for b in breaches if not b.fixable_by_codon_choice)
+    return actionable, advisory
 
 
 def localize(
@@ -162,6 +192,50 @@ def _introduces_forbidden(
     return automaton.consume(state, right_flank)[1]
 
 
+def _codon_map_of(construct: Construct, cds: str) -> Sequence[Interval]:
+    return (
+        construct.translation_units[0].codon_map
+        if construct.translation_units
+        else tuple(Interval(i, i + 3) for i in range(0, len(cds), 3))
+    )
+
+
+def _select_workable(
+    actionable: Sequence[Breach],
+    *,
+    policy: LocalizationPolicy,
+    window: int,
+    motif_len: int,
+    codon_map: Sequence[Interval],
+    construct_length: int,
+    circular: bool,
+    protein_len: int,
+) -> tuple[Breach, Interval, int, int] | None:
+    """The best actionable breach whose repair window touches an editable codon.
+
+    Actionable breaches are tried worst-first (magnitude, then earliest); a
+    target whose localized window spans no whole editable codon is SKIPPED, not
+    the whole pass aborted. Returns None only when no actionable breach has a
+    workable window -- which is the honest "nothing left to do" signal, distinct
+    from "one unfixable breach happened to sort first".
+    """
+    ordered = sorted(actionable, key=lambda b: (b.magnitude, -b.interval.start), reverse=True)
+    for target in ordered:
+        repair_window = localize(
+            target,
+            policy,
+            window=window,
+            motif_len=motif_len,
+            construct_length=construct_length,
+            circular=circular,
+        )
+        first, last = codon_span(repair_window, codon_map, construct_length)
+        last = min(last, protein_len)
+        if first < last:
+            return target, repair_window, first, last
+    return None
+
+
 def repair(
     cds: str,
     protein: str,
@@ -181,8 +255,11 @@ def repair(
 ) -> RepairOutcome:
     """Repair HARD_REPAIR breaches without ever weakening a Tier-A guarantee.
 
-    Raises InfeasibleConstraints when the search cannot clear the breaches, with
-    the minimal conflicting set rather than a bare failure.
+    Only breaches marked `fixable_by_codon_choice` are chased; the rest are
+    carried on `RepairOutcome.advisory` untouched, because no codon choice can
+    move them. Raises InfeasibleConstraints when the search cannot clear the
+    ACTIONABLE breaches, with the minimal conflicting set rather than a bare
+    failure.
     """
     rng = np.random.default_rng(seed)  # explicit; never the global RNG
     patterns = expand_forbidden(forbidden)
@@ -191,33 +268,31 @@ def repair(
     current = cds
     construct = assemble(current)
     breaches = find_breaches(construct)
-    if not breaches:
-        return RepairOutcome(current, 0, True)
+    actionable, advisory = _partition(breaches)
+    # Advisory-only (or clean): nothing the solver can act on. Not a failure --
+    # an unfixable backbone polyA is the validator's call, not repair's.
+    if not actionable:
+        return RepairOutcome(current, 0, True, advisory=advisory)
 
     stagnant = 0
     exhaustive_windows = random_windows = 0
-    best_cost = sum(b.magnitude for b in breaches)
+    best_cost = sum(b.magnitude for b in actionable)
 
     for iteration in range(1, max_iterations + 1):
-        # Work the worst breach first; deterministic tie-break on position.
-        target = max(breaches, key=lambda b: (b.magnitude, -b.interval.start))
-        repair_window = localize(
-            target,
-            policy,
+        codon_map = _codon_map_of(construct, current)
+        selected = _select_workable(
+            actionable,
+            policy=policy,
             window=window,
             motif_len=motif_len,
+            codon_map=codon_map,
             construct_length=construct.length,
             circular=construct.is_circular,
+            protein_len=len(protein),
         )
-        codon_map = (
-            construct.translation_units[0].codon_map
-            if construct.translation_units
-            else tuple(Interval(i, i + 3) for i in range(0, len(current), 3))
-        )
-        first, last = codon_span(repair_window, codon_map, construct.length)
-        last = min(last, len(protein))
-        if first >= last:
-            break
+        if selected is None:
+            break  # no actionable breach has a workable window
+        _target, _repair_window, first, last = selected
 
         options = _mutation_space(protein, code, first, last)
         size = _space_size(options)
@@ -247,15 +322,22 @@ def repair(
             if _introduces_forbidden(automaton, left_state, block, suffix[: max(1, motif_len)]):
                 continue  # never weaken a Tier-A guarantee
             trial_cds = current[: 3 * first] + block + current[3 * last :]
-            trial_breaches = find_breaches(assemble(trial_cds))
-            cost = sum(b.magnitude for b in trial_breaches)
+            trial_actionable, trial_advisory = _partition(find_breaches(assemble(trial_cds)))
+            cost = sum(b.magnitude for b in trial_actionable)
             if cost < best_cost - 1e-12:
-                current, best_cost, breaches = trial_cds, cost, trial_breaches
+                current, best_cost = trial_cds, cost
+                actionable, advisory = trial_actionable, trial_advisory
                 construct = assemble(current)
                 improved = True
-                if not breaches:
+                if not actionable:
                     return RepairOutcome(
-                        current, iteration, True, (), exhaustive_windows, random_windows
+                        current,
+                        iteration,
+                        True,
+                        (),
+                        exhaustive_windows,
+                        random_windows,
+                        advisory=advisory,
                     )
                 break
 
@@ -265,13 +347,15 @@ def repair(
         if repair_policy is RepairPolicy.SINGLE_PASS and not improved:
             break
 
-    if breaches:
+    if actionable:
         raise InfeasibleConstraints(
             InfeasibilityCertificate(
-                interval=breaches[0].interval,
+                interval=actionable[0].interval,
                 protein_span=(0, len(protein)),
-                minimal_conflicting_specs=tuple(sorted({b.spec_id for b in breaches})),
+                minimal_conflicting_specs=tuple(sorted({b.spec_id for b in actionable})),
                 proof="empty_mutation_space",
             )
         )
-    return RepairOutcome(current, max_iterations, True, (), exhaustive_windows, random_windows)
+    return RepairOutcome(
+        current, max_iterations, True, (), exhaustive_windows, random_windows, advisory=advisory
+    )
