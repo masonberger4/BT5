@@ -64,6 +64,21 @@ BreachFinder = Callable[[Construct], tuple[Breach, ...]]
 """Evaluates the HARD_REPAIR rules against an assembled construct."""
 
 
+def no_rules(_c: Construct) -> tuple[Breach, ...]:
+    """The EXPLICIT opt-out from Tier B.
+
+    `optimize()` used to accept `find_breaches=None` and fabricate
+    `RepairOutcome(cds, 0, converged=True)`, which is byte-identical to "repair
+    ran and found nothing to fix" -- so a caller who forgot the argument got a
+    construct that looked proven and had never been checked. Passing this is the
+    same behaviour said out loud, and `optimize()` reports `ran is False` for it.
+    """
+    return ()
+
+
+NO_RULES: BreachFinder = no_rules
+
+
 @dataclass(frozen=True)
 class RepairOutcome:
     cds: str
@@ -72,10 +87,94 @@ class RepairOutcome:
     remaining: tuple[Breach, ...] = ()
     exhaustive_windows: int = 0
     random_windows: int = 0
+    #: Did Tier B actually run? REQUIRED to distinguish "repaired, nothing to
+    #: fix" from "never checked". `optimize()` used to fabricate
+    #: `RepairOutcome(cds, 0, True)` when no breach finder was supplied, which is
+    #: byte-identical to a clean repair -- so a caller who forgot the argument
+    #: got a construct that looked proven and had never been looked at. The two
+    #: states are now different values, not the same one.
+    ran: bool = True
+    #: The policy the loop actually ran under, after any escalation. Recorded
+    #: because the escalation is a safety decision made somewhere else -- a test
+    #: that cannot see it cannot prove the join went the right way.
+    effective_repair_policy: RepairPolicy = RepairPolicy.FIXED_POINT
 
     @property
     def clean(self) -> bool:
         return not self.remaining
+
+
+#: A repair cost. Compared lexicographically, never summed. See `BreachCost`.
+Cost = tuple[float, float, float, float]
+
+
+class BreachCost:
+    """The repair objective: a lexicographic tuple, with a scale frozen at first use.
+
+    This loop used to minimise `sum(b.magnitude)`, but `Breach.magnitude` is
+    documented rule-native: E1's is nucleotides over a run limit, E9's is a
+    dimensionless 1.0/0.5/0.25 tier, E2's is a GC fraction delta. Summing them
+    makes one nucleotide worth thirty-three percentage points of GC, so the
+    search chases whichever rule happens to report in the largest units -- and
+    the same arithmetic picked the breach to work next, so the rule with the
+    biggest units also monopolised the search.
+
+    Four terms, compared in order:
+
+      1. how many breaches -- already unit-free, and clearing one is
+         unambiguously better than shrinking one;
+      2. summed magnitude, each divided by its own rule's scale;
+      3. how much sequence is implicated, preferring the more localised of two
+         otherwise equal states;
+      4. leftmost breach, so ties break deterministically.
+
+    THE SCALE IS FROZEN, and that is the load-bearing part. Normalising by a
+    moving maximum makes the objective non-stationary: the same two breach sets
+    compare one way at iteration 3 and the other way at iteration 40, so
+    `best_cost` stops being a monotone bound and the stagnation counter measures
+    nothing. The scale comes from the first call -- the initial breach set,
+    before any candidate -- and never moves. A rule first seen later gets 1.0 and
+    is recorded in `late` rather than silently rescaling the run.
+    """
+
+    __slots__ = ("_scale", "late")
+
+    def __init__(self) -> None:
+        self._scale: dict[str, float] | None = None
+        self.late: tuple[str, ...] = ()
+
+    def normalised(self, breach: Breach) -> float:
+        """`breach.magnitude` in units of its own rule's initial worst case."""
+        if self._scale is None:
+            return abs(breach.magnitude)
+        return abs(breach.magnitude) * self._scale.get(breach.spec_id, 1.0)
+
+    def __call__(self, breaches: Sequence[Breach]) -> Cost:
+        if self._scale is None:
+            self._scale = _initial_scale(breaches)
+        else:
+            unseen = {b.spec_id for b in breaches} - set(self._scale)
+            if unseen:
+                self.late = tuple(sorted(set(self.late) | unseen))
+        if not breaches:
+            return (0.0, 0.0, 0.0, 0.0)
+        return (
+            float(len(breaches)),
+            # Rounded so the epsilon the scalar comparison carried survives into
+            # a lexicographic one: without it two states differing by 1e-16 of
+            # normalised magnitude read as an improvement forever.
+            round(sum(self.normalised(b) for b in breaches), 12),
+            float(sum(b.interval.length for b in breaches)),
+            float(min(b.interval.start for b in breaches)),
+        )
+
+
+def _initial_scale(breaches: Sequence[Breach]) -> dict[str, float]:
+    """1 / (this rule's worst magnitude in the initial set), per rule."""
+    worst: dict[str, float] = {}
+    for b in breaches:
+        worst[b.spec_id] = max(worst.get(b.spec_id, 0.0), abs(b.magnitude))
+    return {spec_id: (1.0 / m if m > 0.0 else 1.0) for spec_id, m in worst.items()}
 
 
 def localize(
@@ -162,6 +261,20 @@ def _introduces_forbidden(
     return automaton.consume(state, right_flank)[1]
 
 
+def _normalised(measure: Callable[[Sequence[Breach]], Cost], breach: Breach) -> float:
+    """A breach's magnitude in its own rule's units, if the cost object knows how.
+
+    A caller may inject any callable as the cost, so the scale is read through a
+    duck-typed hook rather than requiring `BreachCost` specifically. Falling back
+    to the raw magnitude reproduces the old ordering exactly, which is the right
+    default for a cost function that does not model rules at all.
+    """
+    normalise = getattr(measure, "normalised", None)
+    if normalise is None:
+        return abs(breach.magnitude)
+    return float(normalise(breach))
+
+
 def repair(
     cds: str,
     protein: str,
@@ -170,8 +283,11 @@ def repair(
     assemble: Assembler,
     find_breaches: BreachFinder,
     forbidden: Sequence[str] = (),
-    policy: LocalizationPolicy = LocalizationPolicy.WINDOW_MINUS_1,
+    policy: LocalizationPolicy | Callable[[str], LocalizationPolicy] = (
+        LocalizationPolicy.WINDOW_MINUS_1
+    ),
     repair_policy: RepairPolicy = RepairPolicy.FIXED_POINT,
+    cost: Callable[[Sequence[Breach]], Cost] | None = None,
     window: int = 50,
     motif_len: int = 6,
     left_flank: str = "",
@@ -183,27 +299,42 @@ def repair(
 
     Raises InfeasibleConstraints when the search cannot clear the breaches, with
     the minimal conflicting set rather than a bare failure.
+
+    `policy` may be one `LocalizationPolicy` for every breach, or a callable
+    resolving one PER RULE. The catalog needs the second form: the four
+    HARD_REPAIR rules shipped today declare three different policies between
+    them -- E2 `WINDOW_MINUS_1`, E5 and F1 `PAIRED_SEGMENTS`, E7 `WHOLE_SCOPE` --
+    and a repeat pair widened by `window - 1` instead of localised to the copy
+    being edited searches a region that does not contain the fix.
     """
     rng = np.random.default_rng(seed)  # explicit; never the global RNG
     patterns = expand_forbidden(forbidden)
     automaton = Automaton(patterns)
+    measure = cost if cost is not None else BreachCost()
+    localization = policy if callable(policy) else (lambda _spec_id: policy)
 
     current = cds
     construct = assemble(current)
     breaches = find_breaches(construct)
     if not breaches:
-        return RepairOutcome(current, 0, True)
+        return RepairOutcome(current, 0, True, effective_repair_policy=repair_policy)
 
     stagnant = 0
     exhaustive_windows = random_windows = 0
-    best_cost = sum(b.magnitude for b in breaches)
+    best_cost = measure(breaches)
 
     for iteration in range(1, max_iterations + 1):
         # Work the worst breach first; deterministic tie-break on position.
-        target = max(breaches, key=lambda b: (b.magnitude, -b.interval.start))
+        # NORMALISED, not raw: ranking by `magnitude` across rules compares a
+        # nucleotide count against a GC fraction, so the rule reporting in the
+        # largest units would be the only one ever worked on.
+        target = max(
+            breaches,
+            key=lambda b: (_normalised(measure, b), -b.interval.start),
+        )
         repair_window = localize(
             target,
-            policy,
+            localization(target.spec_id),
             window=window,
             motif_len=motif_len,
             construct_length=construct.length,
@@ -248,14 +379,20 @@ def repair(
                 continue  # never weaken a Tier-A guarantee
             trial_cds = current[: 3 * first] + block + current[3 * last :]
             trial_breaches = find_breaches(assemble(trial_cds))
-            cost = sum(b.magnitude for b in trial_breaches)
-            if cost < best_cost - 1e-12:
-                current, best_cost, breaches = trial_cds, cost, trial_breaches
+            trial_cost = measure(trial_breaches)
+            if trial_cost < best_cost:
+                current, best_cost, breaches = trial_cds, trial_cost, trial_breaches
                 construct = assemble(current)
                 improved = True
                 if not breaches:
                     return RepairOutcome(
-                        current, iteration, True, (), exhaustive_windows, random_windows
+                        current,
+                        iteration,
+                        True,
+                        (),
+                        exhaustive_windows,
+                        random_windows,
+                        effective_repair_policy=repair_policy,
                     )
                 break
 
@@ -274,4 +411,12 @@ def repair(
                 proof="empty_mutation_space",
             )
         )
-    return RepairOutcome(current, max_iterations, True, (), exhaustive_windows, random_windows)
+    return RepairOutcome(
+        current,
+        max_iterations,
+        True,
+        (),
+        exhaustive_windows,
+        random_windows,
+        effective_repair_policy=repair_policy,
+    )
