@@ -34,7 +34,7 @@ iterations with a stagnation tolerance of 100.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -200,8 +200,70 @@ def _codon_map_of(construct: Construct, cds: str) -> Sequence[Interval]:
     )
 
 
-def _select_workable(
-    actionable: Sequence[Breach],
+def _aggregate(actionable: Sequence[Breach]) -> dict[str, tuple[int, float]]:
+    """Per-rule (count, magnitude-sum). The cost the search actually compares.
+
+    Breach COUNT is the cross-rule currency -- one `Breach` is "one localized
+    problem" by contract, so a GC deviation of 0.05 and a repeat of magnitude 4.0
+    are each worth exactly one. Summing magnitudes across rules would put
+    kcal/mol, CAI and integer motif counts on one axis and let the largest-unit
+    rule silently dominate. Magnitude therefore stays INSIDE its rule, as the
+    within-rule gradient the tie-break uses.
+    """
+    agg: dict[str, tuple[int, float]] = {}
+    for b in actionable:
+        count, magsum = agg.get(b.spec_id, (0, 0.0))
+        agg[b.spec_id] = (count + 1, magsum + b.magnitude)
+    return agg
+
+
+def _accepts(
+    current: Mapping[str, tuple[int, float]],
+    trial: Mapping[str, tuple[int, float]],
+    target_spec: str,
+) -> bool:
+    """Is `trial` a strict improvement the search should take?
+
+    The rules, in order, are what make the search monotone and terminating while
+    keeping magnitude inside its rule:
+
+    - Never let ANY rule's breach count rise. Count is the currency, so an
+      accepted move cannot trade one rule's breach for another's. This is also
+      the invariant the termination proof rests on: the per-rule count vector is
+      non-increasing, and integer, so only finitely many count-reducing moves
+      exist.
+    - If total count falls, take it -- fewer localized problems is unambiguously
+      better across rules.
+    - If total count is unchanged (and, from the first rule, no single count
+      rose, so every count is identical), require within-rule progress: the
+      TARGET rule's magnitude-sum strictly falls and no other rule's rises. This
+      is the GC-gradient step, and it never compares magnitudes between rules.
+    """
+    for spec, (tc, _tm) in trial.items():
+        if tc > current.get(spec, (0, 0.0))[0]:
+            return False
+
+    cur_total = sum(c for c, _ in current.values())
+    trial_total = sum(c for c, _ in trial.values())
+    if trial_total < cur_total:
+        return True
+    if trial_total > cur_total:
+        return False
+
+    # Counts are identical rule-by-rule; this is a pure magnitude move.
+    cur_mag = current.get(target_spec, (0, 0.0))[1]
+    trial_mag = trial.get(target_spec, (0, 0.0))[1]
+    if trial_mag >= cur_mag - 1e-12:
+        return False
+    return all(
+        tm <= current.get(spec, (0, 0.0))[1] + 1e-12
+        for spec, (_c, tm) in trial.items()
+        if spec != target_spec
+    )
+
+
+def _window_for(
+    breach: Breach,
     *,
     policy: LocalizationPolicy,
     window: int,
@@ -210,30 +272,75 @@ def _select_workable(
     construct_length: int,
     circular: bool,
     protein_len: int,
-) -> tuple[Breach, Interval, int, int] | None:
-    """The best actionable breach whose repair window touches an editable codon.
+) -> tuple[Interval, int, int] | None:
+    """A breach's repair window and its codon span, or None if it spans no whole
+    editable codon (so the search must skip it, never abort on it)."""
+    repair_window = localize(
+        breach,
+        policy,
+        window=window,
+        motif_len=motif_len,
+        construct_length=construct_length,
+        circular=circular,
+    )
+    first, last = codon_span(repair_window, codon_map, construct_length)
+    last = min(last, protein_len)
+    if first >= last:
+        return None
+    return repair_window, first, last
 
-    Actionable breaches are tried worst-first (magnitude, then earliest); a
-    target whose localized window spans no whole editable codon is SKIPPED, not
-    the whole pass aborted. Returns None only when no actionable breach has a
-    workable window -- which is the honest "nothing left to do" signal, distinct
-    from "one unfixable breach happened to sort first".
+
+def _select_target(
+    actionable: Sequence[Breach],
+    *,
+    priority: Mapping[str, int],
+    turns: dict[str, int],
+    policy: LocalizationPolicy,
+    window: int,
+    motif_len: int,
+    codon_map: Sequence[Interval],
+    construct_length: int,
+    circular: bool,
+    protein_len: int,
+) -> tuple[Breach, Interval, int, int] | None:
+    """Pick the next breach to work, round-robin over rules, priority first.
+
+    Worst-first over raw magnitude STARVES a rule whose findings are small: a GC
+    deviation of 0.05 never outranks a repeat of magnitude 4.0, so with both
+    present the GC window is never targeted and the design is emitted with it
+    still out of band. Selection is therefore two-level: among the highest
+    `priority` rules that currently have a workable breach, take the one served
+    least often (round-robin, ties by spec_id); within that rule, take its worst
+    breach (magnitude, then earliest). Default priority 0 for every rule is pure
+    round-robin, so a single-rule pass is unchanged.
+
+    Returns None only when NO actionable breach has a workable window -- the
+    honest "nothing left to do" signal.
     """
-    ordered = sorted(actionable, key=lambda b: (b.magnitude, -b.interval.start), reverse=True)
-    for target in ordered:
-        repair_window = localize(
-            target,
-            policy,
+    workable: dict[str, list[tuple[Breach, Interval, int, int]]] = {}
+    for breach in actionable:
+        found = _window_for(
+            breach,
+            policy=policy,
             window=window,
             motif_len=motif_len,
+            codon_map=codon_map,
             construct_length=construct_length,
             circular=circular,
+            protein_len=protein_len,
         )
-        first, last = codon_span(repair_window, codon_map, construct_length)
-        last = min(last, protein_len)
-        if first < last:
-            return target, repair_window, first, last
-    return None
+        if found is None:
+            continue
+        repair_window, first, last = found
+        workable.setdefault(breach.spec_id, []).append((breach, repair_window, first, last))
+    if not workable:
+        return None
+
+    top = max(priority.get(spec, 0) for spec in workable)
+    eligible = [spec for spec in workable if priority.get(spec, 0) == top]
+    chosen = min(eligible, key=lambda spec: (turns.get(spec, 0), spec))
+    turns[chosen] = turns.get(chosen, 0) + 1
+    return max(workable[chosen], key=lambda t: (t[0].magnitude, -t[0].interval.start))
 
 
 def repair(
@@ -251,19 +358,24 @@ def repair(
     left_flank: str = "",
     right_flank: str = "",
     seed: int = 0,
+    priority: Mapping[str, int] | None = None,
     max_iterations: int = MAX_ITERATIONS,
 ) -> RepairOutcome:
     """Repair HARD_REPAIR breaches without ever weakening a Tier-A guarantee.
 
     Only breaches marked `fixable_by_codon_choice` are chased; the rest are
     carried on `RepairOutcome.advisory` untouched, because no codon choice can
-    move them. Raises InfeasibleConstraints when the search cannot clear the
+    move them. Breach count is the cross-rule cost; a rule's breaches are worked
+    round-robin so a small-magnitude rule is never starved by a large-magnitude
+    one; `priority` (default 0 for every rule) lets a caller work some rules
+    before others. Raises InfeasibleConstraints when the search cannot clear the
     ACTIONABLE breaches, with the minimal conflicting set rather than a bare
     failure.
     """
     rng = np.random.default_rng(seed)  # explicit; never the global RNG
     patterns = expand_forbidden(forbidden)
     automaton = Automaton(patterns)
+    priority = priority or {}
 
     current = cds
     construct = assemble(current)
@@ -276,12 +388,15 @@ def repair(
 
     stagnant = 0
     exhaustive_windows = random_windows = 0
-    best_cost = sum(b.magnitude for b in actionable)
+    cur_agg = _aggregate(actionable)
+    turns: dict[str, int] = {}
 
     for iteration in range(1, max_iterations + 1):
         codon_map = _codon_map_of(construct, current)
-        selected = _select_workable(
+        selected = _select_target(
             actionable,
+            priority=priority,
+            turns=turns,
             policy=policy,
             window=window,
             motif_len=motif_len,
@@ -292,7 +407,8 @@ def repair(
         )
         if selected is None:
             break  # no actionable breach has a workable window
-        _target, _repair_window, first, last = selected
+        target, _repair_window, first, last = selected
+        target_spec = target.spec_id
 
         options = _mutation_space(protein, code, first, last)
         size = _space_size(options)
@@ -323,9 +439,9 @@ def repair(
                 continue  # never weaken a Tier-A guarantee
             trial_cds = current[: 3 * first] + block + current[3 * last :]
             trial_actionable, trial_advisory = _partition(find_breaches(assemble(trial_cds)))
-            cost = sum(b.magnitude for b in trial_actionable)
-            if cost < best_cost - 1e-12:
-                current, best_cost = trial_cds, cost
+            trial_agg = _aggregate(trial_actionable)
+            if _accepts(cur_agg, trial_agg, target_spec):
+                current, cur_agg = trial_cds, trial_agg
                 actionable, advisory = trial_actionable, trial_advisory
                 construct = assemble(current)
                 improved = True
