@@ -382,7 +382,7 @@ path with the scorer. Called on every `optimize()`.
 I1 alphabet   I2 frame   I3 round trip   I4 initiator   I5 stops
 I6 forbidden motifs on the CIRCULAR construct, pattern set closed under revcomp,
    including junction- and origin-spanning hits, including inside the backbone
-I7 GC band global + windowed, windows wrapping the origin
+I7 GC band on each ordered (designable) span; a window is not a gate
 I8 homopolymer / repeat ceiling across the whole construct
 I9 every backbone interval is byte-identical to the input backbone      <-- highest value
 I10 cassette frame invariant across the assembled CDS

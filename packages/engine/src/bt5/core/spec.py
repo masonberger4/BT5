@@ -35,7 +35,9 @@ class Enforcement(StrEnum):
     HARD_LATTICE  guaranteed by construction in the Tier-A DP. Cannot be violated.
     HARD_REPAIR   not expressible in the lattice; enforced by Tier-B repair and
                   then PROVEN by the independent validator, which refuses to emit
-                  on failure. Windowed GC content is the canonical member.
+                  on failure. The GC of an ordered fragment is the canonical
+                  member -- measured on the tube a vendor synthesises, not on a
+                  window and not on the whole plasmid.
     HARD_CHECK    real, but not fixable by codon choice (an upstream AUG in the
                   user's own 5'UTR, a transmembrane-segment toxicity call, an AAV
                   size overflow). Reported and blocking, never chased by the solver.
