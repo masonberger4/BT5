@@ -144,11 +144,25 @@ jobs:
       # own `conclusion` output means "did Claude run", not "did the review pass".
       - name: Gate on Claude verdict
         if: always()
-        env: { OUT: "${{ steps.review.outputs.structured_output }}" }
+        env:
+          OUT: "${{ steps.review.outputs.structured_output }}"
+          # A BOOLEAN, never the secret's value -- `secrets` is not otherwise
+          # readable inside `run:`. Without it an empty verdict cannot say WHICH
+          # cause it hit, and the first live run of this gate blamed a crash for
+          # what was really an unconfigured repository.
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
         run: |
           set -euo pipefail
           if [ -z "${OUT:-}" ]; then
-            echo "::error::No verdict (crash, timeout, or --max-turns). Failing closed."
+            if [ "${HAS_TOKEN:-false}" != "true" ]; then
+              echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set on this repository, so the review never ran."
+              echo "Failing closed: a gate that was never configured must not read as a pass."
+              echo "Fix: run 'claude setup-token' locally, then"
+              echo "     gh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${{ github.repository }} --body '<token>'"
+              echo "or run /install-github-app, which does both. See this file's header comment."
+            else
+              echo "::error::No verdict (crash, timeout, or --max-turns). Failing closed."
+            fi
             exit 1
           fi
           echo "$OUT" | jq .
