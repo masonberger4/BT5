@@ -66,7 +66,7 @@ CLAUDE.md                     restructured, 177 -> 197 lines (statements kept, r
 .claude/rules/*.md            4 path-scoped rules files
 .claude/hooks/                6 scripts (5 hooks + statusline)
 scripts/gates.sh              the gate chain; the only non-.claude file added
-docs/decisions.md             durable session decisions
+docs/decisions/               durable session decisions, one file each
 .gitignore                    local Claude state
 SETUP-NOTES.md                this file
 ```
