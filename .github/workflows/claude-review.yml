@@ -151,15 +151,38 @@ jobs:
           # cause it hit, and the first live run of this gate blamed a crash for
           # what was really an unconfigured repository.
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           if [ -z "${OUT:-}" ]; then
+            # Three distinct causes produce an empty verdict, and they need
+            # different answers from the reader. Collapsing them into one
+            # message sent the first two live failures chasing a crash that
+            # never happened.
+            SELF_EDIT=no
+            if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git diff --quiet "$BASE_SHA" HEAD -- .github/workflows/claude-review.yml \
+                || SELF_EDIT=yes
+            fi
+
             if [ "${HAS_TOKEN:-false}" != "true" ]; then
               echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set on this repository, so the review never ran."
               echo "Failing closed: a gate that was never configured must not read as a pass."
               echo "Fix: run 'claude setup-token' locally, then"
               echo "     gh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${{ github.repository }} --body '<token>'"
               echo "or run /install-github-app, which does both. See this file's header comment."
+            elif [ "$SELF_EDIT" = "yes" ]; then
+              echo "::error::This pull request changes claude-review.yml, so the action refused to run."
+              echo "The Claude GitHub App will only mint a token for a workflow file that is"
+              echo "byte-identical to the copy on the default branch. That is a supply-chain"
+              echo "guard: it stops a pull request from editing its own reviewer. The action"
+              echo "self-skips, exits 0 and emits no verdict, which is why this reads as empty."
+              echo ""
+              echo "EXPECTED on any pull request that touches this file, including the one"
+              echo "that first adds it. The review runs normally on every other pull request"
+              echo "once this one merges."
+              echo ""
+              echo "Still failing closed: no review happened, so this must not read as a pass."
             else
               echo "::error::No verdict (crash, timeout, or --max-turns). Failing closed."
             fi
