@@ -36,19 +36,20 @@ from bt5.core.context import (
 from bt5.core.result import Candidate, DesignResult, ObjectiveScore, ScoreCard
 from bt5.core.services import FoldEngine
 from bt5.core.types import Construct, Interval, reverse_complement
-from bt5.design.catalog import breach_finder, build_catalog
+from bt5.design.catalog import partition_forbidden, scored_objectives
 from bt5.design.errors import DesignError
 from bt5.design.provenance import (
     build_provenance,
     constraint_set_hash,
     design_hash_context,
 )
-from bt5.design.services import build_services, fold_degradation
 from bt5.design.sites import choose_site
 from bt5.rules.vendors import DEFAULT_SELECTION, VendorSelection
 from bt5.score import build_report, design_hash, render
 from bt5.score.report import QcReport
+from bt5.solver.catalog import RuleSet, build_rule_set, default_services
 from bt5.solver.pipeline import OptimizeResult, optimize
+from bt5.structure.vienna import degradation_reason
 from bt5.vector import Assembly, annotate, assemble, construct_to_record, write_genbank
 from bt5.vector.backbone import InsertionSite, VectorBackbone
 
@@ -182,7 +183,7 @@ def design(
             f"assembler builds the cassette with starts_at_initiator=True."
         )
 
-    services = build_services(seed=seed, fold=fold)
+    services = default_services(seed=seed, fold=fold)
     # From FileTableProvider directly so the type is NcbiGeneticCode (what the
     # solver's DP requires), not the wider GeneticCode the Services protocol names.
     code = FileTableProvider().genetic_code(table_id)
@@ -203,14 +204,16 @@ def design(
         seed=seed,
     )
 
-    catalog = build_catalog(
-        ctx, backbone=backbone, site=chosen, vendors=vendors, default_window=_GC_WINDOW
-    )
+    # The solver lane runs the catalog: one rule set, from which the forbidden
+    # motifs, the breach finder, the per-rule policies and the oracle's GC band
+    # all derive so they cannot disagree (#68). The design lane adds only what the
+    # solver has no backbone to know: which forbidden motifs the vector already
+    # carries and cannot recode away.
+    rules = build_rule_set(ctx, services, vendors=vendors)
+    usable_forbidden, carried_forbidden = partition_forbidden(rules.forbidden(), backbone, chosen)
 
-    band = vendors.gc_band()
-    gc_bounds = (band[0][0], band[1][0]) if band is not None else None
-    left_flank, right_flank = _coding_flanks(backbone, chosen, catalog.usable_forbidden)
-    finder = breach_finder(catalog.hard_repair, ctx, services)
+    gc_bounds = rules.oracle_bounds().gc_bounds
+    left_flank, right_flank = _coding_flanks(backbone, chosen, usable_forbidden)
 
     def assembler(cds: str) -> Construct:
         return assemble(backbone, cds, protein=protein, table_id=table_id, site=chosen).construct
@@ -222,12 +225,15 @@ def design(
         backbone, placeholder, protein=protein, table_id=table_id, site=chosen
     ).reference
 
+    # optimize() directly, not solver.optimize_with, because the forbidden set it
+    # is given is the PARTITIONED one -- the carried motifs excluded from both the
+    # automaton and the validator.
     result = optimize(
         protein,
         code,
         assemble=assembler,
-        find_breaches=finder,
-        forbidden=catalog.usable_forbidden,
+        find_breaches=rules.breach_finder(),
+        forbidden=usable_forbidden,
         score=None,
         gc_bounds=gc_bounds,
         gc_window=_GC_WINDOW,
@@ -235,7 +241,7 @@ def design(
         right_flank=right_flank,
         seed=seed,
         table_id=table_id,
-        policies=catalog.policies,
+        policies=rules.policies(_GC_WINDOW),
         max_candidates=max_candidates,
         original_backbone=reference,
     )
@@ -249,13 +255,13 @@ def design(
         context=design_hash_context(
             backbone_sequence=backbone.sequence,
             table_id=table_id,
-            forbidden=catalog.usable_forbidden,
+            forbidden=usable_forbidden,
             gc_bounds=gc_bounds,
             vendors=vendors,
         ),
     )
     constraint_hash = constraint_set_hash(
-        catalog.rules, ctx, forbidden=catalog.usable_forbidden, gc_bounds=gc_bounds, vendors=vendors
+        rules.specs, ctx, forbidden=usable_forbidden, gc_bounds=gc_bounds, vendors=vendors
     )
 
     # --- annotate + GenBank round-trip -------------------------------------
@@ -265,22 +271,22 @@ def design(
     # --- scorecard: every objective unavailable, honestly ------------------
     scored = tuple(
         ObjectiveScore.unavailable(
-            rule.id, rule.unit, "ranking not computed in the walking skeleton"
+            spec.id, spec.unit, "ranking not computed in the walking skeleton"
         )
-        for rule in catalog.scored
+        for spec in scored_objectives(rules)
     )
-    hard_check_breaches = tuple(
-        b for rule in catalog.hard_check for b in rule.evaluate(annotated, ctx, services).breaches
-    )
+    # HARD_CHECK findings (an over-length fragment, an ITR palindrome): real,
+    # reported, never chased by the solver.
+    hard_check_breaches = rules.advise()(annotated)
     scorecard = ScoreCard(scores=scored, hard_checks=hard_check_breaches, total=0.0)
 
     # --- advisories + degradations -----------------------------------------
     advisories = tuple(b.message for b in result.repair_outcome.advisory) + tuple(
         f"backbone carries the forbidden motif {m}; it cannot be recoded away and "
         f"is excluded from enforcement"
-        for m in catalog.carried_forbidden
+        for m in carried_forbidden
     )
-    degradations = _degradations(catalog, services.fold is not None)
+    degradations = _degradations(rules, carried_forbidden)
 
     provenance = build_provenance(
         seed=seed,
@@ -339,19 +345,24 @@ def design(
     )
 
 
-def _degradations(catalog: object, fold_loaded: bool) -> tuple[str, ...]:
+def _degradations(rules: RuleSet, carried: Sequence[str]) -> tuple[str, ...]:
     """Every reason this skeleton run is not a complete evaluation, stated.
 
     A set the report renders and a test pins by equality: a new silent
     degradation must fail that test rather than slip in unremarked.
     """
     out: list[str] = []
-    fold = fold_degradation()
+    fold = degradation_reason()
     if fold is not None:
         out.append(fold)
     out.append("ranking not computed: no null distribution and no percentiles")
     out.append("protein-level biosecurity screening did not run")
     out.append("single candidate only: no gallery")
-    for motif in catalog.carried_forbidden:  # type: ignore[attr-defined]
+    for spec_id in rules.unrunnable:
+        out.append(
+            f"rule {spec_id} not run: its thresholds are calibrated against a folding "
+            f"engine that is not available"
+        )
+    for motif in carried:
         out.append(f"forbidden motif {motif} carried by the backbone, excluded from enforcement")
     return tuple(out)

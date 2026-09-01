@@ -24,8 +24,15 @@ from collections.abc import Mapping, Sequence
 from bt5.core.services import FoldEngine
 from bt5.core.spec import Spec
 from bt5.core.types import Provenance
-from bt5.design.services import engine_versions
 from bt5.rules.vendors import VendorSelection
+
+
+def engine_versions(fold: FoldEngine | None) -> Mapping[str, str]:
+    """The engine versions to record in provenance. Empty when no engine loaded."""
+    if fold is None:
+        return {}
+    return {fold.name: fold.version}
+
 
 #: The app version stamped into every design. A single source; the packaging lane
 #: owns the real version string, and this is the value the engine records until

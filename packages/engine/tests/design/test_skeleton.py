@@ -18,12 +18,13 @@ from bt5.core.result import VerificationError
 from bt5.core.spec import Enforcement
 from bt5.core.types import Interval, reverse_complement
 from bt5.design import DesignError, design
-from bt5.design.catalog import build_catalog
+from bt5.design.catalog import partition_forbidden, scored_objectives
 from bt5.design.runner import _coding_flanks, _context
 from bt5.rules.vendors import DEFAULT_SELECTION
+from bt5.solver.catalog import build_rule_set, default_services
 from bt5.structure.vienna import degradation_reason
 from bt5.vector import read_genbank
-from bt5.vector.backbone import VectorBackbone, insertion_site_from_interval
+from bt5.vector.backbone import InsertionSite, VectorBackbone, insertion_site_from_interval
 from bt5.verify import verify_construct
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -51,6 +52,20 @@ def run(bb: VectorBackbone, **kw: object) -> object:
         hosts=[HostId.HEK293],
         **kw,  # type: ignore[arg-type]
     )
+
+
+def rules_and_partition(backbone: VectorBackbone, site: InsertionSite):  # noqa: ANN201
+    """The solver rule set plus the design lane's usable/carried partition of its
+    forbidden set -- the same objects design() builds internally."""
+    ctx = _context(
+        modality=Modality.LENTIVIRAL,
+        hosts=[HostId.HEK293],
+        table_id=1,
+        cassette_orientation=site.strand,
+    )
+    rules = build_rule_set(ctx, default_services(seed=0), vendors=DEFAULT_SELECTION)
+    usable, carried = partition_forbidden(rules.forbidden(), backbone, site)
+    return rules, usable, carried
 
 
 class TestEndToEnd:
@@ -95,12 +110,9 @@ class TestEndToEnd:
 class TestSiteHandling:
     def test_forward_flanks_are_the_immediate_neighbours(self, backbone: VectorBackbone) -> None:
         site = insertion_site_from_interval(Interval(720, 780, 1), label="mcs", table_id=1)
-        ctx = _context(
-            modality=Modality.LENTIVIRAL, hosts=[HostId.HEK293], table_id=1, cassette_orientation=1
-        )
-        catalog = build_catalog(ctx, backbone=backbone, site=site, vendors=DEFAULT_SELECTION)
-        k = max(len(m) for m in catalog.usable_forbidden) - 1
-        left, right = _coding_flanks(backbone, site, catalog.usable_forbidden)
+        _rules, usable, _carried = rules_and_partition(backbone, site)
+        k = max(len(m) for m in usable) - 1
+        left, right = _coding_flanks(backbone, site, usable)
         assert left == backbone.sequence[720 - k : 720]
         assert right == backbone.sequence[780 : 780 + k]
 
@@ -134,25 +146,21 @@ class TestSiteHandling:
 
 
 class TestCarriedMotif:
-    def _catalog(self, backbone: VectorBackbone):  # noqa: ANN202
-        site = insertion_site_from_interval(Interval(720, 780, 1), label="mcs", table_id=1)
-        ctx = _context(
-            modality=Modality.LENTIVIRAL, hosts=[HostId.HEK293], table_id=1, cassette_orientation=1
-        )
-        return build_catalog(ctx, backbone=backbone, site=site, vendors=DEFAULT_SELECTION)
+    def _site(self) -> InsertionSite:
+        return insertion_site_from_interval(Interval(720, 780, 1), label="mcs", table_id=1)
 
     def test_the_backbone_xbai_is_carried_not_usable(self, backbone: VectorBackbone) -> None:
-        catalog = self._catalog(backbone)
-        assert "TCTAGA" in catalog.carried_forbidden
-        assert "TCTAGA" not in catalog.usable_forbidden
+        _rules, usable, carried = rules_and_partition(backbone, self._site())
+        assert "TCTAGA" in carried
+        assert "TCTAGA" not in usable
 
     def test_unpartitioned_the_validator_would_refuse(self, backbone: VectorBackbone) -> None:
         """The negative: hand the carried motif to the validator and it refuses
         (I6), which is exactly why the partition exists."""
         res = run(backbone)
         construct = res.assembly.construct  # type: ignore[attr-defined]
-        catalog = self._catalog(backbone)
-        forbidden_with_carried = (*catalog.usable_forbidden, "TCTAGA")
+        _rules, usable, _carried = rules_and_partition(backbone, self._site())
+        forbidden_with_carried = (*usable, "TCTAGA")
         with pytest.raises(VerificationError) as exc:
             verify_construct(
                 construct, protein=PROTEIN, table_id=1, forbidden=forbidden_with_carried
@@ -179,19 +187,18 @@ class TestHonesty:
     def test_the_3_5_guard_keeps_hard_rules_out_of_the_scored_set(
         self, backbone: VectorBackbone
     ) -> None:
-        catalog = TestCarriedMotif()._catalog(backbone)
-        ctx = _context(
-            modality=Modality.LENTIVIRAL, hosts=[HostId.HEK293], table_id=1, cassette_orientation=1
-        )
-        slot = ctx.active_slots[0]
-        for rule in catalog.scored:
-            assert not rule.enforcement_for(slot).is_hard
+        site = insertion_site_from_interval(Interval(720, 780, 1), label="mcs", table_id=1)
+        rules, _usable, _carried = rules_and_partition(backbone, site)
+        slot = rules.ctx.active_slots[0]
+        scored = scored_objectives(rules)
+        for spec in scored:
+            assert not spec.enforcement_for(slot).is_hard
         # d4 is SOFT by ClassVar but HARD_REPAIR here, so it must NOT be scored.
-        scored_ids = {r.id for r in catalog.scored}
-        assert "d4_internal_polya" not in scored_ids
-        assert {r.id for r in catalog.hard_repair} >= {"d4_internal_polya", "e2_gc_band"}
-        for rule in catalog.hard_repair:
-            assert rule.enforcement_for(slot) is Enforcement.HARD_REPAIR
+        assert "d4_internal_polya" not in {s.id for s in scored}
+        repair_ids = {s.id for s in rules.repair_specs()}
+        assert repair_ids >= {"d4_internal_polya", "e2_gc_band"}
+        for spec in rules.repair_specs():
+            assert spec.enforcement_for(slot) is Enforcement.HARD_REPAIR
 
 
 class TestDeterminism:
