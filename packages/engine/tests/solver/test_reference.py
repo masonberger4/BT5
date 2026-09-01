@@ -5,14 +5,20 @@ from __future__ import annotations
 import pytest
 from bt5.codon.tables import FileTableProvider
 from bt5.core.result import InfeasibleConstraints
+from bt5.core.types import reverse_complement
 from bt5.solver.reference import (
+    IUPAC_CODES,
+    MAX_PATTERN_EXPANSION,
     back_translate,
     cai_scorer,
     expand_forbidden,
+    expand_iupac,
     longest_repeat,
     repeat_breaking_scorer,
 )
 from bt5.verify import verify_solution
+from hypothesis import given
+from hypothesis import strategies as st
 
 FORBID = ["GAATTC", "GGATCC", "GGTCTC"]
 
@@ -26,6 +32,136 @@ def env() -> tuple:
 def test_forbidden_set_is_closed_under_reverse_complement(env: tuple) -> None:
     """Rules declare forward motifs only; the closure happens once, here."""
     assert expand_forbidden(["GGTCTC"]) == ("GAGACC", "GGTCTC")
+
+
+class TestIupacExpansion:
+    """`LatticeTerms.forbidden` is documented IUPAC; the engine has to mean it.
+
+    Before this, a degenerate base reached `Automaton.__init__` and died there as
+    a bare `KeyError` on `_BASE_INDEX` -- neither an expansion nor a refusal.
+    """
+
+    def test_a_degenerate_base_expands_to_its_acgt_set(self) -> None:
+        assert expand_iupac("GGWCC") == ("GGACC", "GGTCC")
+
+    def test_a_pure_acgt_pattern_expands_to_itself(self) -> None:
+        """Every motif the catalog declares today is this case, and must be free."""
+        assert expand_iupac("GGTCTC") == ("GGTCTC",)
+
+    def test_expansion_precedes_the_reverse_complement_closure(self) -> None:
+        """The order is the whole fix, and this is the case that proves it.
+
+        `reverse_complement` is `str.translate`, which leaves an unmapped
+        character ALONE. Complementing `RGATC` first yields `GATCR`, whose
+        expansion is {GATCA, GATCG} -- a silently WRONG set, forbidding sequences
+        nobody asked to forbid and permitting the two that were. Expanding first
+        gives the true complements {GATCT, GATCC}.
+        """
+        got = expand_forbidden(["RGATC"])
+        assert got == ("AGATC", "GATCC", "GATCT", "GGATC")
+        assert "GATCA" not in got
+        assert "GATCG" not in got
+
+    def test_reverse_complement_alone_would_have_produced_the_wrong_set(self) -> None:
+        """Pins the bug this replaced, so nobody reintroduces the old order."""
+        assert reverse_complement("RGATC") == "GATCR"  # R passed through uncomplemented
+        assert set(expand_iupac("GATCR")) != {"GATCT", "GATCC"}
+
+    def test_a_character_that_is_not_iupac_is_refused_by_name(self) -> None:
+        with pytest.raises(ValueError, match="not an IUPAC") as exc:
+            expand_forbidden(["GGXCC"])
+        assert "GGXCC" in str(exc.value)
+        assert "'X'" in str(exc.value)
+
+    def test_an_empty_pattern_is_refused(self) -> None:
+        """An empty motif matches everywhere: it would forbid every codon."""
+        with pytest.raises(ValueError, match="empty"):
+            expand_forbidden([""])
+
+    def test_an_unbounded_expansion_is_refused_rather_than_built(self) -> None:
+        """A silent exponential reads as a hung solver. Refuse, and say why."""
+        with pytest.raises(ValueError, match="over the cap") as exc:
+            expand_forbidden(["N" * 8])
+        assert "NNNNNNNN" in str(exc.value)
+        assert "65536" in str(exc.value)
+        assert str(MAX_PATTERN_EXPANSION) in str(exc.value)
+
+    def test_a_pattern_exactly_at_the_cap_is_accepted(self) -> None:
+        """The cap is a ceiling, not a strict bound -- 4**5 == 1024 must pass."""
+        assert len(expand_iupac("N" * 5)) == MAX_PATTERN_EXPANSION
+
+    def test_lowercase_is_accepted(self) -> None:
+        assert expand_iupac("ggwcc") == ("GGACC", "GGTCC")
+
+    def test_the_solver_and_the_oracle_agree_on_expansion(self) -> None:
+        """The solver keeps its OWN table rather than importing the validator's.
+
+        `tests/data_integrity/test_oracle_independence.py` keeps `verify.py` off
+        every lane's code path; importing its expander here would defeat that
+        pointing the other way, because one transposed row would then be
+        invisible -- the design and its check would forbid the same wrong set.
+        Two tables plus this test is the trade: divergence fails loudly here.
+        """
+        from bt5.verify import IUPAC_EXPANSION
+        from bt5.verify import expand_iupac as oracle_expand_iupac
+
+        assert IUPAC_CODES == IUPAC_EXPANSION
+        vector = [
+            "GGTCTC",  # BsaI, pure ACGT
+            "GGWCC",  # AvaII
+            "RGATC",
+            "MAGGTRAGT",  # splice donor consensus
+            "GCCRCCATGG",  # Kozak-like
+            "BDHVN",  # every three- and four-fold code in one pattern
+            "acgt",  # case
+            "AYCGRTSWKM",
+        ]
+        for pattern in vector:
+            assert list(expand_iupac(pattern)) == oracle_expand_iupac(pattern), pattern
+
+    def test_a_forbidden_iupac_motif_is_avoided_on_both_strands(self, env: tuple) -> None:
+        """End to end: the greedy solver honours a degenerate motif."""
+        code, u = env
+        protein = "MKLIWQRSTVNDEYFP"
+        dna = back_translate(protein, code, forbidden=["GGWCC"], score=cai_scorer(u.w))
+        assert code.translate(dna)[:-1] == protein
+        for motif in ("GGACC", "GGTCC"):
+            assert motif not in dna
+            assert reverse_complement(motif) not in dna
+
+
+#: Lengths cap at 5 so the widest pattern (NNNNN) is exactly MAX_PATTERN_EXPANSION,
+#: keeping the property about expansion CORRECTNESS rather than about the cap.
+iupac_patterns = st.text(alphabet=sorted(IUPAC_CODES), min_size=1, max_size=5)
+
+
+@given(pattern=iupac_patterns)
+def test_every_expansion_member_is_acgt_and_matches_position_by_position(
+    pattern: str,
+) -> None:
+    members = expand_iupac(pattern)
+    for member in members:
+        assert set(member) <= set("ACGT")
+        assert len(member) == len(pattern)
+        for base, code in zip(member, pattern, strict=True):
+            assert base in IUPAC_CODES[code]
+    # Exactly the cartesian product: nothing dropped, nothing duplicated.
+    expected = 1
+    for code in pattern:
+        expected *= len(IUPAC_CODES[code])
+    assert len(set(members)) == len(members) == expected
+
+
+@given(pattern=iupac_patterns)
+def test_the_forbidden_set_is_closed_under_reverse_complement(pattern: str) -> None:
+    """Closed over the EXPANDED set, which is the property rules rely on: a rule
+    lists one forward motif and gets both strands of every sequence it denotes."""
+    closure = expand_forbidden([pattern])
+    assert set(expand_iupac(pattern)) <= set(closure)
+    for motif in closure:
+        assert set(motif) <= set("ACGT")
+        assert reverse_complement(motif) in closure
+    assert closure == tuple(sorted(closure))
 
 
 def test_output_translates_back_and_avoids_forbidden_motifs(env: tuple) -> None:
