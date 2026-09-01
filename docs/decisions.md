@@ -22,6 +22,69 @@ gate enforces* — what was tried, what was rejected, and why. If a decision cha
 
 ---
 
+## 2026-09-01 — `expand_forbidden` supports IUPAC, with a solver-local expansion table
+
+**Decided:** `LatticeTerms.forbidden` is documented IUPAC (`core/spec.py:196`) but
+`expand_forbidden` assumed ACGT, so a degenerate base died as a bare `KeyError` on
+`lattice._BASE_INDEX`. Option 1 from #73 — make the engine match the contract — over
+option 2 (narrow the docstring to ACGT), because option 2 edits `core/spec.py` and needs
+`approved:contract-change` plus an owner merge for what is an M1 bug.
+
+Three parts:
+
+1. **Expansion precedes the reverse-complement closure**, and the order is load-bearing.
+   `core.types.reverse_complement` is `str.translate`, which leaves an unmapped character
+   ALONE, so revcomp-first does not fail on a degenerate pattern — it half-complements.
+   `RGATC` comes back `GATCR`, expanding to {GATCA, GATCG} when the true complements are
+   {GATCT, GATCC}: the wrong sequences forbidden, the right ones permitted, silently.
+   Pinned by `test_expansion_precedes_the_reverse_complement_closure`.
+2. **`MAX_PATTERN_EXPANSION = 1024`, per pattern**, computed from the code widths before
+   any string is built. Five fully-ambiguous positions or ten two-fold ones; every
+   consensus motif a rule would plausibly declare (`MAGGTRAGT` 4, `GCCRCCATGG` 2, `GGWCC`
+   2) sits orders of magnitude below. It excludes the N-spacer interrupted palindromes
+   (BstXI `CCANNNNNNTGG` 4,096; XcmI `CCANNNNNNNNNTGG` 262,144) — those are wildcards,
+   not ambiguity, and enumerating them is the wrong mechanism. The cost is paid twice
+   downstream: an Aho-Corasick state per pattern prefix, then a 64-codon transition row
+   per state in `lattice._codon_transitions`, so an all-N 8-mer reads as a hung solver.
+3. **A `ValueError` naming the pattern** on a non-IUPAC character, an empty pattern, and
+   an over-cap expansion. Eliminating the bare `KeyError` was the point of #73 either way.
+
+**Rejected:**
+- *Importing `verify.IUPAC_EXPANSION` / `verify.expand_iupac` into the solver.*
+  `tests/data_integrity/test_oracle_independence.py` exists to keep the oracle off every
+  lane's code path; sharing the expander defeats it pointing the other way. One
+  transposed row would then be invisible, because the design and its check would forbid
+  the same wrong set — the differential stops differentiating. The solver keeps its own
+  `IUPAC_CODES`, and `test_the_solver_and_the_oracle_agree_on_expansion` asserts the two
+  agree on a shared vector of eight patterns, so divergence fails loudly instead of
+  silently. Two tables plus one test beats one table and no check.
+- *A cap on the TOTAL expanded set rather than per pattern.* The blowup is exponential
+  per pattern and merely linear across them; a rule listing fifty pure-ACGT six-cutters
+  is fine today and must stay fine. A per-pattern cap is also the only one whose error
+  message can name the offender.
+- *Option 2 (refuse IUPAC, narrow the docstring).* Protected path, owner merge, and it
+  removes a capability the contract advertises rather than supplying it.
+
+**Scientific impact: none.** The only two rules populating `forbidden` today —
+`d1_restriction_sites` (six-cutters) and `e1_homopolymers` (A/G runs) — emit pure ACGT,
+which expands to itself. `expand_forbidden(["GGTCTC"]) == ("GAGACC", "GGTCTC")` still
+holds. No shipped sequence changes.
+
+**Follow-up for the design lane:** #71's `build_catalog` guard asserting lattice terms
+are ACGT-only and raising `DesignError` is obsolete once this lands, and can be dropped.
+
+**Evidence:** `packages/engine/src/bt5/solver/reference.py:44` (`IUPAC_CODES`), `:80`
+(`MAX_PATTERN_EXPANSION`), `:83` (`expand_iupac`), `:126` (`expand_forbidden`); the three
+consumers call it unchanged at `reference.py:185`, `lattice.py:145`, `repair.py:449`, and
+are unaffected because expansion preserves pattern LENGTH, which is all
+`_creates_forbidden`'s window bound and `repair.py`'s `guard_len` read. `bash
+scripts/gates.sh` all eight gates exit 0; `HYPOTHESIS_PROFILE=ci` on `tests/invariants`
+and on the two new properties.
+
+**Where:** branch `claude/iupac-forbidden-expansion-orzxz4`, closes #73.
+
+---
+
 ## 2026-08-31 — Model and effort routing, and eight findings it surfaced
 
 **Decided:** Route work by failure mode — capability failure raises the model, diligence
@@ -59,6 +122,60 @@ corrected. The lesson worth keeping: **config that asserts repo facts goes stale
 code**, and nothing gates it — `.claude/verify-setup.sh` checks structure, not truth.
 
 **Where:** branch `claude/model-effort-routing-ovsb5r`.
+
+---
+
+## 2026-09-01 — The §3.5 weighting guard asks per slot, and 2.D4 leaves two presets (#72)
+
+**Decided:** `score/presets.py` `resolve()` guards on `enforcement_for(slot)` for every
+slot the preset's modality admits, not on the `enforcement` ClassVar. The ClassVar is a
+FLOOR — `d4_internal_polya` declares `SOFT` (right for the plasmid case) while its
+`enforcement_for` returns `HARD_REPAIR` on every packaged modality — so the old guard
+asked whether a rule is hard *everywhere* instead of whether it is hard *here*, and
+passed. `LENTIVIRAL` and `AAV` both shipped `WeightEntry("2.D4", 1.0)` through it. Those
+entries are removed; that is the actual fix, and the resolver change is what stops it
+being reintroduced.
+
+**No signature change.** `resolve()` still takes `specs`, not a `DesignContext`.
+`Preset.modality` is the pin, and every `enforcement_for` in the catalog keys on
+`slot.modality` alone. Requiring a `DesignContext` would also be circular:
+`ResolvedPreset.weights` is an *input* to `DesignContext.weights`, so the context does
+not exist yet at the moment `resolve()` runs.
+
+**Rejected:**
+- *Naming one representative host per modality to build the probe slot.* `ContextSlot`
+  cannot be built from a modality alone — `role` and `host` have no defaults and
+  `__post_init__` locks `table_id` to the host — so a single probe means guessing a
+  host. It answers correctly today (no catalog rule keys `gate` or `enforcement_for` on
+  `host` or `role`) and goes silently wrong the first time one does, which is the same
+  shape as the bug being fixed: asking a narrower question than the one that decides the
+  answer. `_slots_admitted_by` enumerates `LOCKED_TRANSLATION_TABLE` × `SlotRole`
+  instead, so nothing is guessed and nothing is defaulted.
+- *Guarding on `is_hard`.* `is_scored` is `is SOFT`, so `is_hard` would have started
+  admitting `REPORT_ONLY` into the weighted sum — a weakening smuggled in as a fix.
+  The guard refuses anything not scored, as before.
+- *Keeping the ClassVar guard and documenting the per-slot check as the consumer's job*
+  (option 2 in #72). `bt5/design/catalog.py` already does that, but a guard that has to
+  be re-implemented by every consumer is not a guarantee. Left untouched — it is PR #71's
+  file.
+- *Deleting `_POLYA_NOTE`'s science with its entry.* The 8–9× functional titer loss is
+  why d4 is HARD in these modalities; it is now a comment above the presets explaining
+  why 2.D4 is deliberately absent, plus the reason the old guard let it through.
+
+**Also corrected:** `LENTIVIRAL.rationale` claimed weight went to "internal polyA on the
+packaged strand, cryptic splice donors". Neither was weighted after this change, and the
+splice claim was never true in any form — there is no splice-donor rule in the catalog at
+all (15 rules, none for splicing), so the prose asserted an objective that does not
+exist. It now names internal polyA only, and says it carries no weight *because* it is
+hard.
+
+**Scientific impact — not "none".** d4 leaves the weighted sum for lentiviral and AAV
+designs, so candidate ranking moves for both. That is the correct direction: the
+constraint is enforced by Tier-B repair plus the independent validator, which refuses to
+emit, and weighting it as well both double-counts it and tells the user a guarantee is a
+trade-off. Owner merges under §7b.
+
+**Where:** branch `claude/hard-rule-weighting-guard-nitkbe`; lane M3, `score/` only.
 
 ---
 
