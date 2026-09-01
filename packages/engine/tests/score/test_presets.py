@@ -48,11 +48,22 @@ def fake_spec(
     enforcement: Enforcement = Enforcement.SOFT,
     default_weight: float = 1.0,
     conflicts_with: tuple[str, ...] = (),
+    gate_returns: bool = True,
+    escalates_to: Enforcement | None = None,
 ) -> type:
     """A Spec-shaped class, built without touching the process-wide registry.
 
     Registering real classes here would leak into every other test in the
     session, which has bitten this suite before.
+
+    `gate_returns` and `escalates_to` exist to separate two things that
+    COINCIDE in every real catalog rule, and therefore cannot be told apart by
+    a test built on one. `escalates_to` sets what `enforcement_for` returns,
+    independently of the class-level `enforcement` floor; `gate_returns` sets
+    whether the rule applies at all. Without them a double's `enforcement_for`
+    just echoes its ClassVar, so a test cannot distinguish "the guard read the
+    ClassVar" from "the guard asked per slot" -- which is the entire question
+    this file exists to settle.
     """
 
     class _Fake:
@@ -84,10 +95,13 @@ def fake_spec(
         # missing them would let the resolver quietly fall back to the ClassVar
         # -- the very read this test file exists to stop it making.
         def gate(self, slot: ContextSlot) -> bool:
-            return True
+            return gate_returns
 
         def enforcement_for(self, slot: ContextSlot) -> Enforcement:
-            return type(self).enforcement
+            # Deliberately NOT `type(self).enforcement` unless asked: a double
+            # that echoes its own ClassVar cannot prove the guard consulted
+            # the slot rather than the class.
+            return escalates_to if escalates_to is not None else type(self).enforcement
 
     _Fake.brief_ref = brief_ref
     _Fake.enforcement = enforcement
@@ -373,11 +387,17 @@ class TestAHardRuleNeverCarriesWeightInTheSlotItIsHardIn:
         preset = a_preset(Modality.PLASMID_TRANSIENT, WeightEntry("2.D4", 0.7))
         assert resolve(preset, [InternalPolyA]).weights == {"d4_internal_polya": 0.7}
 
-    def test_a_rule_gated_off_in_every_slot_is_not_treated_as_hard(self) -> None:
-        """d4 gates off entirely for bacterial hosts. A rule that never applies
-        contributes nothing to that modality's sum, so there is no penalty
-        weight to refuse -- and refusing would block BACTERIAL for a rule that
-        cannot fire in it."""
+    def test_the_guard_scopes_to_the_presets_own_modality(self) -> None:
+        """d4 is HARD_REPAIR under lentiviral yet weightable in a BACTERIAL
+        preset, because the guard asks about the modality in front of it.
+
+        Named for what it actually proves. It was called
+        `test_a_rule_gated_off_in_every_slot_is_not_treated_as_hard`, which it
+        did NOT establish: d4 both gates off AND is soft under bacterial, so
+        the assertion below holds whether or not the guard consults `gate` at
+        all. The gate skip is pinned separately, on a double where the two
+        come apart.
+        """
         rule = InternalPolyA()
         bacterial = ContextSlot(
             role="propagation",
@@ -388,6 +408,67 @@ class TestAHardRuleNeverCarriesWeightInTheSlotItIsHardIn:
         assert not rule.gate(bacterial)
         preset = a_preset(Modality.BACTERIAL_EXPRESSION, WeightEntry("2.D4", 0.7))
         assert resolve(preset, [InternalPolyA]).weights == {"d4_internal_polya": 0.7}
+
+    def test_a_rule_that_gates_off_keeps_its_weight_even_where_it_would_be_hard(
+        self,
+    ) -> None:
+        """Pins the gate skip itself -- `if not gate(slot): continue`.
+
+        No real rule can pin it: every catalog rule that gates off in a slot is
+        also SOFT there, so the branch is invisible to a test built on one.
+        This double gates OFF while `enforcement_for` says HARD_REPAIR, so the
+        two conditions come apart and deleting the skip changes the answer.
+
+        The behaviour: a rule that never fires in this modality contributes
+        nothing to its sum, so there is no penalty weight to refuse. Refusing
+        anyway would block a legitimate weight.
+        """
+        spec = fake_spec(
+            "gates_off",
+            "2.Z1",
+            enforcement=Enforcement.SOFT,
+            default_weight=0.5,
+            gate_returns=False,
+            escalates_to=Enforcement.HARD_REPAIR,
+        )
+        preset = a_preset(Modality.LENTIVIRAL, WeightEntry("2.Z1", 0.5))
+        assert resolve(preset, [spec]).weights == {"gates_off": 0.5}
+
+    def test_a_soft_floor_that_escalates_in_an_active_slot_is_refused(self) -> None:
+        """The same shape as d4, on a double: SOFT ClassVar, gate ON,
+        HARD_REPAIR per slot. Independent of whether d4 keeps its current
+        HARD_MODALITIES, so the invariant survives a change to that rule."""
+        spec = fake_spec(
+            "escalates",
+            "2.Z2",
+            enforcement=Enforcement.SOFT,
+            default_weight=0.5,
+            escalates_to=Enforcement.HARD_REPAIR,
+        )
+        preset = a_preset(Modality.LENTIVIRAL, WeightEntry("2.Z2", 0.5))
+        with pytest.raises(PresetError, match="never by a penalty weight"):
+            resolve(preset, [spec])
+
+    def test_a_hard_classvar_is_refused_even_when_enforcement_for_says_soft(
+        self,
+    ) -> None:
+        """Pins the ClassVar floor check, which nothing else did.
+
+        The ClassVar is the FLOOR: `enforcement_for` escalates from it and must
+        never de-escalate below it. A rule declaring HARD_LATTICE keeps its
+        guarantee no matter what it answers per slot -- so dropping the floor
+        check must not pass silently.
+        """
+        spec = fake_spec(
+            "hard_floor",
+            "2.Z3",
+            enforcement=Enforcement.HARD_LATTICE,
+            default_weight=0.5,
+            escalates_to=Enforcement.SOFT,
+        )
+        preset = a_preset(Modality.LENTIVIRAL, WeightEntry("2.Z3", 0.5))
+        with pytest.raises(PresetError, match="never by a penalty weight"):
+            resolve(preset, [spec])
 
     def test_every_shipped_weight_is_scored_in_every_slot_its_modality_admits(
         self,
