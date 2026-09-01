@@ -43,6 +43,22 @@ not own, **stop and open an issue** — do not reach into another lane.
 | S5 | [CLI + packaging](s5-cli-packaging.md) | `claude/s5-cli-packaging` | `bt5/cli.py`, `packaging/**`, `packages/engine/tests/cli/**` | **`pyproject.toml`** |
 | S6 | [Host data + backbone](s6-host-data.md) | `claude/s6-host-data` | `data/**`, `tests/data/backbones/**` | **`data/`** |
 
+### Branches are not pre-created, on purpose
+
+Each session cuts its own branch from a freshly fetched `main`, with the command in its
+prompt. Nobody makes the six up front.
+
+A branch created before its session starts is born pointing at whatever `main` was that
+day, and `main` moves. This buildout's own first PR (#86) is the worked example: it was
+cut from `628e130`, then #84 and #85 merged underneath it — costing a modify/delete
+conflict on `docs/decisions.md` and invalidating guidance in all six prompts, which had
+to be rewritten before it could land. Six branches made in advance would each carry that
+same debt, and the failure is quiet: a session that finds its branch already existing
+will `git checkout` it and start work without ever asking whether `main` moved.
+
+`git checkout -B` from a just-fetched `origin/main` costs one command and cannot go
+stale. Reserving the names buys nothing — no one else is pushing to this repo.
+
 ### The three global mutexes
 
 1. **`pyproject.toml` — S5 only.** Every dependency is already declared (`server`,
@@ -131,7 +147,9 @@ What one session may rely on another not breaking.
   PR — the advisory `pre-pr-attest` check (added in #84) reads it. An attestation names
   one commit and a later push makes it stale by design. Never attest a SHA that was not
   just reviewed.
-- **`main` is green at `628e130`.** Issues #80 and #83 claim otherwise and are **false
+- **Check main is green before you start, and do not trust a SHA written here.** At
+  the time of writing main was `628e130`; it moved twice before this PR even merged.
+  Issues #80 and #83 claim main is red and are **false
   alarms**: `ci.yml`'s `main-broken` job fires on `cancelled` as well as `failure`,
   and `concurrency.cancel-in-progress` cancels the prior run on rapid merges. Every
   job in both issues reads `cancelled`, none `failure`. Do not chase them and do not

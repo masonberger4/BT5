@@ -18,7 +18,17 @@ getting the file format wrong.
 Run `/bootstrap` — a fresh checkout has no `.venv`, and `gates.sh` exit **10** means
 BROKEN, not a code failure. Then `CLAUDE.md`, then `docs/buildout/README.md`.
 
-Your branch: **`claude/s6-host-data`**, cut from `main` (green at `628e130`).
+Your branch: **`claude/s6-host-data`**. Cut it yourself, from a
+**freshly fetched** main — do not reuse a branch someone made earlier, and do not
+assume main is where it was when this prompt was written:
+
+```bash
+git remote prune origin
+git fetch -q origin main && git checkout -B claude/s6-host-data origin/main
+```
+
+`git fetch --prune origin main` does **not** clear a stale ref — pruning is bounded by
+the refspec, so that form prunes only `origin/main` (CLAUDE.md §7a).
 
 ## The situation
 
