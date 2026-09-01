@@ -53,6 +53,47 @@ class TestAutomaton:
         assert a.consume(0, "GAATTCGGATCC")[1] is False
 
 
+class TestDegenerateForbiddenMotifs:
+    """`LatticeTerms.forbidden` is documented IUPAC, so Tier A has to mean it.
+
+    The automaton itself stays ACGT-only -- its goto table is indexed by base --
+    so the expansion happens in `expand_forbidden` before construction, and a
+    degenerate base can no longer reach `_BASE_INDEX` and raise a bare KeyError.
+    """
+
+    def test_the_dp_honours_a_degenerate_motif_on_both_strands(self, env: tuple) -> None:
+        code, u = env
+        protein = "MKLIWQRSTVNDEYFPGHACM"
+        dna = optimal_back_translate(
+            protein, code, forbidden=["GGWCC"], score=cai_lattice_scorer(u.w)
+        )
+        assert code.translate(dna)[:-1] == protein
+        # Both members of GGWCC, and the reverse complement of each.
+        for motif in ("GGACC", "GGTCC"):
+            assert motif not in dna
+
+    def test_a_degenerate_motif_agrees_with_the_greedy_reference(self, env: tuple) -> None:
+        """Both tiers read the same expanded set, so both must refuse the same
+        sequences -- the differential that makes the reference solver useful."""
+        code, u = env
+        protein = "MAVLGKSTED"
+        dp = optimal_back_translate(
+            protein, code, forbidden=["GGWCC", "RGATC"], score=cai_lattice_scorer(u.w)
+        )
+        greedy = back_translate(protein, code, forbidden=["GGWCC", "RGATC"], score=cai_scorer(u.w))
+        for dna in (dp, greedy):
+            for motif in ("GGACC", "GGTCC", "AGATC", "GGATC", "GATCT", "GATCC"):
+                assert motif not in dna, f"{motif} survived in {dna}"
+
+    def test_an_unexpandable_pattern_is_refused_before_the_automaton(self, env: tuple) -> None:
+        """A refusal naming the pattern, never a KeyError from inside Tier A."""
+        code, _ = env
+        with pytest.raises(ValueError, match="NNNNNNNN"):
+            optimal_back_translate("MK", code, forbidden=["N" * 8])
+        with pytest.raises(ValueError, match="not an IUPAC"):
+            optimal_back_translate("MK", code, forbidden=["GGXCC"])
+
+
 class TestExactness:
     def test_output_is_valid(self, env: tuple) -> None:
         code, u = env

@@ -28,10 +28,13 @@ from bt5.solver.lattice import (
 )
 from bt5.solver.pipeline import OptimizeResult, optimize
 from bt5.solver.reference import (
+    IUPAC_CODES,
+    MAX_PATTERN_EXPANSION,
     CodonScorer,
     back_translate,
     cai_scorer,
     expand_forbidden,
+    expand_iupac,
     longest_repeat,
     repeat_breaking_scorer,
 )
@@ -47,6 +50,8 @@ from bt5.solver.repair import (
 )
 
 __all__ = [
+    "IUPAC_CODES",
+    "MAX_PATTERN_EXPANSION",
     "Assembler",
     "Automaton",
     "BreachFinder",
@@ -67,6 +72,7 @@ __all__ = [
     "combine_scorers",
     "default_services",
     "expand_forbidden",
+    "expand_iupac",
     "gc_steering_scorer",
     "localize",
     "longest_repeat",

@@ -32,18 +32,118 @@ mutable state to desynchronise from the search.
 """
 
 
-def expand_forbidden(patterns: Sequence[str]) -> tuple[str, ...]:
-    """Close the pattern set under reverse complement.
+#: IUPAC nucleotide codes, each mapped to the concrete bases it denotes.
+#:
+#: Deliberately a SECOND copy of the table `verify.py` carries. The oracle must not
+#: share a code path with what it validates -- `tests/data_integrity/
+#: test_oracle_independence.py` enforces that direction, and importing the oracle's
+#: expander here would defeat it pointing the other way: one transposed row would
+#: then be invisible, because both the design and its check would forbid the same
+#: wrong set. `tests/solver/test_reference.py` asserts the two agree on a shared
+#: vector of patterns, so divergence fails loudly instead.
+IUPAC_CODES: Mapping[str, str] = {
+    "A": "A",
+    "C": "C",
+    "G": "G",
+    "T": "T",
+    "R": "AG",
+    "Y": "CT",
+    "S": "GC",
+    "W": "AT",
+    "K": "GT",
+    "M": "AC",
+    "B": "CGT",
+    "D": "AGT",
+    "H": "ACT",
+    "V": "ACG",
+    "N": "ACGT",
+}
 
-    Rules declare FORWARD motifs only. Doing the closure once, here, is what makes
+#: Most concrete sequences one degenerate pattern may expand to before we refuse.
+#:
+#: The blowup is exponential in the number of degenerate positions -- an all-N
+#: 8-mer is 65,536 patterns -- and it is paid twice over downstream: the
+#: Aho-Corasick trie holds a state per pattern prefix, and `lattice.
+#: _codon_transitions` then materialises a row of 64 codon transitions for every
+#: one of those states. A silent exponential there reads as a hung solver, which
+#: is a far worse failure than a refusal naming the pattern.
+#:
+#: 1024 is set where it is because it admits every degenerate motif a rule would
+#: plausibly declare while excluding the shapes that are not really expansions at
+#: all. Five fully-ambiguous positions fit, or ten two-fold ones; the consensus
+#: motifs rules reach for -- a splice donor MAGGTRAGT (4), a Kozak-like
+#: GCCRCCATGG (2), a GGWCC (2) -- sit two to three orders of magnitude below.
+#: What it excludes is the N-spacer interrupted palindrome (BstXI CCANNNNNNTGG at
+#: 4,096, XcmI CCANNNNNNNNNTGG at 262,144). Those are wildcards rather than
+#: ambiguity, and enumerating them is the wrong mechanism; refusing is honest
+#: until the automaton grows one.
+MAX_PATTERN_EXPANSION = 1024
+
+
+def expand_iupac(pattern: str) -> tuple[str, ...]:
+    """Expand one IUPAC pattern to the concrete ACGT sequences it denotes.
+
+    `GGWCC` becomes `GGACC` and `GGTCC`. A pure-ACGT pattern -- which is every
+    motif the catalog declares today -- expands to itself, at no cost.
+
+    Raises ValueError, naming the pattern, rather than letting a degenerate base
+    reach `Automaton.__init__` and die there as a bare `KeyError` on
+    `_BASE_INDEX`: on a character that is not an IUPAC code at all, on an empty
+    pattern (an empty motif matches everywhere, so it would forbid every codon
+    and report the design infeasible), and on an expansion above
+    `MAX_PATTERN_EXPANSION`. The size is computed from the code widths BEFORE any
+    string is built, so the refusal costs nothing and the blowup never happens.
+    """
+    if not pattern:
+        raise ValueError(
+            "forbidden pattern is empty; an empty motif matches at every position, "
+            "which would forbid every codon rather than any sequence"
+        )
+    size = 1
+    options: list[str] = []
+    for ch in pattern.upper():
+        bases = IUPAC_CODES.get(ch)
+        if bases is None:
+            raise ValueError(
+                f"forbidden pattern {pattern!r} contains {ch!r}, which is not an IUPAC "
+                f"nucleotide code (expected one of {''.join(sorted(IUPAC_CODES))})"
+            )
+        options.append(bases)
+        size *= len(bases)
+    if size > MAX_PATTERN_EXPANSION:
+        raise ValueError(
+            f"forbidden pattern {pattern!r} expands to {size} concrete sequences, over the "
+            f"cap of {MAX_PATTERN_EXPANSION}; express it as narrower motifs, or as a rule "
+            f"that scores the construct rather than a lattice term the automaton enumerates"
+        )
+
+    out = [""]
+    for bases in options:
+        out = [prefix + b for prefix in out for b in bases]
+    return tuple(out)
+
+
+def expand_forbidden(patterns: Sequence[str]) -> tuple[str, ...]:
+    """Expand IUPAC patterns to ACGT, then close THAT set under reverse complement.
+
+    Rules declare FORWARD motifs only, in the IUPAC alphabet `LatticeTerms.
+    forbidden` advertises. Doing both steps once, here, is what makes
     reverse-strand hits impossible to miss without every rule author remembering
     to think about them.
+
+    The order is load-bearing and not interchangeable. `core.types.
+    reverse_complement` is `str.translate`, and `str.translate` leaves an unmapped
+    character ALONE -- so reverse-complementing a degenerate pattern first does not
+    fail, it half-complements. `RGATC` would come back as `GATCR`, whose expansion
+    is {GATCA, GATCG}; the true reverse complements are {GATCT, GATCC}. Expanding
+    first means every string handed to `reverse_complement` is already ACGT, where
+    the translation table is total.
     """
     out: set[str] = set()
     for p in patterns:
-        u = p.upper()
-        out.add(u)
-        out.add(reverse_complement(u))
+        for concrete in expand_iupac(p):
+            out.add(concrete)
+            out.add(reverse_complement(concrete))
     return tuple(sorted(out))
 
 
