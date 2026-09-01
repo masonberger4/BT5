@@ -25,10 +25,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from typing import get_args
 
-from bt5.core.context import Modality
+from bt5.core.context import LOCKED_TRANSLATION_TABLE, ContextSlot, Modality, SlotRole
 from bt5.core.registry import all_specs, discover
-from bt5.core.spec import Spec
+from bt5.core.spec import Enforcement, Spec
 
 
 class PresetError(ValueError):
@@ -129,15 +130,96 @@ def _index_by_ref(specs: Iterable[type[Spec]]) -> Mapping[str, type[Spec]]:
     return index
 
 
+#: The slot roles `ContextSlot` admits, read from the contract rather than
+#: retyped, so a role added to `core` is probed without editing this file.
+_PROBE_ROLES: tuple[SlotRole, ...] = get_args(SlotRole)
+
+
+def _slots_admitted_by(modality: Modality) -> tuple[ContextSlot, ...]:
+    """Every slot this modality could occur in, for asking `enforcement_for`.
+
+    A preset pins a MODALITY, not a slot: `Preset.modality` is the whole of
+    what it knows about the context its weights will run in. `ContextSlot`
+    cannot be built from that alone -- `role` and `host` have no defaults, and
+    `__post_init__` locks `table_id` to the host, because a guessed host is a
+    guessed genetic code (CLAUDE.md 3.1).
+
+    So this enumerates rather than guesses. Naming one representative host per
+    modality would answer correctly today -- no rule in the catalog keys
+    enforcement on `host` or `role` -- and would go silently wrong the first
+    time one does, which is the same failure this whole guard exists to fix:
+    asking a narrower question than the one that decides the answer.
+    Enumerating makes the guard's claim exactly "not scored in ANY slot this
+    modality admits", and errs toward refusing a weight. That direction is
+    deliberate: a refused weight costs a preset an objective and says so
+    loudly, while a permitted one puts a constraint the validator already
+    enforces into the weighted sum, silently.
+
+    Pairs come from `LOCKED_TRANSLATION_TABLE`, which IS the declared set of
+    host/table combinations, so no table is defaulted here either.
+    """
+    return tuple(
+        ContextSlot(role=role, host=host, modality=modality, table_id=table_id)
+        for host, table_id in LOCKED_TRANSLATION_TABLE.items()
+        for role in _PROBE_ROLES
+    )
+
+
+def _unscored_enforcement(spec: type[Spec], modality: Modality) -> Enforcement | None:
+    """The enforcement keeping `spec` out of the weighted sum, or None if scored.
+
+    Asks BOTH questions and returns the first answer that bars a weight. The
+    class-level `enforcement` is only the FLOOR; `enforcement_for(slot)` is
+    what the solver actually routes on (`solver/catalog.py:_enforcement_of`),
+    and the two disagree exactly where it matters -- `d4_internal_polya`'s
+    ClassVar is SOFT while its `enforcement_for` returns HARD_REPAIR on every
+    packaged modality. Reading the ClassVar alone is how two shipped presets
+    came to weight a rule that is hard in the modality they are pinned to.
+
+    A rule that `gate`s off in a slot is skipped: it contributes nothing to
+    that slot's sum, so it is not being weighted there either.
+    """
+    if not spec.enforcement.is_scored:
+        return spec.enforcement
+    try:
+        rule = spec()
+    except TypeError:
+        # A spec needing constructor arguments cannot be probed per slot. The
+        # ClassVar floor above is then all this guard can honestly assert.
+        return None
+    enforcement_for = getattr(rule, "enforcement_for", None)
+    if enforcement_for is None:
+        return None
+    gate = getattr(rule, "gate", None)
+    for slot in _slots_admitted_by(modality):
+        if gate is not None and not gate(slot):
+            continue
+        # Annotated because `enforcement_for` came through getattr and is
+        # therefore Any: a rule returning something that is not an Enforcement
+        # would otherwise slip through this guard untyped.
+        level: Enforcement = enforcement_for(slot)
+        if not level.is_scored:
+            return level
+    return None
+
+
 def resolve(preset: Preset, specs: Iterable[type[Spec]] | None = None) -> ResolvedPreset:
     """Bind a preset's brief_refs to the spec ids present in this build.
 
-    Raises when the preset weights a rule that is not SOFT. That is not a
-    preference: `Enforcement` exists so that a hard constraint can never be
-    enforced by a penalty weight, and a preset assigning weight to a
-    HARD_LATTICE or HARD_REPAIR rule is precisely the move it forbids -- it
-    would put a term in the weighted sum for something the solver has already
-    guaranteed, and imply to the user that the guarantee is a trade-off.
+    Raises when the preset weights a rule that is not SOFT **in the modality
+    the preset is pinned to**. That is not a preference: `Enforcement` exists
+    so that a hard constraint can never be enforced by a penalty weight, and a
+    preset assigning weight to a HARD_LATTICE or HARD_REPAIR rule is precisely
+    the move it forbids -- it would put a term in the weighted sum for
+    something the solver has already guaranteed, and imply to the user that
+    the guarantee is a trade-off.
+
+    Enforcement is per SLOT, not per class, so this asks per slot. Reading the
+    class-level `enforcement` was a guard that could not see the case it was
+    written for: a rule whose floor is SOFT and whose `enforcement_for`
+    escalates. `preset.modality` is what makes the question answerable here
+    without a `DesignContext` -- which could not be required in any case,
+    since `ResolvedPreset.weights` is an INPUT to `DesignContext.weights`.
     """
     if specs is None:
         # Autodiscovery is idempotent, and skipping it here would make an
@@ -153,13 +235,15 @@ def resolve(preset: Preset, specs: Iterable[type[Spec]] | None = None) -> Resolv
         if spec is None:
             unimplemented.append(entry.brief_ref)
             continue
-        if entry.weight and not spec.enforcement.is_scored:
+        unscored = _unscored_enforcement(spec, preset.modality)
+        if entry.weight and unscored is not None:
             raise PresetError(
                 f"{preset.id} gives {spec.id} ({entry.brief_ref}) weight "
-                f"{entry.weight}, but it is {spec.enforcement.value}. Hard "
-                f"constraints are guaranteed by construction or by repair plus "
-                f"the independent validator, never by a penalty weight. Use "
-                f"steering_weight on the rule if the DP needs a nudge."
+                f"{entry.weight}, but it is {unscored.value} in the "
+                f"{preset.modality.value} modality this preset is pinned to. "
+                f"Hard constraints are guaranteed by construction or by repair "
+                f"plus the independent validator, never by a penalty weight. "
+                f"Use steering_weight on the rule if the DP needs a nudge."
             )
         if entry.weight != spec.default_weight and not entry.note.strip():
             raise PresetError(
@@ -194,15 +278,24 @@ _REPEAT_NOTE = (
     "carries more weight here than in a preset with no packaging step."
 )
 
-_POLYA_NOTE = (
-    "Above the rule's own default, because in a packaged modality this is not a "
-    "preference. An internal polyA signal raised expression 3-6.5x and cut "
-    "FUNCTIONAL TITER 8-9x with CMV or EF1a (PubMed 18627247): the genome is "
-    "truncated before packaging, so the assay a user runs says the construct got "
-    "BETTER while the thing they need collapsed. d4's own default weight has to "
-    "cover the plasmid case too, where the same hexamer costs a little "
-    "expression and nothing else."
-)
+# Why neither packaging preset weights 2.D4 (internal polyA), which is the
+# hazard that most defines them.
+#
+# Because in these modalities it is not a trade-off. An internal polyA signal
+# raised expression 3-6.5x and cut FUNCTIONAL TITER 8-9x with CMV or EF1a
+# (PubMed 18627247): the genome is truncated before packaging, so the assay a
+# user runs says the construct got BETTER while the thing they need collapsed.
+# `d4_internal_polya.enforcement_for` therefore returns HARD_REPAIR on every
+# packaged modality -- removed by Tier-B repair and proven by the independent
+# validator, which refuses to emit rather than pricing a hexamer against
+# expression. A weight on top of that would add a term for something already
+# guaranteed and tell the user it is a slider (CLAUDE.md 3.5).
+#
+# These presets DID carry `WeightEntry("2.D4", 1.0, ...)`. It survived because
+# `resolve()` read d4's class-level `enforcement`, which is SOFT -- the floor
+# for the plasmid case, where the same hexamer costs a little expression and
+# nothing else -- instead of `enforcement_for(slot)`, which is what the solver
+# routes on. The guard now asks per slot, so this cannot be reintroduced.
 
 _NATIVE_NOTE = (
     "Weighted below the mechanical objectives on purpose. Nine benchmarked "
@@ -218,16 +311,19 @@ LENTIVIRAL: Preset = Preset(
     title="Lentiviral vector, HEK293 packaging",
     rationale=(
         "The compound case BT5 exists for: propagated in E. coli, packaged in a "
-        "producer line, expressed in a target cell. Weight goes to the things "
-        "that are mechanically real and that codon choice actually controls -- "
-        "short repeats the recA- strain does not cover, internal polyA on the "
-        "packaged strand, cryptic splice donors -- rather than to expression "
-        "proxies whose published ceiling is ~14% of protein-level variance."
+        "producer line, expressed in a target cell. Weight goes to the short "
+        "repeats the recA- strain does not cover, which are mechanically real "
+        "and which codon choice actually controls, rather than to expression "
+        "proxies whose published ceiling is ~14% of protein-level variance. "
+        "The hazard that most defines this modality -- an internal polyA "
+        "signal on the packaged strand -- carries no weight here precisely "
+        "because it is not a trade-off: here it is hard, removed by repair and "
+        "proven by the independent validator, which refuses to emit rather "
+        "than pricing a truncated genome against expression."
     ),
     modality=Modality.LENTIVIRAL,
     entries=(
         WeightEntry("2.F2", 1.0, _REPEAT_NOTE),
-        WeightEntry("2.D4", 1.0, _POLYA_NOTE),
         WeightEntry("2.C1", 0.2, _NATIVE_NOTE),
         WeightEntry("2.C3", 0.3, _NATIVE_NOTE),
     ),
@@ -254,7 +350,6 @@ AAV: Preset = Preset(
     modality=Modality.AAV,
     entries=(
         WeightEntry("2.F2", 1.0, _REPEAT_NOTE),
-        WeightEntry("2.D4", 1.0, _POLYA_NOTE),
         WeightEntry("2.C1", 0.2, _NATIVE_NOTE),
         WeightEntry("2.C3", 0.3, _NATIVE_NOTE),
     ),
