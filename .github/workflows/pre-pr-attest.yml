@@ -1,0 +1,134 @@
+# pre-pr-attest -- did /pre-pr actually run against the commit being merged?
+#
+# ADVISORY ON PURPOSE. This job is deliberately NOT a required check yet: it is
+# absent from `.github/rulesets/main-protection.json` and absent from
+# `required-checks.needs` in ci.yml. That is a decision, not an oversight.
+#
+#   To promote it, add ONE entry to main-protection.json:
+#       { "context": "pre-pr-attest", "integration_id": 15368 }
+#   and nothing else. It is a PARALLEL required context, never an input to
+#   `required-checks` -- that gate counts `skipped` as failure (ci.yml:295-320),
+#   which is why `main-broken` is excluded from it too.
+#   Precondition: a week of clean runs with the re-arm behaviour confirmed on a
+#   real push.
+#
+# WHY THIS EXISTS. `/pre-pr` runs code-reviewer, rule-auditor and
+# security-reviewer as subagents inside one Claude session. Their verdicts live
+# in that session's transcript, so they are invisible to GitHub and to every
+# other session -- and `.claude/.pre-pr-marker` is gitignored (.gitignore:19) and
+# digests `git status` + `git diff HEAD`, which are empty and constant on a clean
+# CI checkout. So the local marker cannot be the evidence. A comment naming the
+# head SHA can be.
+#
+# WHAT IT PROVES, AND WHAT IT DOES NOT. It proves a claim was made on the
+# record, against a specific SHA, where the owner and every session can see it.
+# It does NOT prove the review was done honestly -- Claude posts the comment.
+# The gain is that SKIPPING BECOMES VISIBLE, which the local hook never achieved:
+# PR #79 merged as 628e130 with /pre-pr never having run and nothing said so.
+#
+# `/pre-pr` and `/pre-pr-bypass` are separate commands on purpose. Both come from
+# the owner's account, so the author cannot distinguish them -- the command can,
+# and the PR timeline then records which one happened.
+
+name: pre-pr-attest
+
+# `pull_request_target` runs THIS FILE FROM THE BASE BRANCH, so a pull request
+# cannot edit the check to make itself pass. There is deliberately no checkout
+# step: this job never executes PR code.
+#
+# No `paths:`/`paths-ignore:` filter, ever -- check-workflow-gate.py rejects one
+# on any workflow, because a required check that never reports blocks the pull
+# request forever with no error (CLAUDE.md section 9).
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: pre-pr-attest-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pre-pr-attest:
+    name: pre-pr-attest
+    # Skips only for a comment on a plain issue, which is associated with no
+    # pull request and therefore reports no check anywhere. On every
+    # pull_request_target event this job always runs and always reports, which
+    # is what makes it safe to promote to a required context later.
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: An attestation must name the CURRENT head SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          # Read the head from the API rather than the event payload: on an
+          # issue_comment event the payload carries no head, and on a stale
+          # re-run the payload's head may no longer be the tip.
+          HEAD_SHA="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
+          echo "pull request #$PR, current head $HEAD_SHA"
+
+          # `--paginate` emits one array per page; re-slurp into a single array.
+          gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[]' \
+            | jq -s '.' > /tmp/comments.json
+          echo "$(jq 'length' /tmp/comments.json) comment(s) on this pull request"
+
+          # A drive-by commenter must not be able to attest for someone else's
+          # branch, so only an author who can write to this repository counts.
+          # The SHA must be the full 40 characters: a short SHA would let an
+          # attestation for one commit satisfy another that shares its prefix.
+          #
+          # The trailing class must include \r and \n. A comment almost always
+          # has prose around the command, so requiring space-tab-or-end-of-string
+          # after the SHA silently failed to match every attestation that was not
+          # the entire comment body -- caught by the fixture test below.
+          claims() {
+            jq -r --arg sha "$HEAD_SHA" --arg cmd "$1" --argjson who "$2" '
+              [ .[]
+                | select(.author_association as $a | $who | index($a))
+                | .body
+                | select(test("(^|\\r?\\n)[ \\t]*" + $cmd + "[ \\t]+" + $sha + "([ \\t\\r\\n]|$)"))
+              ] | length' /tmp/comments.json
+          }
+
+          ATTESTED="$(claims '/pre-pr' '["OWNER","COLLABORATOR","MEMBER"]')"
+          BYPASSED="$(claims '/pre-pr-bypass' '["OWNER"]')"
+
+          if [ "$ATTESTED" != "0" ]; then
+            echo "OK: /pre-pr was attested for $HEAD_SHA"
+            exit 0
+          fi
+
+          if [ "$BYPASSED" != "0" ]; then
+            echo "OK: the owner bypassed /pre-pr for $HEAD_SHA"
+            echo "::warning::/pre-pr did not run on this head; the owner waived it deliberately"
+            exit 0
+          fi
+
+          echo "::error::No /pre-pr attestation for the current head $HEAD_SHA"
+          cat <<EOF
+
+          /pre-pr has not been attested for the commit this pull request would
+          merge. Run /pre-pr, then comment exactly:
+
+              /pre-pr $HEAD_SHA
+
+          An attestation names one commit. Pushing again makes it stale on
+          purpose -- a review of the previous tree says nothing about this one.
+
+          To merge without the review pass, the repository owner may comment:
+
+              /pre-pr-bypass $HEAD_SHA
+
+          which records the waiver on the timeline instead of hiding it.
+          EOF
+          exit 1
