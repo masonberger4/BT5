@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
-from bt5.core.context import Modality
+from bt5.core.context import ContextSlot, HostId, Modality, SlotRole
+from bt5.core.registry import all_specs, discover
 from bt5.core.spec import (
     Citation,
     Direction,
@@ -20,8 +21,24 @@ from bt5.core.spec import (
     LocalizationPolicy,
     RepairPolicy,
 )
+from bt5.rules.catalog.d4_internal_polya import InternalPolyA
 from bt5.score import PRESETS, Preset, PresetError, WeightEntry, preset_for, resolve
-from bt5.score.presets import BACTERIAL, LENTIVIRAL, get
+from bt5.score.presets import BACTERIAL, LENTIVIRAL, _slots_admitted_by, get
+
+
+def lentiviral_slot(role: SlotRole = "producer") -> ContextSlot:
+    """A real packaging slot. HEK293 is locked to NCBI table 1."""
+    return ContextSlot(role=role, host=HostId.HEK293, modality=Modality.LENTIVIRAL, table_id=1)
+
+
+def a_preset(modality: Modality, *entries: WeightEntry) -> Preset:
+    return Preset(
+        id="p",
+        title="p",
+        rationale="a rationale long enough to be an argument rather than a label",
+        modality=modality,
+        entries=entries,
+    )
 
 
 def fake_spec(
@@ -62,6 +79,15 @@ def fake_spec(
         # it also binds.
         brief_ref: ClassVar[str] = ""
         engine_calibration: ClassVar[str | None] = None
+
+        # `Spec` requires both, and `resolve()` now asks them per slot. A double
+        # missing them would let the resolver quietly fall back to the ClassVar
+        # -- the very read this test file exists to stop it making.
+        def gate(self, slot: ContextSlot) -> bool:
+            return True
+
+        def enforcement_for(self, slot: ContextSlot) -> Enforcement:
+            return type(self).enforcement
 
     _Fake.brief_ref = brief_ref
     _Fake.enforcement = enforcement
@@ -280,11 +306,18 @@ class TestShippedWeights:
                     missing.append(f"{preset.id} -> {entry.brief_ref}")
         assert not missing, f"presets weight brief rows that do not exist: {missing}"
 
-    def test_the_packaging_presets_weight_internal_polya(self) -> None:
-        """The measured 8-9x functional titer loss, which is the whole reason
-        these two presets differ from the plasmid case."""
+    def test_the_packaging_presets_do_not_weight_internal_polya(self) -> None:
+        """This asserted the opposite until issue #72, and was wrong.
+
+        The measured 8-9x functional titer loss is exactly why 2.D4 must NOT be
+        weighted here. `enforcement_for` makes d4 HARD_REPAIR in both packaged
+        modalities, so it is removed by Tier-B repair and proven by the
+        independent validator, which refuses to emit. A weight on top of that
+        adds a term to the sum for something already guaranteed and tells the
+        user the guarantee is a slider.
+        """
         for preset in (get("lentiviral_hek293"), get("aav_hek293")):
-            assert "2.D4" in preset.by_ref
+            assert "2.D4" not in preset.by_ref
 
     def test_no_shipped_preset_weights_a_hard_rule_in_this_build(self) -> None:
         """Runs resolve() against the live registry, which is what the pipeline
@@ -292,3 +325,93 @@ class TestShippedWeights:
         allowed to put a hard rule in the weighted sum."""
         for preset in PRESETS:
             resolve(preset)  # raises if any bound rule is not SOFT
+
+
+class TestAHardRuleNeverCarriesWeightInTheSlotItIsHardIn:
+    """The invariant issue #72 was about, pinned on its own.
+
+    `Enforcement` is per SLOT, not per class. `resolve()` used to read the
+    class-level `enforcement` ClassVar with no slot in scope, so it asked
+    whether a rule is hard EVERYWHERE instead of whether it is hard HERE --
+    and passed a preset weighting a rule that is hard in the very modality the
+    preset is pinned to.
+
+    d4_internal_polya is the case, and it is not academic: both packaging
+    presets shipped `WeightEntry("2.D4", 1.0)` past the old guard.
+    """
+
+    def test_d4_disagrees_with_its_own_classvar_in_a_lentiviral_slot(self) -> None:
+        """The disagreement the resolver has to see. If this ever stops being
+        true the rest of this class proves nothing, so assert it first."""
+        rule = InternalPolyA()
+        slot = lentiviral_slot()
+        assert InternalPolyA.enforcement is Enforcement.SOFT, "the ClassVar is the FLOOR"
+        assert rule.gate(slot), "d4 applies in a lentiviral slot"
+        assert rule.enforcement_for(slot) is Enforcement.HARD_REPAIR
+
+    def test_resolve_refuses_to_weight_d4_in_a_lentiviral_preset(self) -> None:
+        """The regression. This preset resolved cleanly before #72."""
+        preset = a_preset(Modality.LENTIVIRAL, WeightEntry("2.D4", 1.0, "a note"))
+        with pytest.raises(PresetError, match="never by a penalty weight"):
+            resolve(preset, [InternalPolyA])
+
+    def test_the_refusal_names_the_per_slot_enforcement_not_the_classvar(self) -> None:
+        """Reporting `soft` here would send a reader looking at the ClassVar,
+        which is not the thing that made the weight illegal."""
+        preset = a_preset(Modality.AAV, WeightEntry("2.D4", 1.0, "a note"))
+        with pytest.raises(PresetError) as excinfo:
+            resolve(preset, [InternalPolyA])
+        assert "hard_repair" in str(excinfo.value)
+        assert "aav" in str(excinfo.value)
+
+    def test_the_same_rule_is_still_weightable_where_it_is_genuinely_soft(self) -> None:
+        """Not a blanket ban on d4. In a plasmid modality the same hexamer costs
+        a little expression and nothing else, `enforcement_for` returns SOFT,
+        and refusing there would be the mirror image of the bug -- a guard
+        that is also not asking about the slot in front of it.
+        """
+        preset = a_preset(Modality.PLASMID_TRANSIENT, WeightEntry("2.D4", 0.7))
+        assert resolve(preset, [InternalPolyA]).weights == {"d4_internal_polya": 0.7}
+
+    def test_a_rule_gated_off_in_every_slot_is_not_treated_as_hard(self) -> None:
+        """d4 gates off entirely for bacterial hosts. A rule that never applies
+        contributes nothing to that modality's sum, so there is no penalty
+        weight to refuse -- and refusing would block BACTERIAL for a rule that
+        cannot fire in it."""
+        rule = InternalPolyA()
+        bacterial = ContextSlot(
+            role="propagation",
+            host=HostId.E_COLI_K12,
+            modality=Modality.BACTERIAL_EXPRESSION,
+            table_id=11,
+        )
+        assert not rule.gate(bacterial)
+        preset = a_preset(Modality.BACTERIAL_EXPRESSION, WeightEntry("2.D4", 0.7))
+        assert resolve(preset, [InternalPolyA]).weights == {"d4_internal_polya": 0.7}
+
+    def test_every_shipped_weight_is_scored_in_every_slot_its_modality_admits(
+        self,
+    ) -> None:
+        """The invariant over the live registry, computed WITHOUT going through
+        `resolve()` -- a guard cannot be its own witness. This is the assertion
+        that would have caught #72 before it shipped.
+        """
+        discover()
+        by_ref = {spec.brief_ref: spec for spec in all_specs()}
+        for preset in PRESETS:
+            for entry in preset.entries:
+                spec = by_ref.get(entry.brief_ref)
+                if spec is None or not entry.weight:
+                    continue
+                rule = spec()
+                for slot in _slots_admitted_by(preset.modality):
+                    if not rule.gate(slot):
+                        continue
+                    level = rule.enforcement_for(slot)
+                    assert level.is_scored, (
+                        f"{preset.id} weights {spec.id} ({entry.brief_ref}) at "
+                        f"{entry.weight}, but it is {level.value} in a "
+                        f"{slot.role}/{slot.host}/{slot.modality} slot. A hard "
+                        f"constraint is enforced by repair plus the independent "
+                        f"validator, never by a penalty weight."
+                    )
