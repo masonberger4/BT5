@@ -73,10 +73,13 @@ holds. No shipped sequence changes.
 **Follow-up for the design lane:** #71's `build_catalog` guard asserting lattice terms
 are ACGT-only and raising `DesignError` is obsolete once this lands, and can be dropped.
 
-**Evidence:** `packages/engine/src/bt5/solver/reference.py:35` (`expand_iupac`,
-`expand_forbidden`), consumers unchanged at `reference.py:85`, `lattice.py:145`,
-`repair.py:449`; `bash scripts/gates.sh` all eight gates exit 0;
-`HYPOTHESIS_PROFILE=ci` on `tests/invariants` and the two new properties.
+**Evidence:** `packages/engine/src/bt5/solver/reference.py:44` (`IUPAC_CODES`), `:80`
+(`MAX_PATTERN_EXPANSION`), `:83` (`expand_iupac`), `:126` (`expand_forbidden`); the three
+consumers call it unchanged at `reference.py:185`, `lattice.py:145`, `repair.py:449`, and
+are unaffected because expansion preserves pattern LENGTH, which is all
+`_creates_forbidden`'s window bound and `repair.py`'s `guard_len` read. `bash
+scripts/gates.sh` all eight gates exit 0; `HYPOTHESIS_PROFILE=ci` on `tests/invariants`
+and on the two new properties.
 
 **Where:** branch `claude/iupac-forbidden-expansion-orzxz4`, closes #73.
 
