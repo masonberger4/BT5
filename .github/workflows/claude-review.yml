@@ -1,0 +1,211 @@
+# claude-review-gate -- the review pass CI cannot do, as a check run.
+#
+# ADVISORY ON PURPOSE. Deliberately NOT a required check yet: absent from
+# `.github/rulesets/main-protection.json` and absent from `required-checks.needs`
+# in ci.yml. That is a decision, not an oversight.
+#
+#   To promote it, add ONE entry to main-protection.json:
+#       { "context": "claude-review-gate", "integration_id": 15368 }
+#   and nothing else. A PARALLEL required context, never an input to
+#   `required-checks` -- that gate counts `skipped` as failure (ci.yml:295-320)
+#   and this job skips on drafts and on forks.
+#   Precondition, from docs/research/github-setup.md:2804,2809: a week of
+#   watching the false-positive rate on `blocking=true` before promoting.
+#
+# WHY. tests/data_integrity/test_rule_contract.py says it plainly -- it "catches
+# MISSING provenance; it cannot catch WRONG provenance." It verifies a rule's
+# citations exist, are https and are labelled. It cannot read the cited paper and
+# judge whether it supports the threshold that cites it. That gap is why rule C1
+# merged as 628e130 with its (0.70, 0.90) band and 0.2 weight never audited.
+#
+# Adapted from the design at docs/research/github-setup.md:1163-1262, with three
+# changes: the provenance audit is folded into the prompt and the schema,
+# `actions/checkout` is pinned to v4 to match every job in ci.yml (the sketch
+# said v7), and the prompt describes the engine BT5 actually has rather than the
+# FastAPI/React tiers that are still unbuilt (CLAUDE.md section 1: M7/M9/M10 have
+# no files yet).
+#
+# No `paths:` filter, ever -- check-workflow-gate.py rejects one on any workflow.
+
+name: Claude Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true # a burst of agent pushes pays for one review
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  claude-review-gate:
+    name: claude-review-gate
+    # Drafts skip: CI capacity is the binding constraint and a draft cannot merge
+    # anyway. Forks skip: `pull_request` withholds secrets from a fork, so the
+    # token would be empty and the fail-closed step below would block a PR for a
+    # reason that has nothing to do with its diff.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          # A COMMITTED LITERAL. Never built from the PR title or body -- those
+          # are attacker-controlled on a public repo, and a prompt assembled from
+          # them is a prompt-injection surface. The diff is READ (gh pr diff),
+          # never interpolated into this text or into a shell command.
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR:   ${{ github.event.pull_request.number }}
+
+            Reviewing an agent-authored PR for BT5: a locally-run tool that
+            back-translates proteins and codon-optimizes DNA in the context of
+            the assembled construct. Python 3.11 engine only (numpy, biopython,
+            ViennaRNA); the server and web tiers are planned and have no files.
+
+            The PR branch is checked out. READ CLAUDE.md FIRST -- it is the
+            contract, and most real defects here are contract violations rather
+            than bugs in the ordinary sense.
+
+            Review priorities, highest first.
+
+            1. RULE PROVENANCE -- the one thing CI structurally cannot check.
+               Applies to any changed file under
+               packages/engine/src/bt5/rules/catalog/.
+               For each such rule:
+                 - Resolve its `brief_ref` in docs/research/brief.md. The value
+                   never appears literally: "2.C1" means section `### 2.C`, then
+                   the row `| C1 |` or a bold run-in `**C1 `. Grep the section
+                   header, then the row.
+                 - Judge whether that row ACTUALLY SUPPORTS the coded band,
+                   threshold, direction, enforcement class and default_weight.
+                   A citation that exists but does not support the number is the
+                   defect this section exists to catch.
+                 - Check the row for `~~strikethrough~~`, "corrected",
+                   "superseded" or "provisional". A rule encoding a struck-through
+                   threshold passes all 11 contract assertions and is still wrong.
+                 - Check weight_provenance is an argument, not a restatement.
+               Report the result in the `provenance` field.
+            2. SCIENTIFIC CORRECTNESS against CLAUDE.md section 3.
+               - The genetic code table is explicit and never defaulted.
+               - Never emit a codon that is also a stop in the target table.
+               - Rules take a Construct, never a bare string.
+               - Motif rules list forward motifs in LatticeTerms.forbidden and let
+                 the solver close under reverse complement; directional scored
+                 models must read slot.strand_of_interest via strand_for().
+               - Hard constraints are never enforced by a penalty weight;
+                 default_weight is 0.0 for HARD_*.
+               - Splice-site removal uses RepairPolicy.FIXED_POINT.
+               - Every RNG is np.random.default_rng(seed).
+            3. HONESTY POSTURE. BT5 never reports a predicted expression level,
+               titer, yield or fold-improvement. An objective that cannot be
+               computed must report UNAVAILABLE rather than a plausible-looking
+               number -- reporting 0.0 or a band midpoint for "not measured" is a
+               blocking defect.
+            4. LANE DISCIPLINE. One lane per PR (CLAUDE.md section 1). Flag any
+               edit to another lane's directory, and any change under core/ or
+               verify.py that is not carrying its approved:* label.
+            5. TESTS. Every catalog rule needs a paired
+               packages/engine/tests/rules/test_<id>.py. Flag a test that asserts
+               on the implementation rather than on the biology, and flag any
+               skip, xfail or loosened assertion added to reach green.
+
+            Post findings as inline comments; post a short summary with
+            `gh pr comment`. Then return the JSON verdict.
+
+            Set blocking=true ONLY for defects you are confident are real: wrong
+            science, an unsupported threshold, a crash, a security hole, a broken
+            shared interface, a suppressed test. Style, naming and "consider
+            refactoring" are NEVER blocking. If you could NOT complete the review
+            (ran out of turns, could not read the diff), set blocking=true and
+            say so.
+
+            Set provenance to N/A when the diff changes no rule in the catalog.
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 30
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --json-schema '{"type":"object","properties":{"blocking":{"type":"boolean"},"summary":{"type":"string"},"blocking_findings":{"type":"array","items":{"type":"string"}},"provenance":{"type":"string","enum":["SUPPORTED","UNSUPPORTED","SUPERSEDED","UNRESOLVED","N/A"]}},"required":["blocking","summary","blocking_findings","provenance"],"additionalProperties":false}'
+
+      # THIS is what would make the review blocking once promoted. The action's
+      # own `conclusion` output means "did Claude run", not "did the review pass".
+      - name: Gate on Claude verdict
+        if: always()
+        env:
+          OUT: "${{ steps.review.outputs.structured_output }}"
+          # A BOOLEAN, never the secret's value -- `secrets` is not otherwise
+          # readable inside `run:`. Without it an empty verdict cannot say WHICH
+          # cause it hit, and the first live run of this gate blamed a crash for
+          # what was really an unconfigured repository.
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OUT:-}" ]; then
+            # Three distinct causes produce an empty verdict, and they need
+            # different answers from the reader. Collapsing them into one
+            # message sent the first two live failures chasing a crash that
+            # never happened.
+            SELF_EDIT=no
+            if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git diff --quiet "$BASE_SHA" HEAD -- .github/workflows/claude-review.yml \
+                || SELF_EDIT=yes
+            fi
+
+            if [ "${HAS_TOKEN:-false}" != "true" ]; then
+              echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set on this repository, so the review never ran."
+              echo "Failing closed: a gate that was never configured must not read as a pass."
+              echo "Fix: run 'claude setup-token' locally, then"
+              echo "     gh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${{ github.repository }} --body '<token>'"
+              echo "or run /install-github-app, which does both. See this file's header comment."
+            elif [ "$SELF_EDIT" = "yes" ]; then
+              echo "::error::This pull request changes claude-review.yml, so the action refused to run."
+              echo "The Claude GitHub App will only mint a token for a workflow file that is"
+              echo "byte-identical to the copy on the default branch. That is a supply-chain"
+              echo "guard: it stops a pull request from editing its own reviewer. The action"
+              echo "self-skips, exits 0 and emits no verdict, which is why this reads as empty."
+              echo ""
+              echo "EXPECTED on any pull request that touches this file, including the one"
+              echo "that first adds it. The review runs normally on every other pull request"
+              echo "once this one merges."
+              echo ""
+              echo "Still failing closed: no review happened, so this must not read as a pass."
+            else
+              echo "::error::No verdict (crash, timeout, or --max-turns). Failing closed."
+            fi
+            exit 1
+          fi
+          echo "$OUT" | jq .
+
+          PROV="$(echo "$OUT" | jq -r '.provenance')"
+          echo "provenance: $PROV"
+
+          # An unsupported threshold fails on its own, without needing `blocking`
+          # to also be set. It is the exact defect this gate was built for, and
+          # leaving it to the model's blocking judgement would let the one thing
+          # CI cannot check depend on the model remembering to escalate it.
+          if [ "$PROV" = "UNSUPPORTED" ]; then
+            echo "::error::A rule's cited evidence does not support its coded threshold."
+            echo "$OUT" | jq -r '.summary'
+            exit 1
+          fi
+
+          if [ "$(echo "$OUT" | jq -r '.blocking')" = "true" ]; then
+            echo "::error::Claude found blocking issues:"
+            echo "$OUT" | jq -r '.blocking_findings[]'
+            exit 1
+          fi
+          echo "Claude review passed: $(echo "$OUT" | jq -r '.summary')"
