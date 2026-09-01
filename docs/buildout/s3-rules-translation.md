@@ -78,7 +78,7 @@ C1 (CAI) reports `unavailable` for all seven non-E. coli hosts because only
 the same wall.** That is correct behaviour, not a bug to route around: report
 `unavailable` with a reason rather than falling back to the E. coli table, which would
 always succeed and always be wrong — a plausible-looking number measuring nothing.
-`docs/decisions.md` records this reasoning for C1; follow it.
+`docs/decisions/2026-09-01-c1-cai-soft-band.md` records this reasoning; follow it.
 
 S6 is acquiring mammalian reference sets in parallel. **If S6 has merged by the time
 you get there**, wire the new sets into `CAI_REFERENCE_SET` in `c1_cai.py` (your file).
@@ -127,8 +127,26 @@ No file in your lane exceeds 20 KB.
 - `rule-auditor` returns SUPPORTED for every threshold you shipped.
 - `ResolvedPreset.unimplemented` is empty once C3 lands.
 - The PR is **open as a draft**.
-- You appended a `docs/decisions.md` entry: decided, **rejected** and why, with
-  evidence. Newest-first, so expect a conflict and keep both entries.
+- You added a decision file at `docs/decisions/2026-XX-XX-<slug>.md`: decided,
+  **rejected** and why, with evidence. One file per decision — never append to a
+  shared one.
+
+- **`/pre-pr` is run by the operator, not by you.** It is
+  `disable-model-invocation: true`, so a session cannot self-invoke it and must not
+  replicate its steps by other means. Ask for it when the branch is ready.
+- **The attestation is posted last.** After `/pre-pr` and after the final push, comment
+  the full 40-character head SHA on the PR:
+
+  ```
+  /pre-pr <head-sha>
+  ```
+
+  The advisory `pre-pr-attest` check reads that comment. An attestation names **one**
+  commit, and pushing again makes it stale on purpose — a review of the previous tree
+  says nothing about this one. Never attest a SHA that was not just reviewed; the whole
+  value is that the claim is on the record. If a gate or review came back blocking and
+  you are pushing anyway, do **not** attest — say so in the PR and let the check stay
+  red. Only the owner may waive it, with `/pre-pr-bypass <head-sha>`.
 
 **Do not self-merge.** Adding a rule changes the sequences the app produces, so your
 scientific impact is non-"none" and `CLAUDE.md` §7b sends it to the owner. Fill in the

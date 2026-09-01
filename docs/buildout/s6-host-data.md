@@ -40,7 +40,8 @@ than "fixing" by inventing files.
    `unavailable` for all seven non-E. coli hosts because no reference set ships. S3 is
    building C3 (%MinMax) in parallel and will hit the same wall.
 
-   `docs/decisions.md` already records why the obvious shortcuts were rejected, and
+   `docs/decisions/2026-09-01-c1-cai-soft-band.md` already records why the obvious
+   shortcuts were rejected, and
    you are bound by that reasoning:
    - *Falling back to the E. coli table for a mammalian host* — it is the one table on
      disk, so the fallback would always succeed and always be wrong: a
@@ -123,8 +124,26 @@ without that is not usable evidence no matter how correct its numbers are.
   `git diff --name-only origin/main`.
 - A follow-up issue exists for the `CAI_REFERENCE_SET` wiring S3 will do.
 - The PR is **open as a draft** and carries **`approved:data-change`**.
-- You appended a `docs/decisions.md` entry: decided, **rejected** and why, with
-  evidence. Newest-first, so expect a conflict and keep both entries.
+- You added a decision file at `docs/decisions/2026-XX-XX-<slug>.md`: decided,
+  **rejected** and why, with evidence. One file per decision — never append to a
+  shared one.
+
+- **`/pre-pr` is run by the operator, not by you.** It is
+  `disable-model-invocation: true`, so a session cannot self-invoke it and must not
+  replicate its steps by other means. Ask for it when the branch is ready.
+- **The attestation is posted last.** After `/pre-pr` and after the final push, comment
+  the full 40-character head SHA on the PR:
+
+  ```
+  /pre-pr <head-sha>
+  ```
+
+  The advisory `pre-pr-attest` check reads that comment. An attestation names **one**
+  commit, and pushing again makes it stale on purpose — a review of the previous tree
+  says nothing about this one. Never attest a SHA that was not just reviewed; the whole
+  value is that the claim is on the record. If a gate or review came back blocking and
+  you are pushing anyway, do **not** attest — say so in the PR and let the check stay
+  red. Only the owner may waive it, with `/pre-pr-bypass <head-sha>`.
 
 **Do not self-merge.** `data/` is a protected path under `CLAUDE.md` §2, and §7b is
 explicit that the `approved:*` label is sign-off on the change, **not** a licence to

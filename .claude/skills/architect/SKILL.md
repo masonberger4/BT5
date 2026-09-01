@@ -51,6 +51,6 @@ Run a `Workflow`:
 
 A plan, a MINOR/MAJOR call with the "who breaks?" reasoning, the alternatives rejected
 and why, and the files that would change. Append the settled decision to
-`docs/decisions.md` — what survives compaction is what lives on disk.
+`docs/decisions/` (one new file per decision) — what survives compaction is what lives on disk.
 
 **Turn-scoped:** the override reverts on the next prompt.

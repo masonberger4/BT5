@@ -134,8 +134,26 @@ need a solver change, that is an issue for the M1 lane, not an edit you make.
   pass — the exact failure `CLAUDE.md` §3.6 describes.
 - `rule-auditor` returns SUPPORTED for every threshold you shipped.
 - The PR is **open as a draft**.
-- You appended a `docs/decisions.md` entry: decided, **rejected** and why, with
-  evidence. Newest-first, so expect a conflict and keep both entries.
+- You added a decision file at `docs/decisions/2026-XX-XX-<slug>.md`: decided,
+  **rejected** and why, with evidence. One file per decision — never append to a
+  shared one.
+
+- **`/pre-pr` is run by the operator, not by you.** It is
+  `disable-model-invocation: true`, so a session cannot self-invoke it and must not
+  replicate its steps by other means. Ask for it when the branch is ready.
+- **The attestation is posted last.** After `/pre-pr` and after the final push, comment
+  the full 40-character head SHA on the PR:
+
+  ```
+  /pre-pr <head-sha>
+  ```
+
+  The advisory `pre-pr-attest` check reads that comment. An attestation names **one**
+  commit, and pushing again makes it stale on purpose — a review of the previous tree
+  says nothing about this one. Never attest a SHA that was not just reviewed; the whole
+  value is that the claim is on the record. If a gate or review came back blocking and
+  you are pushing anyway, do **not** attest — say so in the PR and let the check stay
+  red. Only the owner may waive it, with `/pre-pr-bypass <head-sha>`.
 
 **Do not self-merge.** Adding a rule changes the sequences the app produces — non-"none"
 scientific impact, so `CLAUDE.md` §7b sends it to the owner. Fill in the PR template's

@@ -183,7 +183,9 @@ failure raises the model; diligence failure raises the effort.
 - **Never bare-Read a source file over 20 KB** (`vector/backbone.py` 28.9 KB,
   `rules/vendors.py` 25.7, `vector/kmers.py` 21.2, `catalog/e4_gc_extent.py` 19.1,
   `vector/assemble.py` 18.7) — use `offset`/`limit`, or delegate.
-- **Append settled decisions to `docs/decisions.md`** each work slice: what survives compaction is what lives on disk.
+- **Append settled decisions to `docs/decisions/`** each work slice, as one new
+  `YYYY-MM-DD-slug.md` file: what survives compaction is what lives on disk, and a shared
+  append-only file collides across concurrent sessions (it did, on #79).
 
 ## Compact instructions
 

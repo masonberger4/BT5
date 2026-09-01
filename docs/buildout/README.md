@@ -115,7 +115,7 @@ What one session may rely on another not breaking.
 - **S6 ships data only.** Wiring a new reference set into `CAI_REFERENCE_SET` is S3's
   edit to `c1_cai.py`, taken up only if S6 merged first; otherwise a follow-up issue.
   A rule with no reference set reports `unavailable`, per the pattern
-  `docs/decisions.md` records for C1.
+  `docs/decisions/2026-09-01-c1-cai-soft-band.md` records.
 
 ## Shared rules
 
@@ -125,14 +125,23 @@ What one session may rely on another not breaking.
   command uses `.venv/bin/…`. `gates.sh` exit **10** means no venv — that is BROKEN,
   not a code failure. Bare `pytest` exits 4 on a `conftest.py` import error and looks
   like a real failure.
+- **`/pre-pr` cannot be self-invoked.** It is `disable-model-invocation: true`; the
+  operator runs it, and a session must not replicate its steps by other means. After it
+  runs and the final push lands, the attestation comment `/pre-pr <head-sha>` goes on the
+  PR — the advisory `pre-pr-attest` check (added in #84) reads it. An attestation names
+  one commit and a later push makes it stale by design. Never attest a SHA that was not
+  just reviewed.
 - **`main` is green at `628e130`.** Issues #80 and #83 claim otherwise and are **false
   alarms**: `ci.yml`'s `main-broken` job fires on `cancelled` as well as `failure`,
   and `concurrency.cancel-in-progress` cancels the prior run on rapid merges. Every
   job in both issues reads `cancelled`, none `failure`. Do not chase them and do not
   "fix" main. (Fixing the job itself needs `approved:ci-change` and is out of scope.)
-- **`docs/decisions.md` is newest-first**, so every session inserts at the same place
-  and conflicts are expected. Resolve by keeping **both** entries in date order. Never
-  drop another session's entry.
+- **Decisions are one file per decision** under `docs/decisions/`, named
+  `YYYY-MM-DD-slug.md`. Never append to a shared file. This directory replaced a single
+  `docs/decisions.md` in #85 for exactly the reason this buildout is split by
+  write-ownership: on 2026-09-01 two concurrent sessions appended to the same tail and
+  PR #79 went `clean` → `dirty`, costing a hand-resolved merge. Same fix the rule
+  catalog already uses.
 - **Spend context on judgment, not retrieval.** These are long sessions; what ends one
   early is a window full of file dumps and gate output. Route retrieval to `Explore`
   and `docs-miner`, gates to `gate-runner`, and keep the main thread for decisions

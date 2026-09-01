@@ -126,8 +126,26 @@ No file in your lane exceeds 20 KB.
 - With commec present, a real verdict carries a `database_version`.
 - A `block` verdict refuses to emit.
 - `security-reviewer` returns clean via `/pre-pr`, and the PR is **open as a draft**.
-- You appended a `docs/decisions.md` entry: decided, **rejected** and why, with
-  evidence. Newest-first, so expect a conflict and keep both entries.
+- You added a decision file at `docs/decisions/2026-XX-XX-<slug>.md`: decided,
+  **rejected** and why, with evidence. One file per decision — never append to a
+  shared one.
+
+- **`/pre-pr` is run by the operator, not by you.** It is
+  `disable-model-invocation: true`, so a session cannot self-invoke it and must not
+  replicate its steps by other means. Ask for it when the branch is ready.
+- **The attestation is posted last.** After `/pre-pr` and after the final push, comment
+  the full 40-character head SHA on the PR:
+
+  ```
+  /pre-pr <head-sha>
+  ```
+
+  The advisory `pre-pr-attest` check reads that comment. An attestation names **one**
+  commit, and pushing again makes it stale on purpose — a review of the previous tree
+  says nothing about this one. Never attest a SHA that was not just reviewed; the whole
+  value is that the claim is on the record. If a gate or review came back blocking and
+  you are pushing anyway, do **not** attest — say so in the PR and let the check stay
+  red. Only the owner may waive it, with `/pre-pr-bypass <head-sha>`.
 
 **Do not self-merge.** This changes what the app refuses to build, which under
 `CLAUDE.md` §7b goes to the owner. Say in the PR that you know this.

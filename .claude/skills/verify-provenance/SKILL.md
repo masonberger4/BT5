@@ -48,4 +48,4 @@ of defect this skill exists to find.
 
 Per rule: the `brief_ref` and where it resolved, whether the cited text supports the
 coded threshold, and one of `SUPPORTED` / `UNSUPPORTED` / `SUPERSEDED` / `UNRESOLVED`.
-Append anything settled to `docs/decisions.md`.
+Append anything settled to `docs/decisions/` as a new `YYYY-MM-DD-slug.md` file.
