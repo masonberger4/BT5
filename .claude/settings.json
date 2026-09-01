@@ -102,6 +102,10 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/session_start.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/watch_open_prs.sh"
           }
         ]
       }
