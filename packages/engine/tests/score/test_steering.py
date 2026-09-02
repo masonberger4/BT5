@@ -14,6 +14,7 @@ from bt5.score.steering import (
     SWEEP_AXES,
     blended_scorer,
     gc_fraction,
+    lean_targets,
 )
 
 #: A toy relative-adaptiveness table: two leucine codons, one preferred.
@@ -59,11 +60,63 @@ class TestBlendedScorer:
     def test_the_two_gc_leans_pull_opposite_ways(self) -> None:
         """This is the axis that makes the panel diverse. Two sequences can differ
         at 30% of their bases as pure wobble; leaning GC one way and the other
-        moves the CODON choice, which is the space G4 measures."""
-        toward_at = blended_scorer({"gc_lean_at": 1.0}, usage=USAGE)
-        toward_gc = blended_scorer({"gc_lean_gc": 1.0}, usage=USAGE)
-        assert toward_at(0, "TTA", "") < toward_at(0, "CTG", "")
-        assert toward_gc(0, "CTG", "") < toward_gc(0, "TTA", "")
+        moves the CODON choice, which is the space G4 measures.
+
+        Stated as "which codon each lean PICKS", not as a ranking of two chosen
+        codons. The leans aim at targets inside the band rather than at 0% and
+        100% GC, so the comparison that matters is between the two argmins --
+        the earlier version compared two hand-picked codons and only held while
+        the term was monotonic.
+        """
+        band = (0.30, 0.70)  # targets land at 0.44 and 0.56
+        toward_at = blended_scorer({"gc_lean_at": 1.0}, usage=USAGE, gc_bounds=band)
+        toward_gc = blended_scorer({"gc_lean_gc": 1.0}, usage=USAGE, gc_bounds=band)
+        # Must span 1/3 AND 2/3 GC. A codon's GC is quantised to {0, 1/3, 2/3, 1},
+        # and targets inside a sane band both sit between 1/3 and 2/3 -- so those
+        # two are the values the leans actually choose between. A set offering
+        # only {0, 2/3, 1} sends both leans to 2/3 and proves nothing, which is
+        # how the first version of this test failed.
+        codons = ("TTA", "GAT", "CTG", "GGC")  # 0, 1/3, 2/3, 1
+        pick_at = min(codons, key=lambda c: toward_at(0, c, ""))
+        pick_gc = min(codons, key=lambda c: toward_gc(0, c, ""))
+        assert gc_fraction(pick_at) < gc_fraction(pick_gc), (
+            f"the leans chose {pick_at} ({gc_fraction(pick_at):.0%} GC) and "
+            f"{pick_gc} ({gc_fraction(pick_gc):.0%} GC) -- they must separate"
+        )
+
+    def test_a_lean_aims_inside_the_band_never_at_its_edge(self) -> None:
+        """The regression that hung CI for two hours.
+
+        The leans were a flat per-codon preference for GC or for AT, so the DP --
+        which minimises a sum -- drove every codon to the extreme it could reach.
+        `oracle_bounds()` passes e2's wide band (0.28-0.77), so Tier A emitted a
+        ~70% GC CDS while `f5_at_window` hard-fails any 100-nt window outside
+        35-65% GC. Tier B was handed a sequence out of band along its whole
+        length and could not converge: an unsteered solve took 0.6 s and either
+        lean ran past 70 s.
+
+        Both targets must sit strictly inside the band AND clear of its edges,
+        which is what keeps them inside the tighter windowed rules that live
+        there.
+        """
+        for band in ((0.28, 0.77), (0.30, 0.70), (0.40, 0.60), (0.0, 1.0)):
+            low, high = lean_targets(band)
+            assert band[0] < low < high < band[1], f"targets escaped {band}"
+            margin = 0.3 * (band[1] - band[0])
+            assert low >= band[0] + margin - 1e-9
+            assert high <= band[1] - margin + 1e-9
+
+    def test_the_shipped_band_aims_inside_f5s_window(self) -> None:
+        """Concrete, on the band the design actually passes.
+
+        `f5_at_window` hard-fails a 100-nt window outside 35-65% GC and prefers
+        45-60%. The band `oracle_bounds()` hands the solver is e2's 0.28-0.77,
+        which is far wider -- so a lean aimed at ITS edges lands outside f5. Both
+        targets must land inside f5's preferred window.
+        """
+        low, high = lean_targets((0.28, 0.77))
+        assert 0.45 <= low <= 0.60, f"low lean target {low:.3f} is outside f5's window"
+        assert 0.45 <= high <= 0.60, f"high lean target {high:.3f} is outside f5's window"
 
     def test_the_steering_penalty_is_not_the_enforcement_penalty(self) -> None:
         """`repeat_breaking_scorer` uses 100.0 so a repeat can never be preferred.

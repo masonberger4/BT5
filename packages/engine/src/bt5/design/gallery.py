@@ -99,7 +99,11 @@ class SolveSpace:
         try -- and neither may be swallowed into a candidate, which is why this
         returns None instead of a partial result.
         """
-        score = blended_scorer(weights, usage=self.usage) if weights is not None else None
+        score = (
+            blended_scorer(weights, usage=self.usage, gc_bounds=self.gc_bounds)
+            if weights is not None
+            else None
+        )
         try:
             return optimize(
                 self.protein,

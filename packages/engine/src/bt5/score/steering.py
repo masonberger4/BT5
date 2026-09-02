@@ -65,10 +65,53 @@ def gc_fraction(codon: str) -> float:
     return sum(1 for base in codon.upper() if base in "GC") / len(codon)
 
 
+#: Where inside the declared GC band the two leans aim, as a fraction of the
+#: band's width. Deliberately NOT 0.0 and 1.0 -- see `lean_targets`.
+LEAN_LOW_FRACTION = 0.35
+LEAN_HIGH_FRACTION = 0.65
+
+
+def lean_targets(gc_bounds: tuple[float, float] | None) -> tuple[float, float]:
+    """The (low, high) GC fractions the two leans aim AT, inside the band.
+
+    The first version of this had no targets: the lean was a flat per-codon
+    preference for GC or for AT, so the DP -- which minimises a sum -- drove
+    EVERY codon to the extreme it could reach. That is the difference between
+    this axis and `repeat_avoidance`, which only charges a codon that actually
+    extends a repeat: a flat preference is a systematic global push, and it
+    runs until something stops it.
+
+    What stopped it was the wrong thing. `oracle_bounds()` hands the solver
+    e2's band, currently 0.28-0.77, so Tier A would happily emit a ~70% GC CDS
+    -- while `f5_at_window` hard-fails any 100-nt window outside 35-65% GC.
+    Tier B was then handed a sequence out of band along its whole length and
+    could not converge: measured on the reference fixture, an unsteered solve
+    took 0.6 s and either lean ran past 70 s without finishing. CI's
+    `python-tests` ran for nearly two hours on it.
+
+    Aiming at a target inside the band fixes the shape of the term, not just its
+    size. `|gc(codon) - target|` is bounded and non-monotonic, so the DP settles
+    AT the target instead of running away from it, and the two targets stay far
+    enough apart to still separate the designs. The 0.35/0.65 fractions keep
+    both aims out of the band's edges, where the tighter windowed rules live --
+    on e2's 0.28-0.77 that is 45.2% and 59.9% GC, inside f5's 45-60% window.
+
+    This is still steering and still enforces nothing: E2, F5 and every other
+    HARD_REPAIR rule hold by repair plus the independent validator, whatever the
+    sweep asked for.
+    """
+    low, high = gc_bounds if gc_bounds is not None else (0.0, 1.0)
+    if high < low:
+        low, high = high, low
+    width = high - low
+    return low + LEAN_LOW_FRACTION * width, low + LEAN_HIGH_FRACTION * width
+
+
 def blended_scorer(
     weights: Mapping[str, float],
     *,
     usage: Mapping[str, float],
+    gc_bounds: tuple[float, float] | None = None,
     kmer: int = REPEAT_KMER,
     repeat_penalty: float = REPEAT_STEERING_PENALTY,
 ) -> CodonScorer:
@@ -78,11 +121,15 @@ def blended_scorer(
     written as a penalty and a preference is written as a negative one. An axis
     absent from `weights` contributes nothing, so a caller sweeping two axes
     pays for two.
+
+    `gc_bounds` is the band the design is being solved against; the GC leans aim
+    inside it rather than at its edges. See `lean_targets`.
     """
     adaptation = float(weights.get("codon_adaptation", 0.0))
     repeats = float(weights.get("repeat_avoidance", 0.0))
     lean_at = float(weights.get("gc_lean_at", 0.0))
     lean_gc = float(weights.get("gc_lean_gc", 0.0))
+    target_low, target_high = lean_targets(gc_bounds)
 
     def score(_i: int, codon: str, prefix: str) -> float:
         cost = -adaptation * usage.get(codon, 0.0)
@@ -92,7 +139,7 @@ def blended_scorer(
                 cost += repeats * repeat_penalty
         if lean_at or lean_gc:
             gc = gc_fraction(codon)
-            cost += lean_at * gc + lean_gc * (1.0 - gc)
+            cost += lean_at * abs(gc - target_low) + lean_gc * abs(gc - target_high)
         return cost
 
     return score

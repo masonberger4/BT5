@@ -10,12 +10,27 @@ Equally deliberately, this is a plain `pytest` assertion and not a benchmark.
 files inside it; creating it is an owner decision under
 `approved:algorithm-change` and is not this lane's to make.
 
-A failure here is a FINDING about the design budget, not a flake. The budget is
-spent in three places and each is tunable without touching the bar:
-`DEFAULT_SWEEP_STEPS` (weight vectors, so full solves), `NULL_N_BY_COST`
-(variants scored per objective) and `DEFAULT_GALLERY_SIZE` (candidates scored
-and verified). If this goes red, one of those three is the answer -- never the
-10 s.
+A failure here is a FINDING about the design budget, not a flake, and as of the
+merge with main it is red for a reason OUTSIDE this lane. Measured at 500 aa on
+the reference fixture: 23.5 s total, of which the sweep is 20.2 s and the null
+3.1 s. The sweep is three full solves and each is dominated by Tier B repair.
+
+`RuleSet.breach_finder()` (`solver/catalog.py`) is what repair calls once per
+candidate, up to `max_candidates` per iteration. Its own docstring says it is
+"SCOPED TO THE HARD_REPAIR RULES ... E8's k-mer index or B1's fold evaluated
+here would be pure waste" -- but it returns `self.findings(c).repairable`, and
+`findings()` walks every spec. Measured: 62.2 ms per candidate as implemented
+against 5.1 ms for the 8 HARD_REPAIR specs it actually needs, a 12.2x waste,
+with `f2_near_perfect_repeats` (19.7 ms) and `e8_kmer_uniqueness` (17.2 ms) paid
+for and discarded every time. That is M1's lane, not this one.
+
+The knobs this lane owns cannot close a 2.4x gap on their own:
+`DEFAULT_SWEEP_STEPS` is already 1 (three vectors, the minimum for a panel),
+dropping `DEFAULT_GALLERY_SIZE` below `MIN_GALLERY` stops being a gallery, and
+`NULL_N_BY_COST` accounts for 3.1 s of the 23.5. Lowering `max_candidates` from
+256 to 64 saves ~1.5 s per solve and buys repair quality with it.
+
+So: never the bar, and not these knobs either. Reported rather than tuned.
 """
 
 from __future__ import annotations
