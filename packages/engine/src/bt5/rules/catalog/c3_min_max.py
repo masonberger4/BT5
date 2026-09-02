@@ -236,12 +236,17 @@ class MinMax:
             sign="supports",
         ),
         Citation(
-            "Clarke & Clark's actual finding -- rare codons cluster non-randomly, "
-            "enriched at the 5' and 3' termini of E. coli genes. The direct reason "
-            "the band's floor is non-binding: %Min excursions are the structure the "
-            "paper reports, not a defect to optimise away",
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC2565806/",
-            2008,
+            "Clarke & Clark 2010 (BMC Genomics 11:118), the same group's follow-up "
+            "and the actual source of the terminal-enrichment finding: 'rare codon "
+            "clusters are more likely to appear at the 5' and 3' ends of E. coli "
+            "genes, rather than non-terminal positions', with 15 of 26 prokaryotic "
+            "ORFeomes showing significant 5' enrichment and 12 showing 3'. The "
+            "direct reason the band's floor is non-binding: %Min excursions are "
+            "structure this group measured, not a defect to optimise away. NOTE "
+            "this is a DIFFERENT paper from the 2008 one above, which reports "
+            "non-random clustering but not where the clusters sit",
+            "https://pmc.ncbi.nlm.nih.gov/articles/PMC2833160/",
+            2010,
             sign="qualifies",
         ),
         Citation(

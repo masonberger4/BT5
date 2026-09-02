@@ -32,6 +32,16 @@ counting one phenomenon twice; see `weight_provenance`.
 `registry.check_engine_calibration` refuses the run outright if another engine is
 active, because comparing a threshold measured on one energy model against another
 model's output succeeds while meaning nothing.
+
+That declaration is INHERITED rather than earned, and the distinction is worth
+stating: this rule codes no kcal/mol threshold of its own -- it reports a raw MFE,
+`band` is None and `passes` is always True -- so it has no number that could be
+mis-calibrated. What it does have is a `raw_score` only comparable to B1's if both
+came from one engine, and a weight argued from B1's r = 0.66. Declaring the
+calibration therefore constrains more than this rule strictly needs. Left in
+deliberately: the failure it prevents is silent, and a rule reporting energies
+that a preset weights alongside B1's is exactly where a mixed-engine run would go
+unnoticed.
 """
 
 from __future__ import annotations
@@ -111,9 +121,11 @@ class StructureWindows:
             "Expi293F benchmark found it the WORST of five schemes for a DNA "
             "transgene despite 2-fold lower normalized MFE, with no correlation "
             "between MFE and yield. The direct evidence for refusing to average "
-            "the two windows into one structure slider",
-            "https://www.nature.com/articles/nbt.4238",
-            2018,
+            "the two windows into one structure slider. Sourced to the Expi293F "
+            "benchmark itself (brief.md:13), NOT to Cambray above: Cambray is 2018 "
+            "and could not have discussed LinearDesign or a 2026 benchmark",
+            "https://proteininnovation.org/2026/03/codon-optimization-native-codon-mammalian-protein-expression/",
+            2026,
             sign="qualifies",
         ),
     )
