@@ -17,6 +17,7 @@ import csv
 import io
 import math
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -34,6 +35,28 @@ from bt5.score.steering import SWEEP_AXES, live_axes
 from bt5.vector.backbone import VectorBackbone
 
 CODE = FileTableProvider().genetic_code(1)
+
+
+def _scored_objectives(backbone: VectorBackbone) -> list[Any]:
+    """The objectives `design()` scores for the `fast` fixture's context.
+
+    Rebuilt rather than plumbed out of `SkeletonResult`, because a test that
+    reads the runner's own list back cannot notice the runner passing the wrong
+    one.
+    """
+    from bt5.design.catalog import scored_objectives
+    from bt5.design.runner import _context
+    from bt5.design.sites import choose_site
+    from bt5.solver.catalog import build_rule_set, default_services
+
+    site = choose_site(backbone, table_id=1)
+    ctx = _context(
+        modality=Modality.LENTIVIRAL,
+        hosts=[HostId.HEK293],
+        table_id=1,
+        cassette_orientation=site.strand,
+    )
+    return list(scored_objectives(build_rule_set(ctx, default_services(seed=0))))
 
 
 def _solve_space(backbone: VectorBackbone, protein: str) -> SolveSpace:
@@ -76,32 +99,98 @@ def _solve_space(backbone: VectorBackbone, protein: str) -> SolveSpace:
     )
 
 
-#: Every degradation `design()` is allowed to emit, as an anchored regex.
+#: Every degradation `design()` is allowed to emit, as ONE keyed table:
+#: pattern -> (a sentence it must match, a literal fragment its source must
+#: contain).
 #:
-#: Regexes rather than prefixes because two of these embed a count ("the
-#: 3-candidate panel...") and a prefix that covered them would have to be short
-#: enough to be a catch-all. An earlier version of this list used `"the "` --
-#: four characters matching any future sentence starting "the ...", inside the
-#: very test named for catching unremarked degradations.
+#: Keyed, and all three in one place, because the previous shape let a rewording
+#: slip past every guard. The pattern lived in one tuple, its sample in a second,
+#: and the source fragment in a third POSITIONAL tuple checked only for length.
+#: Rewording the short-panel sentence updated the source; the pattern and its
+#: sample drifted together, and the fragment anchored the one clause that had not
+#: changed. Three guards, all green, one broken degradation.
 #:
-#: A NEW source of degradation that matches none of these fails
-#: `test_no_degradation_arrives_unremarked`. That is the property the skeleton's
-#: set-equality test protected, kept while letting the CONTENT vary with the
-#: environment (ViennaRNA present or not, host tables shipped or not) instead of
-#: pinning a set that only holds on one machine.
-KNOWN_DEGRADATIONS = (
-    r"ViennaRNA .*",
-    r"protein-level biosecurity screening: \w+",
-    r"the sweep produced \d+ distinct designs? from \d+ weight vectors, below the \d+",
-    r"the \d+-candidate panel does not meet gate G4:",
-    r"single candidate only:",
-    r"no codon usage table on file",
-    r"no native baseline:",
-    r"the native CDS was supplied",
-    r"objective \S+ not ranked:",
-    r"rule \S+ not run:",
-    r"forbidden motif \S+ carried by the backbone",
-    r"screening burden unavailable:",
+#: The chain below closes that: the pattern must match the sample, the fragment
+#: must be a substring OF the sample, and the fragment must appear literally in
+#: the module that emits it. A reworded sentence therefore breaks the fragment
+#: check, and a fragment updated without the pattern breaks the substring check.
+#: Each fragment must also cover more than a leading phrase -- the drift got
+#: through on `"the sweep produced "`, a prefix that survived the rewording.
+DEGRADATION_SOURCES: dict[str, tuple[str, str]] = {
+    r"ViennaRNA .*": (
+        "ViennaRNA is not installed, so folding objectives were not evaluated; no",
+        "ViennaRNA is not installed, so folding objectives were not evaluated",
+    ),
+    r"protein-level biosecurity screening: \w+": (
+        "protein-level biosecurity screening: not_run (did not run)",
+        "protein-level biosecurity screening: ",
+    ),
+    r"the sweep produced \d+ distinct designs? from \d+ weight vectors? that solved, "
+    r"below the \d+": (
+        "the sweep produced 1 distinct design from 3 weight vectors that solved, "
+        "below the 3 at which a panel offers a genuine choice.",
+        " that solved, below the ",
+    ),
+    r"the \d+-candidate panel does not meet gate G4:": (
+        "the 3-candidate panel does not meet gate G4: its minimum pairwise",
+        "-candidate panel does not meet gate G4: its minimum ",
+    ),
+    r"single candidate only:": (
+        "single candidate only: no weight vector in the sweep produced a design",
+        "single candidate only: no weight vector in the sweep produced a design",
+    ),
+    r"no codon usage table on file": (
+        "no codon usage table on file for host hek293; the null was sampled",
+        "no codon usage table on file for host ",
+    ),
+    r"no native baseline:": (
+        "no native baseline: the caller supplied no wild-type CDS, and BT5 will",
+        "no native baseline: the caller supplied no wild-type CDS",
+    ),
+    r"the native CDS was supplied": (
+        "the native CDS was supplied but is not offered as a candidate: the",
+        "the native CDS was supplied but is not offered as a candidate",
+    ),
+    r"objective \S+ not ranked:": (
+        "objective c1_cai not ranked: no CAI reference set for host hek293",
+        " not ranked: ",
+    ),
+    r"rule \S+ not run:": (
+        "rule b1_five_prime not run: its thresholds are calibrated against a folding "
+        "engine that is not available",
+        " not run: its thresholds are calibrated against a folding ",
+    ),
+    r"forbidden motif \S+ carried by the backbone": (
+        "forbidden motif TCTAGA carried by the backbone, excluded from enforcement",
+        " carried by the backbone, excluded from enforcement",
+    ),
+    r"screening burden unavailable:": (
+        "screening burden unavailable: no published error-free length on file for x",
+        "screening burden unavailable: no published error-free length on file ",
+    ),
+}
+
+KNOWN_DEGRADATIONS = tuple(DEGRADATION_SOURCES)
+
+
+def _assert_recognised(degradation: str) -> None:
+    """A degradation a test PRODUCED must match a pattern the guard knows.
+
+    This is the check that survives a rewording: the sentence comes from the
+    source, not from a hand-written sample, so the two cannot drift together.
+    Three of the four `_panel` outcomes never occur on the reference fixture, so
+    without this their patterns are only ever checked against samples.
+    """
+    assert any(re.match(pattern, degradation) for pattern in KNOWN_DEGRADATIONS), (
+        f"a real degradation matches no known pattern: {degradation!r}"
+    )
+
+
+#: The modules that emit a degradation sentence.
+DEGRADATION_SOURCE_FILES = (
+    "design/runner.py",
+    "score/report.py",
+    "structure/vienna.py",
 )
 
 
@@ -165,7 +254,18 @@ class TestTheGallery:
         res = fast(backbone)
         candidates = res.result.candidates
         assert [c.label for c in candidates] == [f"design_{i + 1}" for i in range(len(candidates))]
-        keys = comparable_totals({c.label: c.scorecard for c in candidates}, [])
+        # The REAL objectives, which is what the runner passes. Handing
+        # `comparable_totals` an empty spec list makes every weight 0.0 and every
+        # key 0.0 -- an assertion that then holds for ANY ordering, including a
+        # fully inverted one. That is how the first version of this test passed
+        # while covering nothing.
+        objectives = _scored_objectives(backbone)
+        assert objectives, "no scored objective, so ranking cannot be tested"
+        keys = comparable_totals({c.label: c.scorecard for c in candidates}, objectives)
+        assert len(set(keys.values())) > 1, (
+            "every candidate scored identically, so this run cannot tell a correct "
+            "sort from an inverted one and the assertion below would be vacuous"
+        )
         ordered = [keys[c.label] for c in candidates]
         assert ordered == sorted(ordered, reverse=True)
 
@@ -409,70 +509,38 @@ class TestCompleteness:
                 f"source, add it to KNOWN_DEGRADATIONS deliberately."
             )
 
-    def test_every_known_degradation_pattern_is_reachable(self) -> None:
-        """A pattern nothing can produce is a dead entry that quietly widens the
-        guard's allow-list. Each one must match the sentence the source actually
-        emits, so the sentences are reproduced here and matched."""
-        samples = {
-            r"ViennaRNA .*": "ViennaRNA is not installed, so folding objectives",
-            r"protein-level biosecurity screening: \w+": (
-                "protein-level biosecurity screening: not_run (did not run)"
-            ),
-            r"the sweep produced \d+ distinct designs? from \d+ weight vectors, below the \d+": (
-                "the sweep produced 1 distinct design from 3 weight vectors, below the 3 at"
-            ),
-            r"the \d+-candidate panel does not meet gate G4:": (
-                "the 3-candidate panel does not meet gate G4: its minimum pairwise"
-            ),
-            r"single candidate only:": "single candidate only: no weight vector",
-            r"no codon usage table on file": "no codon usage table on file for host hek293",
-            r"no native baseline:": "no native baseline: the caller supplied no wild-type",
-            r"the native CDS was supplied": "the native CDS was supplied but is not offered",
-            r"objective \S+ not ranked:": "objective c1_cai not ranked: no CAI reference set",
-            r"rule \S+ not run:": "rule b1_five_prime not run: its thresholds are",
-            r"forbidden motif \S+ carried by the backbone": (
-                "forbidden motif TCTAGA carried by the backbone, excluded"
-            ),
-            r"screening burden unavailable:": "screening burden unavailable: no published",
-        }
-        assert set(samples) == set(KNOWN_DEGRADATIONS), "a pattern has no sample sentence"
-        for pattern, sample in samples.items():
+    def test_each_pattern_matches_its_own_sample(self) -> None:
+        for pattern, (sample, _fragment) in DEGRADATION_SOURCES.items():
             assert re.match(pattern, sample), f"{pattern!r} does not match {sample!r}"
 
-    def test_every_sample_sentence_appears_in_the_source(self) -> None:
-        """The samples above are hand-written, so a pattern could drift away from
-        its source and the sample drift with it. This anchors them: a
-        distinctive fragment of each must appear literally in the module that
-        emits it."""
-        import pathlib
+    def test_each_fragment_anchors_its_pattern_to_a_real_source_sentence(self) -> None:
+        """The link that the previous shape was missing.
 
-        root = pathlib.Path(__file__).resolve().parents[4] / "packages/engine/src/bt5"
-        corpus = "".join(
-            (root / name).read_text()
-            for name in (
-                "design/runner.py",
-                "design/ranking.py",
-                "score/report.py",
-                "structure/vienna.py",
+        `fragment in sample` ties the fragment to the pattern; `fragment in
+        corpus` ties it to the code. Reword the sentence in the source and the
+        second fails; update the fragment without the pattern and the first
+        does.
+
+        This is the SECONDARY net. It is a heuristic -- a fragment can only be
+        as long as the longest literal run in an f-string, which for
+        "objective {id} not ranked: " is thirteen characters -- so it cannot
+        guarantee the fragment covers the clause someone rewords. The primary
+        protection is that every sentence a test can actually PRODUCE is matched
+        against these patterns at the point of production: the emitted set in
+        `test_no_degradation_arrives_unremarked`, and the three panel sentences
+        in `TestPanelDegradations` / `TestTheFallbackWhenNothingSolves`. That is
+        what would have caught the rewording that got past the previous shape.
+        """
+        root = Path(__file__).resolve().parents[4] / "packages/engine/src/bt5"
+        corpus = "".join((root / name).read_text() for name in DEGRADATION_SOURCE_FILES)
+        for pattern, (sample, fragment) in DEGRADATION_SOURCES.items():
+            assert len(fragment) >= 12, f"{pattern!r}: fragment {fragment!r} is too short"
+            assert fragment in sample, f"{pattern!r}: {fragment!r} is not in its own sample"
+            assert fragment in corpus, (
+                f"{pattern!r}: no source in {DEGRADATION_SOURCE_FILES} emits "
+                f"{fragment!r} any more -- the sentence was reworded and this "
+                f"pattern is now stale."
             )
-        )
-        fragments = (
-            "ViennaRNA is not installed",
-            "protein-level biosecurity screening: ",
-            "the sweep produced ",
-            "-candidate panel does not meet gate G4:",
-            "single candidate only:",
-            "no codon usage table on file",
-            "no native baseline:",
-            "the native CDS was supplied",
-            "not ranked: ",
-            "not run: its thresholds",
-            "carried by the backbone",
-            "screening burden unavailable:",
-        )
-        assert len(fragments) == len(KNOWN_DEGRADATIONS)
-        for fragment in fragments:
-            assert fragment in corpus, f"no source emits {fragment!r} any more"
 
 
 class TestOrderFile:
@@ -739,6 +807,7 @@ class TestPanelDegradations:
         # may say a distance is not reported; it may not report one.
         assert "%" not in degradation
         assert f"below the {MIN_GALLERY}" in degradation
+        _assert_recognised(degradation)
 
     def test_a_close_panel_reports_the_distance_it_reached(self) -> None:
         from bt5.design.runner import _panel
@@ -753,6 +822,7 @@ class TestPanelDegradations:
         assert degradation is not None
         assert "does not meet gate G4" in degradation
         assert "10.0%" in degradation
+        _assert_recognised(degradation)
 
     def test_a_complete_short_panel_is_not_a_degradation(self) -> None:
         """`k` is a CEILING. A sweep that exhausted the front at three genuinely
@@ -829,6 +899,7 @@ class TestTheFallbackWhenNothingSolves:
         assert degradation is not None
         assert degradation.startswith("single candidate only:")
         assert "%" not in degradation
+        _assert_recognised(degradation)
 
     def test_nothing_at_all_raises_rather_than_returning_a_partial_result(self) -> None:
         """Refusing is the guarantee working. Returning an empty panel would let
