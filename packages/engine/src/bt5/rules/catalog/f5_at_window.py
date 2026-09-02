@@ -97,6 +97,30 @@ def window_gc(text: str, offset: int, n: int, span: int) -> np.ndarray:
     return (prefix[starts + span] - prefix[starts]) / span
 
 
+def merge_regions(mask: np.ndarray, *, circular: bool) -> list[np.ndarray]:
+    """Contiguous runs of `True` in `mask`, as arrays of indices, wrap-aware.
+
+    Shared with `e3_windowed_gc`: both rules turn a per-window boolean into regions,
+    and the wrap case below is subtle enough that two copies would drift.
+
+    An offending stretch that crosses the origin arrives as TWO runs -- one ending at
+    the last window start, one beginning at the first -- because the mask is a line and
+    the molecule is not. Left unmerged it doubles the rule's breach count on exactly the
+    construct where the finding is one contiguous problem, and names two "worst" windows
+    for it.
+    """
+    if mask.size == 0:
+        return []
+    edges = np.diff(np.concatenate(([0], mask.view(np.int8), [0])))
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    regions = [np.arange(a, b) for a, b in zip(starts, ends, strict=True)]
+    if circular and len(regions) > 1 and mask[0] and mask[-1]:
+        regions[0] = np.concatenate((regions[-1], regions[0]))
+        regions.pop()
+    return regions
+
+
 @register
 class ATWindow:
     id: ClassVar[str] = "f5_at_window"
@@ -225,21 +249,7 @@ class ATWindow:
         worst_dev = 0.0
 
         offending = (fracs < SOFT_LO) | (fracs > SOFT_HI)
-        # Run boundaries from the mask itself rather than a Python sweep: `np.diff` on
-        # the padded mask marks every rising and falling edge at once.
-        edges = np.diff(np.concatenate(([0], offending.view(np.int8), [0])))
-        run_starts = np.flatnonzero(edges == 1)
-        run_ends = np.flatnonzero(edges == -1)
-        regions = [np.arange(a, b) for a, b in zip(run_starts, run_ends, strict=True)]
-
-        # An offending stretch that crosses the origin arrives as two runs -- one
-        # ending at the last window start, one beginning at the first -- because the
-        # mask is a line and the molecule is not. Reporting it as two regions would
-        # double this rule's breach count on exactly the construct where the finding
-        # is one contiguous problem, and would name two "worst" windows for it.
-        if c.is_circular and len(regions) > 1 and offending[0] and offending[-1]:
-            regions[0] = np.concatenate((regions[-1], regions[0]))
-            regions.pop()
+        regions = merge_regions(offending, circular=c.is_circular)
 
         def flush(idx: np.ndarray) -> None:
             nonlocal worst_side, worst_dev
