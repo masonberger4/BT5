@@ -101,7 +101,8 @@ If not, leave it and open a follow-up issue.
 
 **Never touch:** `d*`, `e*`, `f*` rule files (S4 owns those), `rules/vendors.py`,
 `rules/_provenance.json`, `rules/fragment.py`, `rules/exempt.py` (S4's), `score/`,
-`design/` (S1's), `solver/`, `vector/`, `cassette/`, `core/`, `verify.py`, `.github/`,
+`design/` (S1's), `solver/`, `vector/`, `cassette/`, `codon/`, `structure/`, `core/`,
+`verify.py`, `.github/`,
 `pyproject.toml`, `data/`, `tests/contract/`, `tests/invariants/`,
 `tests/data_integrity/`.
 
