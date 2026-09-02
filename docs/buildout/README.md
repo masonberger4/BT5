@@ -59,6 +59,18 @@ will `git checkout` it and start work without ever asking whether `main` moved.
 `git checkout -B` from a just-fetched `origin/main` costs one command and cannot go
 stale. Reserving the names buys nothing — no one else is pushing to this repo.
 
+### One shared file the rules split cannot absorb
+
+`packages/engine/tests/rules/conftest.py` is **read-only for both S3 and S4**. It holds
+the helpers every rule test imports (`construct()`, `wrapping_construct()`, `slot()`,
+`context()`, the `services` fixture), and both rules sessions run concurrently. A
+session needing a helper it lacks defines it in its own test file; a helper that
+genuinely belongs to both lanes becomes an issue, landed after both merge.
+
+This is the one place the ownership matrix would otherwise leave two writers on one
+file. Rule *source* files collide with nothing — `core/registry.py` autodiscovers — but
+their tests share a conftest, and that asymmetry is easy to miss.
+
 ### The three global mutexes
 
 1. **`pyproject.toml` — S5 only.** Every dependency is already declared (`server`,

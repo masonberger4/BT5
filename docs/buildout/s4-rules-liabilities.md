@@ -102,6 +102,15 @@ From `CLAUDE.md` §3:
 `.github/`, `pyproject.toml`, `data/`, `tests/contract/`, `tests/invariants/`,
 `tests/data_integrity/`.
 
+**`packages/engine/tests/rules/conftest.py` is READ-ONLY for you**, and for the other
+rules session too. It holds the shared helpers every rule test uses — `construct()`,
+`wrapping_construct()`, `slot()`, `context()` and the `services` fixture. Both rules
+sessions run at once, so an edit there is the one collision this split cannot absorb.
+Need a helper it does not have? **Define it in your own test file.** A local helper
+costs a few lines; a shared-conftest edit costs a merge conflict in the file every rule
+test imports. If a helper genuinely belongs to both lanes, open an issue and let it land
+after both sessions merge.
+
 **Rule registration stays autodiscovery.** `core/registry.py` walks
 `bt5.rules.catalog` with `pkgutil`; both `rules/__init__.py` and
 `rules/catalog/__init__.py` are empty, so adding a rule edits **zero** shared files —
