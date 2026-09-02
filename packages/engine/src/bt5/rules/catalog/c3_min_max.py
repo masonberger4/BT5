@@ -36,8 +36,9 @@ A band cannot run away.
 
 **Scope: this rule computes nothing in this build, and says so per host.** %MinMax
 is defined on raw codon usage FREQUENCIES -- X_ij, and the per-family X_avg,i,
-X_max,i, X_min,i. `data/codon_usage/` ships exactly one table, Sharp & Li's
-relative adaptiveness w-index, and w is not a frequency: w_ij = (count_ij + 0.5) /
+X_max,i, X_min,i. Every table `data/codon_usage/` ships is a
+relative adaptiveness w-index -- Sharp & Li's E. coli set and, since S6's #90, the
+human, mouse and CHO sets too -- and w is not a frequency: w_ij = (count_ij + 0.5) /
 max synonymous (count + 0.5), so each family is renormalised to its own peak and
 the peak is then discarded. Per family the differences survive the rescaling --
 w_ij - w_avg,i = (X_ij - X_avg,i) / K_i -- but %MinMax sums those differences
@@ -101,11 +102,14 @@ BAND_HI = 0.0
 #: HostId -> the reference-set key a per-codon usage FREQUENCY table would be
 #: looked up under, mirroring `c1_cai.CAI_REFERENCE_SET`.
 #:
-#: Deliberately empty. No shipped reference set carries frequencies: the one file
-#: in `data/codon_usage/` is a relative-adaptiveness w-index, which %MinMax cannot
-#: be computed from (module docstring). This is the whole of the wiring a frequency
-#: table needs -- add the host and its reference-set stem here and the rule is live
-#: for that host, with no other change to this file.
+#: Deliberately empty, and it stayed empty when three more tables landed. No
+#: shipped reference set carries frequencies: all four files in `data/codon_usage/`
+#: are relative-adaptiveness w-indices, which %MinMax cannot be computed from
+#: (module docstring). S6's #90 added human, mouse and CHO sets and lit up C1 for
+#: those hosts; it does nothing for C3, because per-family normalisation to a peak
+#: of 1.0 is precisely what destroys the K_i this metric needs. This is the whole
+#: of the wiring a FREQUENCY table would need -- add the host and its reference-set
+#: stem here and the rule is live for that host, with no other change to this file.
 MINMAX_REFERENCE_SET: Mapping[HostId, str] = {}
 
 #: What `TableProvider` implementations raise when a host's table is absent.
@@ -427,13 +431,14 @@ class MinMax:
                 return self._unavailable(
                     c,
                     f"no codon usage FREQUENCY reference set for host {slot.host}. "
-                    f"%MinMax is defined on raw usage frequencies, and this build "
-                    f"ships one codon usage table -- Sharp & Li's E. coli relative "
-                    f"adaptiveness w-index -- which normalises every synonymous "
-                    f"family to its own peak and discards that peak, so the "
-                    f"per-family scale %MinMax sums across families is not "
-                    f"recoverable from it. Computing %MinMax from w would produce a "
-                    f"different statistic under this one's name and citation",
+                    f"%MinMax is defined on raw usage frequencies, and every codon "
+                    f"usage table this build ships (E. coli, human, mouse, CHO) is a "
+                    f"relative adaptiveness w-index, which normalises every "
+                    f"synonymous family to its own peak and discards that peak, so "
+                    f"the per-family scale %MinMax sums across families is not "
+                    f"recoverable from any of them. Computing %MinMax from w would "
+                    f"produce a different statistic under this one's name and "
+                    f"citation",
                 )
             try:
                 freq = svc.tables.usage(reference_set)
