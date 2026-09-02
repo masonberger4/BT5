@@ -1,0 +1,747 @@
+{
+  "_provenance": {
+    "name": "Cricetulus griseus highly-expressed codon usage (relative adaptiveness w)",
+    "organism": "Cricetulus griseus",
+    "ncbi_taxid": "10029",
+    "reference_gene_set": "Canonical highly-expressed panel: cytosolic ribosomal proteins (large + small subunit), translation elongation factors, core glycolytic enzymes, and chaperonins -- an extension of the fallback reference set of docs/research/brief.md:282 (ribosomal proteins + elongation factors + GAPDH + chaperonins), widened with further core glycolytic and other high-abundance genes; resolved to RefSeq transcripts.",
+    "method": "Each gene symbol was resolved gene-first: the NCBI Gene record whose OFFICIAL symbol equals the symbol (never an alias) was found, then linked to its RefSeq RNA (curated NM_ preferred over predicted XM_). Every fetched transcript's CDS /gene was re-verified to equal the requested symbol before counting; a mismatch is dropped and listed in mismatched_symbols, never mapped to a paralog. In-frame sense codons were counted (terminal stop and any non-ACGT CDS excluded), each accession once, and w = (count + 0.5) / family_max per family, identical to bt5.codon.tables.CodonUsage.from_counts.",
+    "citation": "O'Leary NA et al. RefSeq. Nucleic Acids Res 2016;44(D1):D733-45",
+    "citation_url": "https://pubmed.ncbi.nlm.nih.gov/26553804/",
+    "source": "NCBI RefSeq via E-utilities (esearch/esummary/elink + efetch, db=nuccore)",
+    "source_url": "https://www.ncbi.nlm.nih.gov/refseq/",
+    "license": "Public domain (U.S. Government work; NCBI RefSeq is not copyrighted)",
+    "retrieved": "2026-09-02",
+    "genes_requested": 99,
+    "genes_contributing": 91,
+    "curated_nm_transcripts": 20,
+    "predicted_xm_transcripts": 71,
+    "codons_counted": 23903,
+    "sense_codons": 61,
+    "source_sha256": "095ca812fc42c75c6bc37a61742dcf4c9fb7cf7eca75577d157118a0cb9c250e",
+    "genetic_code_table": 1,
+    "unresolved_symbols": [
+      "RPL36",
+      "RPS29",
+      "ENO1",
+      "HSP90AB1"
+    ],
+    "mismatched_symbols": [
+      {
+        "symbol": "RPS19",
+        "accession": "XM_016978910.1",
+        "actual_gene": "LOC100759352"
+      }
+    ],
+    "rejected_records": [
+      "XM_003496584.5",
+      "XM_007627600.3",
+      "XM_007641235.4",
+      "XM_007641235.4",
+      "XM_007627600.3",
+      "XM_003496584.5"
+    ],
+    "contributing_accessions": [
+      {
+        "symbol": "CCT2",
+        "category": "chaperonins",
+        "accession": "XM_003508401.3",
+        "gene": "Cct2",
+        "codons": 535
+      },
+      {
+        "symbol": "CCT3",
+        "category": "chaperonins",
+        "accession": "XM_003502911.5",
+        "gene": "Cct3",
+        "codons": 545
+      },
+      {
+        "symbol": "CCT4",
+        "category": "chaperonins",
+        "accession": "XM_003502149.5",
+        "gene": "Cct4",
+        "codons": 539
+      },
+      {
+        "symbol": "CCT5",
+        "category": "chaperonins",
+        "accession": "XM_003500132.5",
+        "gene": "Cct5",
+        "codons": 541
+      },
+      {
+        "symbol": "HSP90AA1",
+        "category": "chaperonins",
+        "accession": "NM_001246821.1",
+        "gene": "Hsp90aa1",
+        "codons": 733
+      },
+      {
+        "symbol": "HSPA8",
+        "category": "chaperonins",
+        "accession": "NM_001246729.1",
+        "gene": "Hspa8",
+        "codons": 646
+      },
+      {
+        "symbol": "HSPD1",
+        "category": "chaperonins",
+        "accession": "NM_001246730.1",
+        "gene": "Hspd1",
+        "codons": 573
+      },
+      {
+        "symbol": "TCP1",
+        "category": "chaperonins",
+        "accession": "NM_001246733.1",
+        "gene": "Tcp1",
+        "codons": 556
+      },
+      {
+        "symbol": "EEF1A1",
+        "category": "elongation_factors",
+        "accession": "NM_001244402.1",
+        "gene": "Eef1a1",
+        "codons": 462
+      },
+      {
+        "symbol": "EEF1B2",
+        "category": "elongation_factors",
+        "accession": "XM_003502109.5",
+        "gene": "Eef1b2",
+        "codons": 225
+      },
+      {
+        "symbol": "EEF1D",
+        "category": "elongation_factors",
+        "accession": "XM_027403853.2",
+        "gene": "Eef1d",
+        "codons": 762
+      },
+      {
+        "symbol": "EEF1G",
+        "category": "elongation_factors",
+        "accession": "XM_003508740.5",
+        "gene": "Eef1g",
+        "codons": 437
+      },
+      {
+        "symbol": "EEF2",
+        "category": "elongation_factors",
+        "accession": "NM_001244039.1",
+        "gene": "Eef2",
+        "codons": 858
+      },
+      {
+        "symbol": "ACTB",
+        "category": "glycolytic",
+        "accession": "NM_001244575.1",
+        "gene": "Actb",
+        "codons": 375
+      },
+      {
+        "symbol": "ALDOA",
+        "category": "glycolytic",
+        "accession": "XM_003510103.4",
+        "gene": "Aldoa",
+        "codons": 364
+      },
+      {
+        "symbol": "GAPDH",
+        "category": "glycolytic",
+        "accession": "NM_001244854.2",
+        "gene": "Gapdh",
+        "codons": 333
+      },
+      {
+        "symbol": "LDHA",
+        "category": "glycolytic",
+        "accession": "NM_001244050.1",
+        "gene": "Ldha",
+        "codons": 332
+      },
+      {
+        "symbol": "PGAM1",
+        "category": "glycolytic",
+        "accession": "XM_007617182.3",
+        "gene": "Pgam1",
+        "codons": 254
+      },
+      {
+        "symbol": "PGK1",
+        "category": "glycolytic",
+        "accession": "NM_001246725.1",
+        "gene": "Pgk1",
+        "codons": 417
+      },
+      {
+        "symbol": "PKM",
+        "category": "glycolytic",
+        "accession": "XM_016973069.3",
+        "gene": "Pkm",
+        "codons": 591
+      },
+      {
+        "symbol": "TPI1",
+        "category": "glycolytic",
+        "accession": "XM_016977646.3",
+        "gene": "Tpi1",
+        "codons": 249
+      },
+      {
+        "symbol": "FTH1",
+        "category": "other_abundant",
+        "accession": "XM_007653496.4",
+        "gene": "Fth1",
+        "codons": 186
+      },
+      {
+        "symbol": "FTL",
+        "category": "other_abundant",
+        "accession": "XM_007649273.3",
+        "gene": "Ftl",
+        "codons": 183
+      },
+      {
+        "symbol": "PABPC1",
+        "category": "other_abundant",
+        "accession": "XM_003511434.4",
+        "gene": "Pabpc1",
+        "codons": 636
+      },
+      {
+        "symbol": "TUBA1B",
+        "category": "other_abundant",
+        "accession": "NM_001243979.1",
+        "gene": "Tuba1b",
+        "codons": 451
+      },
+      {
+        "symbol": "TUBB",
+        "category": "other_abundant",
+        "accession": "NM_001244097.2",
+        "gene": "Tubb",
+        "codons": 444
+      },
+      {
+        "symbol": "VIM",
+        "category": "other_abundant",
+        "accession": "XM_003503379.5",
+        "gene": "Vim",
+        "codons": 466
+      },
+      {
+        "symbol": "YWHAZ",
+        "category": "other_abundant",
+        "accession": "XM_003504324.5",
+        "gene": "Ywhaz",
+        "codons": 245
+      },
+      {
+        "symbol": "RPL10",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007652798.1",
+        "gene": "Rpl10",
+        "codons": 214
+      },
+      {
+        "symbol": "RPL10A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007649258.2",
+        "gene": "Rpl10a",
+        "codons": 217
+      },
+      {
+        "symbol": "RPL11",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003504921.5",
+        "gene": "Rpl11",
+        "codons": 178
+      },
+      {
+        "symbol": "RPL12",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007647738.2",
+        "gene": "Rpl12",
+        "codons": 165
+      },
+      {
+        "symbol": "RPL13",
+        "category": "ribosomal_large_subunit",
+        "accession": "NM_001246803.2",
+        "gene": "Rpl13",
+        "codons": 211
+      },
+      {
+        "symbol": "RPL13A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003508651.5",
+        "gene": "Rpl13a",
+        "codons": 203
+      },
+      {
+        "symbol": "RPL14",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007649675.2",
+        "gene": "Rpl14",
+        "codons": 213
+      },
+      {
+        "symbol": "RPL15",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003498210.5",
+        "gene": "Rpl15",
+        "codons": 204
+      },
+      {
+        "symbol": "RPL18",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007649267.2",
+        "gene": "Rpl18",
+        "codons": 188
+      },
+      {
+        "symbol": "RPL18A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007637893.4",
+        "gene": "Rpl18a",
+        "codons": 176
+      },
+      {
+        "symbol": "RPL19",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003499579.5",
+        "gene": "Rpl19",
+        "codons": 196
+      },
+      {
+        "symbol": "RPL21",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003496662.5",
+        "gene": "Rpl21",
+        "codons": 160
+      },
+      {
+        "symbol": "RPL23",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003499576.5",
+        "gene": "Rpl23",
+        "codons": 140
+      },
+      {
+        "symbol": "RPL23A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003513829.4",
+        "gene": "Rpl23a",
+        "codons": 156
+      },
+      {
+        "symbol": "RPL24",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003506428.5",
+        "gene": "Rpl24",
+        "codons": 157
+      },
+      {
+        "symbol": "RPL26",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003497170.5",
+        "gene": "Rpl26",
+        "codons": 145
+      },
+      {
+        "symbol": "RPL27",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003504612.4",
+        "gene": "Rpl27",
+        "codons": 136
+      },
+      {
+        "symbol": "RPL27A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003509902.4",
+        "gene": "Rpl27a",
+        "codons": 148
+      },
+      {
+        "symbol": "RPL28",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007648850.2",
+        "gene": "Rpl28",
+        "codons": 137
+      },
+      {
+        "symbol": "RPL3",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003509460.5",
+        "gene": "Rpl3",
+        "codons": 403
+      },
+      {
+        "symbol": "RPL30",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007644583.1",
+        "gene": "Rpl30",
+        "codons": 115
+      },
+      {
+        "symbol": "RPL31",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003503327.5",
+        "gene": "Rpl31",
+        "codons": 125
+      },
+      {
+        "symbol": "RPL32",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003507349.5",
+        "gene": "Rpl32",
+        "codons": 135
+      },
+      {
+        "symbol": "RPL34",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003514042.5",
+        "gene": "Rpl34",
+        "codons": 117
+      },
+      {
+        "symbol": "RPL35",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003508519.5",
+        "gene": "Rpl35",
+        "codons": 123
+      },
+      {
+        "symbol": "RPL35A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003495404.5",
+        "gene": "Rpl35a",
+        "codons": 110
+      },
+      {
+        "symbol": "RPL37",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003503290.5",
+        "gene": "Rpl37",
+        "codons": 97
+      },
+      {
+        "symbol": "RPL37A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003498996.5",
+        "gene": "Rpl37a",
+        "codons": 92
+      },
+      {
+        "symbol": "RPL38",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007643457.1",
+        "gene": "Rpl38",
+        "codons": 83
+      },
+      {
+        "symbol": "RPL5",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007642956.2",
+        "gene": "Rpl5",
+        "codons": 297
+      },
+      {
+        "symbol": "RPL7",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007648397.4",
+        "gene": "Rpl7",
+        "codons": 248
+      },
+      {
+        "symbol": "RPL7A",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007652259.3",
+        "gene": "Rpl7a",
+        "codons": 266
+      },
+      {
+        "symbol": "RPL8",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003515662.5",
+        "gene": "Rpl8",
+        "codons": 257
+      },
+      {
+        "symbol": "RPL9",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003515312.4",
+        "gene": "Rpl9",
+        "codons": 192
+      },
+      {
+        "symbol": "RPLP0",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003495915.5",
+        "gene": "Rplp0",
+        "codons": 322
+      },
+      {
+        "symbol": "RPLP1",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_007635530.3",
+        "gene": "Rplp1",
+        "codons": 114
+      },
+      {
+        "symbol": "RPLP2",
+        "category": "ribosomal_large_subunit",
+        "accession": "XM_003509766.5",
+        "gene": "Rplp2",
+        "codons": 115
+      },
+      {
+        "symbol": "RPS10",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007646805.4",
+        "gene": "Rps10",
+        "codons": 165
+      },
+      {
+        "symbol": "RPS11",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003508652.5",
+        "gene": "Rps11",
+        "codons": 158
+      },
+      {
+        "symbol": "RPS12",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007651497.3",
+        "gene": "Rps12",
+        "codons": 132
+      },
+      {
+        "symbol": "RPS13",
+        "category": "ribosomal_small_subunit",
+        "accession": "NM_001244533.1",
+        "gene": "Rps13",
+        "codons": 151
+      },
+      {
+        "symbol": "RPS14",
+        "category": "ribosomal_small_subunit",
+        "accession": "NM_001244519.1",
+        "gene": "Rps14",
+        "codons": 151
+      },
+      {
+        "symbol": "RPS15",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007643196.2",
+        "gene": "Rps15",
+        "codons": 118
+      },
+      {
+        "symbol": "RPS15A",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003514958.4",
+        "gene": "Rps15a",
+        "codons": 130
+      },
+      {
+        "symbol": "RPS16",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003503853.3",
+        "gene": "Rps16",
+        "codons": 146
+      },
+      {
+        "symbol": "RPS17",
+        "category": "ribosomal_small_subunit",
+        "accession": "NM_001244040.1",
+        "gene": "Rps17",
+        "codons": 135
+      },
+      {
+        "symbol": "RPS18",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007651416.2",
+        "gene": "Rps18",
+        "codons": 152
+      },
+      {
+        "symbol": "RPS2",
+        "category": "ribosomal_small_subunit",
+        "accession": "NM_001244043.1",
+        "gene": "Rps2",
+        "codons": 293
+      },
+      {
+        "symbol": "RPS20",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007650006.1",
+        "gene": "Rps20",
+        "codons": 119
+      },
+      {
+        "symbol": "RPS23",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003503725.5",
+        "gene": "Rps23",
+        "codons": 143
+      },
+      {
+        "symbol": "RPS24",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007643851.2",
+        "gene": "Rps24",
+        "codons": 118
+      },
+      {
+        "symbol": "RPS25",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003511566.5",
+        "gene": "Rps25",
+        "codons": 125
+      },
+      {
+        "symbol": "RPS27",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003501623.5",
+        "gene": "Rps27",
+        "codons": 84
+      },
+      {
+        "symbol": "RPS27A",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003503975.5",
+        "gene": "Rps27a",
+        "codons": 156
+      },
+      {
+        "symbol": "RPS28",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007651132.3",
+        "gene": "Rps28",
+        "codons": 69
+      },
+      {
+        "symbol": "RPS3",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007653259.1",
+        "gene": "Rps3",
+        "codons": 243
+      },
+      {
+        "symbol": "RPS3A",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003504173.5",
+        "gene": "Rps3a",
+        "codons": 264
+      },
+      {
+        "symbol": "RPS4X",
+        "category": "ribosomal_small_subunit",
+        "accession": "NM_001246673.1",
+        "gene": "Rps4x",
+        "codons": 263
+      },
+      {
+        "symbol": "RPS5",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_027431211.2",
+        "gene": "Rps5",
+        "codons": 204
+      },
+      {
+        "symbol": "RPS7",
+        "category": "ribosomal_small_subunit",
+        "accession": "NM_001285924.1",
+        "gene": "Rps7",
+        "codons": 194
+      },
+      {
+        "symbol": "RPS8",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_003497386.4",
+        "gene": "Rps8",
+        "codons": 208
+      },
+      {
+        "symbol": "RPS9",
+        "category": "ribosomal_small_subunit",
+        "accession": "XM_007650265.3",
+        "gene": "Rps9",
+        "codons": 194
+      },
+      {
+        "symbol": "RPSA",
+        "category": "ribosomal_small_subunit",
+        "accession": "NM_001244033.2",
+        "gene": "Rpsa",
+        "codons": 295
+      }
+    ],
+    "note": "61 sense codons; the three stops are excluded because CAI is a geometric mean over sense codons only. ATG and TGG are 1.0 by definition. This is a highly-expressed reference set, NOT a genomic average: swapping it changes every CAI value."
+  },
+  "w": {
+    "AAA": 0.489221,
+    "AAG": 1.0,
+    "AAC": 1.0,
+    "AAT": 0.78335,
+    "ACA": 0.605606,
+    "ACC": 1.0,
+    "ACG": 0.201201,
+    "ACT": 0.691692,
+    "AGA": 0.756795,
+    "AGG": 0.825465,
+    "CGA": 0.733906,
+    "CGC": 1.0,
+    "CGG": 0.756795,
+    "CGT": 0.685265,
+    "AGC": 0.745297,
+    "AGT": 0.493488,
+    "TCA": 0.354559,
+    "TCC": 1.0,
+    "TCG": 0.166425,
+    "TCT": 0.988423,
+    "ATA": 0.129461,
+    "ATC": 1.0,
+    "ATT": 0.816655,
+    "ATG": 1.0,
+    "CAA": 0.249819,
+    "CAG": 1.0,
+    "CAC": 1.0,
+    "CAT": 0.746193,
+    "CCA": 0.753804,
+    "CCC": 0.930844,
+    "CCG": 0.200553,
+    "CCT": 1.0,
+    "CTA": 0.168637,
+    "CTC": 0.444928,
+    "CTG": 1.0,
+    "CTT": 0.346609,
+    "TTA": 0.095208,
+    "TTG": 0.335408,
+    "GAA": 0.668589,
+    "GAG": 1.0,
+    "GAC": 1.0,
+    "GAT": 0.990107,
+    "GCA": 0.50096,
+    "GCC": 1.0,
+    "GCG": 0.161868,
+    "GCT": 0.912988,
+    "GGA": 0.658091,
+    "GGC": 1.0,
+    "GGG": 0.482158,
+    "GGT": 0.739419,
+    "GTA": 0.236622,
+    "GTC": 0.548678,
+    "GTG": 1.0,
+    "GTT": 0.51902,
+    "TAC": 1.0,
+    "TAT": 0.640156,
+    "TGC": 1.0,
+    "TGT": 0.99403,
+    "TGG": 1.0,
+    "TTC": 1.0,
+    "TTT": 0.771156
+  }
+}
