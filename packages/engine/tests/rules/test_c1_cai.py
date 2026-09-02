@@ -31,7 +31,14 @@ from bt5.core.registry import discover, get
 from bt5.core.services import Services
 from bt5.core.spec import Direction, Enforcement, Evaluation, Evidence
 from bt5.core.types import Construct, Interval, Segment, SegmentKind, Strand, Topology
-from bt5.rules.catalog.c1_cai import BAND_HI, BAND_LO, CAI_REFERENCE_SET, CodonAdaptationIndex
+from bt5.rules.catalog.c1_cai import (
+    BAND_HI,
+    BAND_LO,
+    CAI_BAND,
+    CAI_REFERENCE_SET,
+    CEILING_FRACTION_OF_HEADROOM,
+    CodonAdaptationIndex,
+)
 from bt5.vector.kmers import ConstructKmerIndex
 from conftest import construct, wrapping_construct
 
@@ -395,6 +402,126 @@ class TestMammalianHosts:
             resolved = resolve(preset)
             assert resolved.unimplemented == ()
             assert "c1_cai" in resolved.weights
+
+
+class TestBandCalibration:
+    """(0.70, 0.90) is E. coli's band and does not transfer unchanged.
+
+    brief.md:77 offers those numbers as an EXAMPLE -- "e.g. 0.70-0.90, or +/-0.1
+    of host median" -- and they were calibrated on a strong-bias organism. The
+    mammalian w-tables are nearly flat (brief.md:206: "isochore GC, not
+    selection"), so the same floor sits ~0.04 above chance instead of ~0.46 and
+    stops discriminating. These tests re-derive every constant in `CAI_BAND` from
+    the shipped tables so it cannot drift away from the data it came from.
+    """
+
+    AAS = "ACDEFGHIKLMNPQRSTVWY"
+
+    def _chance(self, key: str, table_id: int) -> float:
+        """CAI of a random synonymous encoding, composition-neutral and exact.
+
+        No RNG: per informative family the expectation of log w is the mean of
+        log w over the family, so the geometric mean of family geometric means
+        is the expected CAI outright.
+        """
+        provider = FileTableProvider()
+        w, code = provider.weights(key, "cai"), provider.genetic_code(table_id)
+        logs = []
+        for aa in self.AAS:
+            fam = [w[c] for c in code.synonymous_codons(aa) if c in w and w[c] > 0]
+            if len(fam) > 1:
+                logs.append(sum(math.log(x) for x in fam) / len(fam))
+        return math.exp(sum(logs) / len(logs))
+
+    def test_the_floor_barely_clears_chance_on_the_mammalian_tables(self) -> None:
+        """The measurement the band change rests on. If this ever stops holding,
+        the per-host band needs re-deriving rather than trusting."""
+        ecoli = self._chance("sharp_li_1987_ecoli_w", 11)
+        assert BAND_LO - ecoli > 0.4, "E. coli floor should sit far above chance"
+        for key in (
+            "human_highly_expressed_refseq_w",
+            "mouse_highly_expressed_refseq_w",
+            "cho_highly_expressed_refseq_w",
+        ):
+            assert BAND_LO - self._chance(key, 1) < 0.1, f"{key}: floor near chance"
+
+    @pytest.mark.parametrize(
+        ("host", "key"),
+        [
+            (HostId.HUMAN, "human_highly_expressed_refseq_w"),
+            (HostId.HEK293, "human_highly_expressed_refseq_w"),
+            (HostId.MOUSE, "mouse_highly_expressed_refseq_w"),
+            (HostId.CHO, "cho_highly_expressed_refseq_w"),
+        ],
+    )
+    def test_each_ceiling_is_that_hosts_share_of_its_own_headroom(
+        self, host: HostId, key: str
+    ) -> None:
+        """Re-derives the constant rather than restating it: the ceiling is the
+        same fraction of chance-to-1.0 that E. coli's 0.90 is of its own."""
+        chance = self._chance(key, 1)
+        expected = chance + CEILING_FRACTION_OF_HEADROOM * (1.0 - chance)
+        assert CAI_BAND[host][1] == pytest.approx(expected, abs=5e-4)
+
+    def test_the_ceiling_fraction_is_e_colis_published_0_90(self) -> None:
+        ecoli = self._chance("sharp_li_1987_ecoli_w", 11)
+        assert (
+            pytest.approx((BAND_HI - ecoli) / (1.0 - ecoli), abs=5e-4)
+            == CEILING_FRACTION_OF_HEADROOM
+        )
+
+    def test_e_colis_band_is_unchanged(self) -> None:
+        """The published pair, untouched. A change that moved it would be a
+        different rule, not a rescaling."""
+        for host in (HostId.E_COLI_K12, HostId.E_COLI_BL21):
+            assert CAI_BAND[host] == (BAND_LO, BAND_HI) == (0.70, 0.90)
+
+    def test_the_mammalian_floor_is_inert_and_a_rare_cds_is_not_a_finding(self) -> None:
+        """The behaviour the whole change exists for.
+
+        A floor rescaled to keep E. coli's headroom would sit at ~0.864 -- above
+        where a native human CDS sits -- so C1 would flag native sequence as
+        "rare codons across the ORF" and hand the optimizer pressure to raise its
+        CAI. brief.md:206 marks the CAI weight "very low" for CHO/HEK with default
+        mode "Native or harmonize", and brief.md:13's Expi293F benchmark found
+        optimization did not increase yields. So nothing here claims a low-CAI
+        mammalian CDS is worse.
+        """
+        for host in (HostId.HEK293, HostId.MOUSE, HostId.CHO):
+            assert CAI_BAND[host][0] == 0.0
+            ev = evaluate(construct(RARE), context(slot("producer", host, Modality.LENTIVIRAL, 1)))
+            assert ev.passes, f"{host}: an inert floor must not breach"
+            assert ev.binding_side is None
+
+    def test_the_mammalian_ceiling_still_bites(self) -> None:
+        """Inert floor, live ceiling. Max-CAI collapse is MECHANICAL -- it drives
+        each amino acid onto one codon and manufactures perfect direct repeats --
+        so it transfers across organisms even where the floor does not."""
+        provider = FileTableProvider()
+        w, code = (
+            provider.weights("human_highly_expressed_refseq_w", "cai"),
+            provider.genetic_code(1),
+        )
+        # The human-optimal encoding of a Leu/Glu/Gly/Ile/Lys peptide, built from
+        # the table so it cannot rot if the table is regenerated.
+        best = {
+            aa: max((c for c in code.synonymous_codons(aa) if c in w), key=lambda c: w[c])
+            for aa in "LEGIK"
+        }
+        cds = "ATG" + "".join(best[a] for a in "LEGIK") * 4 + "TAA"
+        ev = evaluate(
+            construct(cds), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        assert not ev.passes
+        assert ev.binding_side == "upper"
+        assert ev.breaches[0].detail["band_hi"] == CAI_BAND[HostId.HEK293][1]
+
+    def test_an_explicit_bound_still_overrides_the_host_band(self) -> None:
+        """The user's own number wins, per side, so setting one does not discard
+        the other -- e2_gc_band's discipline."""
+        rule = CodonAdaptationIndex(cai_min=0.50)
+        assert rule._band_for(HostId.HEK293) == (0.50, CAI_BAND[HostId.HEK293][1])
+        assert rule._band_for(HostId.E_COLI_K12) == (0.50, BAND_HI)
 
 
 class TestGating:

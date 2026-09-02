@@ -21,11 +21,51 @@ distance in it: codon usage is a property of the organism's translational machin
 of the cell line. Stated rather than hidden, as before: the set used travels in every
 breach's `detail["reference_set"]`.
 
-**Measured, not assumed.** Against the in-band fixture the four new hosts return CAI
-0.807 (human, HEK293), 0.788 (mouse) and 0.801 (CHO) versus E. coli's 0.763 — distinct
-numbers from distinct tables, all inside the (0.70, 0.90) band. A test asserts a
-mammalian CAI is *not* the E. coli number, which is the failure the unavailable path
-existed to prevent and which only becomes testable now that a real alternative exists.
+**The band did not transfer, and the first draft of this change shipped it anyway.**
+`rule-auditor` caught it before the PR left draft. brief.md:77 offers its numbers as an
+example — "Target a band (e.g. 0.70–0.90, or ±0.1 of host median)" — and they were
+calibrated on E. coli. Measured on the shipped tables, with a composition-neutral random
+synonymous encoding as the chance baseline:
+
+| table | chance CAI | the 0.70 floor sits |
+|---|---|---|
+| `sharp_li_1987_ecoli_w` | 0.238 | **0.46 above chance** |
+| `human_highly_expressed_refseq_w` | 0.656 | 0.04 above chance |
+| `mouse_highly_expressed_refseq_w` | 0.633 | 0.07 above chance |
+| `cho_highly_expressed_refseq_w` | 0.660 | 0.04 above chance |
+
+Mammalian bias is weak (brief.md:206, "isochore GC, not selection"), so the tables are
+near-flat and the same floor loses nearly all its discriminating power. `CAI_BAND` now
+holds a band per host, and the two halves are treated differently because they behave
+differently:
+
+- **The floor is 0.0 for the weak-bias hosts and can never bind.** The obvious repair —
+  rescale the floor to preserve E. coli's headroom — was tried and rejected: it puts
+  human's floor at **0.864**, *above* where a native human CDS sits, so C1 would flag
+  native sequence as "rare codons across the ORF" and hand the optimizer pressure to
+  raise its CAI. That is the opposite of what the evidence says. brief.md:206 grades the
+  CAI weight "very low" for CHO/HEK with default mode "Native or harmonize"; brief.md:215
+  marks per-host evidence "low for human, mouse, CHO, Sf9, Tni"; brief.md:13's Expi293F
+  benchmark found optimization did not increase yields; and a 2026 Pichia study found CAI
+  *negatively* correlated with titer (−0.81 for trastuzumab). Nothing here claims a
+  low-CAI mammalian CDS is worse than a native one.
+- **The ceiling does transfer and stays operative**, scaled to each host's own
+  chance-to-1.0 headroom so it means the same thing: E. coli's 0.90 is 0.8687 of its
+  headroom, and every other ceiling is that same fraction of its own (human/HEK293
+  0.9548, mouse 0.9519, CHO 0.9553). Max-CAI collapse is a *mechanical* failure — it
+  drives each amino acid onto one codon and manufactures perfect direct repeats — and
+  that is true of any organism. **E. coli's pair is unchanged at exactly (0.70, 0.90).**
+
+`TestBandCalibration` re-derives every constant from the shipped tables, so they cannot
+drift from the data they came from, and pins that the mammalian floor is inert while the
+mammalian ceiling still bites.
+
+**What the earlier "measured, not assumed" claim was worth.** It said the four hosts
+return 0.807 / 0.788 / 0.801 against E. coli's 0.763, "all inside the band". The
+arithmetic was right and the conclusion was hollow: `IN_BAND` is a five-codon repeat
+chosen to land in-band *for E. coli*, and landing inside a band whose floor is four
+hundredths above chance is close to unavoidable. It measured that the tables are
+distinct, which is a different proposition from the band being valid.
 
 **C3 stays dark, and the reason is structural.** All four shipped tables — including the
 three new ones — are relative-adaptiveness w-indices: `w = (count + 0.5) / family_max`,
@@ -51,6 +91,12 @@ out of scope; this is its own change, in the same file, under one review.
   which is the honest state, not an oversight. A test now pins that this is on purpose.
 - *Computing %MinMax from the new w-tables because there are more of them now.* Three
   more of the wrong shape is still the wrong shape.
+- *Rescaling the floor to preserve E. coli's headroom.* Measured at 0.864 for human —
+  above native sequence — so it would manufacture the exact pressure the evidence
+  says not to apply. Rejected on the number, not on principle.
+- *Leaving the E. coli band on the mammalian hosts and documenting the caveat.*
+  A disclosed wrong threshold is still a live 0.2-weighted objective pushing on
+  native sequence; a comment does not stop a solver.
 - *Giving HEK293 its own table.* There is no HEK293-specific codon usage to have; the
   cell line's translational machinery is human.
 - *Folding this into the S3 rules PR (#92).* It was already reviewed and attested at a
@@ -62,5 +108,13 @@ contents, so it could only ever fail by going stale. It is replaced by a check t
 mapped host's table actually exists on disk — which is the failure that matters (a map
 entry without a file turns an honest `unavailable` into a `FileNotFoundError` from inside
 a rule) and which keeps working as the map grows.
+
+**Still open, and not fixed here.** brief.md:215 asks for a per-host evidence-strength
+badge — high for E. coli, low for human/mouse/CHO/Sf9/Tni. `Spec.evidence` and
+`default_weight` are single ClassVars with no per-host channel, so C1 ships one
+`CONTESTED` badge and one 0.2 weight across hosts whose evidence the brief grades
+differently. Expressing that needs a `core/` change (a new field or a per-host accessor),
+which is MAJOR under CLAUDE.md §2a and belongs to an RFC, not to this branch. The band is
+the half that was expressible here; the weight is not.
 
 **Where:** branch `claude/s3-c1-mammalian-hosts`.

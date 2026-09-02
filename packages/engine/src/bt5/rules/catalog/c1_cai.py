@@ -96,13 +96,22 @@ BAND_HI = 0.90
 #: `data/codon_usage/`. A host absent from this map has no CAI reference set in
 #: this build and C1 reports its objective unavailable rather than borrowing one.
 #:
-#: TWO entries are same-species approximations, and both are stated rather than
+#: THREE entries are approximations, and all three are stated rather than
 #: hidden: the reference set used travels in every breach's
 #: `detail["reference_set"]`, so a report can always name what it scored against.
 #:
 #: - BL21 shares K-12's entry. Sharp & Li's w-index was computed from
 #:   highly-expressed E. coli K-12 genes; applying it to the B-strain is
 #:   universal practice for the standard T7 expression host.
+#: - CHO maps to a whole-organism *Cricetulus griseus* table, and this is the
+#:   WEAKEST of the three: CHO is an aneuploid, heavily rearranged line, and
+#:   78% of that table's contributing transcripts (71 of 91) are RefSeq
+#:   PREDICTED `XM_` models rather than curated `NM_` ones, because C. griseus
+#:   RefSeq is largely gene-prediction based. A predicted CDS can carry
+#:   model-derived frame or boundary error, and codon counts are exactly what
+#:   that corrupts. Disclosed by S6 in its own `_provenance`; repeated here
+#:   because `TableProvider.weights()` returns only the bare `w` map, so a
+#:   reader of a CHO breach never sees the provenance otherwise.
 #: - HEK293 shares HUMAN's entry. HEK293 is a Homo sapiens cell line, so this is
 #:   the same move one taxon down, and it is the mapping the data lane shipped
 #:   the human set FOR: `docs/decisions/2026-09-02-s6-host-data-and-real-backbone.md`
@@ -115,6 +124,59 @@ BAND_HI = 0.90
 #: and their RefSeq coverage is materially messier). That is the correct state,
 #: not an oversight: a host absent from this map has no reference set in this
 #: build, and C1 says so rather than borrowing one.
+#: HostId -> the band C1 actually scores against, because (0.70, 0.90) does not
+#: mean the same thing on every host.
+#:
+#: brief.md:77 offers its numbers as an EXAMPLE -- "Target a band (e.g. 0.70-0.90,
+#: or +/-0.1 of host median)" -- and they were calibrated on E. coli, a strong-bias
+#: organism. Measured on the shipped tables, with a composition-neutral random
+#: synonymous encoding as the chance baseline:
+#:
+#:     E. coli  chance CAI 0.238  -> the 0.70 floor sits 0.46 ABOVE chance
+#:     human    chance CAI 0.656  -> 0.70 sits 0.04 above chance
+#:     mouse    chance CAI 0.633  -> 0.07 above
+#:     CHO      chance CAI 0.660  -> 0.04 above
+#:
+#: Mammalian codon bias is weak (brief.md:206: "isochore GC, not selection"), so
+#: the w-tables are nearly flat and the same floor loses almost all of its
+#: discriminating power. Two halves, and they do not transfer the same way:
+#:
+#: **The floor does not transfer at all, and is inert for the weak-bias hosts.**
+#: Rescaling it to keep E. coli's headroom would put human's floor at 0.864 --
+#: ABOVE where a native human CDS sits -- so C1 would flag native sequence as
+#: "rare codons across the ORF" and hand the optimizer pressure to raise its CAI.
+#: That is precisely what the evidence forbids: brief.md:206 marks the CAI weight
+#: "very low" for CHO/HEK and the default mode "Native or harmonize", and
+#: brief.md:13's 18-glycoprotein / 90-screen Expi293F benchmark concluded "codon
+#: optimization to make human proteins, in a human cell line, did not generate
+#: increased yields", with native constructs most consistent. There is no evidence
+#: that a low-CAI mammalian CDS is worse, so nothing here claims one. The floor is
+#: 0.0 and can never bind -- declared, like c3_min_max's, rather than left to look
+#: symmetric.
+#:
+#: **The ceiling does transfer, and is the operative half.** Max-CAI collapse is a
+#: MECHANICAL failure -- it drives each amino acid onto one codon and manufactures
+#: perfect direct repeats -- and that is true of any organism. It is scaled to each
+#: host's own chance-to-1.0 headroom so it means the same thing: E. coli's 0.90 is
+#: 0.8687 of that headroom, and every ceiling below is that same fraction of its
+#: own host's. E. coli's pair is therefore unchanged at exactly (0.70, 0.90).
+#:
+#: `TestBandCalibration` re-derives every number here from the shipped tables, so
+#: these constants cannot drift away from the data they came from.
+CAI_BAND: Mapping[HostId, tuple[float, float]] = {
+    HostId.E_COLI_K12: (BAND_LO, BAND_HI),
+    HostId.E_COLI_BL21: (BAND_LO, BAND_HI),
+    HostId.HUMAN: (0.0, 0.9548),
+    HostId.HEK293: (0.0, 0.9548),
+    HostId.MOUSE: (0.0, 0.9519),
+    HostId.CHO: (0.0, 0.9553),
+}
+
+#: The fraction of a host's chance-to-1.0 headroom that its ceiling sits at,
+#: taken from E. coli's published 0.90. The one number the table above is
+#: derived from; the test re-derives it too.
+CEILING_FRACTION_OF_HEADROOM = 0.8687
+
 CAI_REFERENCE_SET: Mapping[HostId, str] = {
     HostId.E_COLI_K12: "sharp_li_1987_ecoli_w",
     HostId.E_COLI_BL21: "sharp_li_1987_ecoli_w",
@@ -179,6 +241,31 @@ class CodonAdaptationIndex:
             "https://pmc.ncbi.nlm.nih.gov/articles/PMC5054687/",
             2016,
             sign="supports",
+        ),
+        Citation(
+            "The evidence that scopes this rule BY HOST, and the reason the "
+            "mammalian floor is inert. brief.md:206 grades the CAI weight 'very "
+            "low (isochore GC, not selection)' for CHO/HEK with default mode "
+            "'Native or harmonize', and brief.md:215 marks the per-host evidence "
+            "strength 'low for human, mouse, CHO, Sf9, Tni' against high for "
+            "E. coli. An 18-glycoprotein / 90-screen Expi293F benchmark concluded "
+            "'codon optimization to make human proteins, in a human cell line, did "
+            "not generate increased yields', with native and harmonized constructs "
+            "most consistent -- so nothing here claims a low-CAI mammalian CDS is "
+            "worse than a native one",
+            "https://proteininnovation.org/2026/03/codon-optimization-native-codon-mammalian-protein-expression/",
+            2026,
+            sign="refutes",
+        ),
+        Citation(
+            "A 2026 Pichia study found CAI NEGATIVELY correlated with titer "
+            "(coefficient -0.81 for trastuzumab). Cited as the sharpest statement "
+            "of the direction this rule must not assume: higher CAI is not "
+            "reliably better, which is why the band has a ceiling and why the "
+            "weak-bias hosts have no operative floor",
+            "https://europepmc.org/article/MED/41701818",
+            2026,
+            sign="refutes",
         ),
         Citation(
             "Ranaghan 2021 benchmarked nine commercial and academic optimizers and "
@@ -280,6 +367,11 @@ class CodonAdaptationIndex:
             )
         self.cai_min = cai_min
         self.cai_max = cai_max
+        # An explicit bound is the user's own number and wins over the per-host
+        # band; tracked per side so a cai_min override does not silence the
+        # host's ceiling, the discipline e2_gc_band applies per vendor.
+        self._lo_override = cai_min != BAND_LO
+        self._hi_override = cai_max != BAND_HI
 
     def gate(self, slot: ContextSlot) -> bool:
         """Every slot whose protein is actually translated.
@@ -329,7 +421,8 @@ class CodonAdaptationIndex:
         if not editable:
             return self._unavailable(c, "no designable CDS to compute codon adaptation over")
 
-        per_slot: list[tuple[ContextSlot, str, float, int]] = []
+        # Each slot carries its OWN band: the hosts do not share one.
+        per_slot: list[tuple[ContextSlot, str, float, int, tuple[float, float]]] = []
         for slot in slots:
             reference_set = CAI_REFERENCE_SET.get(slot.host)
             if reference_set is None:
@@ -373,25 +466,36 @@ class CodonAdaptationIndex:
                     "single-codon family (ATG/TGG under most tables), which carry no "
                     "codon-choice information and are excluded from CAI by definition",
                 )
-            per_slot.append((slot, reference_set, math.exp(sum(logs) / len(logs)), len(logs)))
+            per_slot.append(
+                (
+                    slot,
+                    reference_set,
+                    math.exp(sum(logs) / len(logs)),
+                    len(logs),
+                    self._band_for(slot.host),
+                )
+            )
 
-        # The slot furthest OUTSIDE the band binds, and among in-band slots the one
-        # furthest from the band's middle. Averaging CAI across slots would let a
-        # comfortable slot hide one at 0.97, and 0.97 is the finding that matters.
-        # The -1.0 offset keeps every in-band slot strictly below every breaching
-        # one, so a breach always outranks an in-band slot however central it is.
-        mid = (self.cai_min + self.cai_max) / 2
+        # The slot furthest OUTSIDE ITS OWN band binds, and among in-band slots the
+        # one furthest from its band's middle. Averaging CAI across slots would let
+        # a comfortable slot hide one at 0.97, and 0.97 is the finding that matters.
+        # Comparing raw CAI across slots would be worse still now that the bands
+        # differ per host: 0.85 is comfortably in band for human and a breach for
+        # E. coli. The -1.0 offset keeps every in-band slot strictly below every
+        # breaching one, so a breach always outranks an in-band slot.
 
-        def rank(row: tuple[ContextSlot, str, float, int]) -> float:
-            dev = self._deviation(row[2])
-            return dev if dev > 0.0 else -abs(row[2] - mid) - 1.0
+        def rank(row: tuple[ContextSlot, str, float, int, tuple[float, float]]) -> float:
+            lo, hi = row[4]
+            dev = self._deviation(row[2], row[4])
+            return dev if dev > 0.0 else -abs(row[2] - (lo + hi) / 2) - 1.0
 
-        bound, reference_set, cai, n = max(per_slot, key=rank)
+        bound, reference_set, cai, n, band = max(per_slot, key=rank)
+        cai_min, cai_max = band
 
-        side = self._side(cai)
+        side = self._side(cai, band)
         breaches: list[Breach] = []
         if side is not None:
-            edge = self.cai_min if side == "lower" else self.cai_max
+            edge = cai_min if side == "lower" else cai_max
             why = (
                 "rare codons across the ORF"
                 if side == "lower"
@@ -404,11 +508,11 @@ class CodonAdaptationIndex:
                     # WHOLE_SCOPE: no sub-interval is "the" reason a geometric mean
                     # over the whole ORF left the band, so the finding is the CDS.
                     interval=Interval(editable[0].start, editable[-1].end),
-                    magnitude=self._deviation(cai),
+                    magnitude=self._deviation(cai, band),
                     message=(
                         f"CAI {cai:.3f} for the {bound.role} slot ({bound.host}, "
                         f"{reference_set}) is outside the target band "
-                        f"[{self.cai_min:.2f}, {self.cai_max:.2f}] ({side} bound "
+                        f"[{cai_min:.2f}, {cai_max:.2f}] ({side} bound "
                         f"binding, {'under' if side == 'lower' else 'over'} "
                         f"{edge:.2f}), indicating {why}. CAI is a soft band and a "
                         f"descriptive statistic: r = 0.14 (not significant) against "
@@ -422,8 +526,8 @@ class CodonAdaptationIndex:
                     detail={
                         "cai": cai,
                         "binding_side": side,
-                        "band_lo": self.cai_min,
-                        "band_hi": self.cai_max,
+                        "band_lo": cai_min,
+                        "band_hi": cai_max,
                         "host": str(bound.host),
                         # The reference set is part of CAI's definition: the same
                         # CDS scored against another set is a different number, so
@@ -450,19 +554,34 @@ class CodonAdaptationIndex:
 
     # -- internals ----------------------------------------------------------
 
-    def _side(self, cai: float) -> str | None:
-        if cai < self.cai_min:
+    def _band_for(self, host: HostId) -> tuple[float, float]:
+        """The band this host is actually scored against.
+
+        `CAI_BAND` first, the ClassVar envelope for a host not in it, and an
+        explicit constructor bound over either -- per side, so setting one does
+        not discard the other.
+        """
+        lo, hi = CAI_BAND.get(host, (BAND_LO, BAND_HI))
+        return (
+            self.cai_min if self._lo_override else lo,
+            self.cai_max if self._hi_override else hi,
+        )
+
+    def _side(self, cai: float, band: tuple[float, float]) -> str | None:
+        lo, hi = band
+        if cai < lo:
             return "lower"
-        if cai > self.cai_max:
+        if cai > hi:
             return "upper"
         return None
 
-    def _deviation(self, cai: float) -> float:
+    def _deviation(self, cai: float, band: tuple[float, float]) -> float:
         """Distance outside the band; 0.0 when in band. Rule-native magnitude."""
-        if cai < self.cai_min:
-            return self.cai_min - cai
-        if cai > self.cai_max:
-            return cai - self.cai_max
+        lo, hi = band
+        if cai < lo:
+            return lo - cai
+        if cai > hi:
+            return cai - hi
         return 0.0
 
     def _codons(
