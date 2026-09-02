@@ -162,4 +162,60 @@ cites `core/spec.py:259` for `strand_of_interest`; that line is blank — the fi
 `LatticeTerms`' own docstring (`core/spec.py:191`) says to read `packaged_strand` from the
 context; no such attribute exists.
 
+---
+
+## Addendum, same day — both optional scans ship OFF, and why that is not a perf hack
+
+Found while implementing, after the note above was committed. Recorded here rather than
+in a second file because it is the same decision: what `d3_splicing` actually enforces.
+
+**Symptom.** With `report_coarse` and `scan_acceptors` defaulting on, the first
+end-to-end design test (`tests/design/test_skeleton.py::TestEndToEnd`) went from passing
+to not finishing in 500 s. `evaluate()` cost 8.7 ms on a 5 kb circular construct and
+emitted **116 breaches, of which 2 were strong**. It runs once per candidate, up to 256
+per repair iteration, so 114 breaches of noise were being re-derived tens of thousands of
+times and were also dominating `_aggregate`'s breach count — the cross-rule currency the
+solver steers on.
+
+**Decided, and the scientific reason comes first in both cases:**
+
+1. **`report_coarse=False`.** `GTNNG` is 5 nt with two free positions, so
+   P = 1/4³ = 1/64 per position — **~78 hits on a 5 kb plasmid of random sequence**, and
+   the measurement produced exactly 78. A screen that fires 78 times by chance on a clean
+   construct reports noise, not findings. `brief.md:90` already grades a ≤5-mer soft-only;
+   this goes one step further and makes it opt-in. This is the same failure mode as the
+   E4 row `brief.md:141` struck through on 2026-08-28 — *a threshold below the chance
+   floor* — arrived at independently, which is why it is called out rather than quietly
+   defaulted.
+2. **`scan_acceptors=False`.** The stronger reason is not cost. `brief.md:103` **flags**
+   acceptors and deliberately states no hard cutoff, but `enforcement_for` is per-slot,
+   not per-breach — so an acceptor breach emitted by this rule inherits the donor half's
+   `HARD_REPAIR` on a lentiviral slot and the solver starts *chasing* sites the brief
+   never authorised constraining. Emitting them by default would let a rule enforce a
+   constraint its own evidence row declines to state.
+
+**Rejected:**
+- *Keeping both on and accepting the cost.* Not a cost question. On (2) it changes what
+  the app refuses to build; on (1) it buries the two real findings under 78 chance hits.
+- *`fixable_by_codon_choice=False` on acceptor breaches to route them to `advisory`.*
+  This is the tempting one-line fix and it is a lie: a codon change genuinely can remove
+  a cryptic acceptor inside a CDS, and `Breach`'s own docstring (`core/spec.py:154-166`)
+  says the field exists because only the rule author knows the answer and nobody
+  downstream can recover it. Mis-stating it to get a routing side effect is exactly the
+  abuse the field was given no default to prevent.
+- *A `while` loop or an internal cache in `evaluate()`.* `evaluate()` must stay pure
+  (`core/spec.py:253`); it is called on candidate constructs that are then discarded.
+- *Splitting the acceptor scan into a `REPORT_ONLY` rule now.* That is the right home —
+  one enforcement class per rule is the contract — but it is a second rule against the
+  same `brief_ref` row and a shape no catalog rule currently has. **Filed as a follow-up
+  for the owner**, not decided unilaterally at the end of a session.
+
+**Also fixed:** the scan moved from `range(len(text))` to `str.find`. Same results,
+0.54 ms instead of 8.7 ms at the shipped defaults (16x), which matters because
+`cost_class = "cheap"` is a promise this rule makes to the repair loop.
+
+**Evidence:** measured on a seeded 5 kb random construct, `np.random.default_rng(0)`:
+8.7 ms / 116 breaches / 2 strong before, 0.54 ms / 3 breaches / 2 strong after.
+`tests/design` 16 passed in 9.18 s, having previously exceeded 500 s.
+
 **Where:** branch `claude/s4-rules-liabilities`, session S4 of the six-way buildout.
