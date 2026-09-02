@@ -17,7 +17,7 @@ count, exactly as `brief.md:130` instructs.
 `(H/S, ...)` or D4's `(H for lentiviral sense strand, S elsewhere)`. Absent a hard grade
 this stays a weighted objective and is never allowed to refuse a construct -- and CpG
 content is one of the places over-enforcement has a measurable cost, since
-`brief.md:133` warns that full depletion forces AGA/AGG for Arg and can drop GC below
+`brief.md:132` warns that full depletion forces AGA/AGG for Arg and can drop GC below
 vendor floors. That is a real conflict with `e2_gc_band`, which already names this rule
 in its own `conflicts_with`.
 
@@ -179,7 +179,7 @@ class CpGDepletion:
         "source -- ZAP inhibition did not correlate with CpG number -- and the third, "
         "methylation, is a compositional heuristic rather than a measured effect on any "
         "construct BT5 builds. The weight also has to price a KNOWN cost on the other "
-        "side: brief.md:133 records that full depletion forces AGA/AGG for Arg and can "
+        "side: brief.md:132 records that full depletion forces AGA/AGG for Arg and can "
         "drop GC below vendor floors, so a high weight here buys a contested benefit with "
         "a certain manufacturability loss. e2_gc_band already declares that conflict."
     )
@@ -193,7 +193,7 @@ class CpGDepletion:
     #: would not need FIXED_POINT, unlike d3_splicing.
     repair: ClassVar[RepairPolicy] = RepairPolicy.SINGLE_PASS
     cost_class: ClassVar[str] = "cheap"
-    #: brief.md:133: full depletion forces AGA/AGG for Arg and can drop GC below vendor
+    #: brief.md:132: full depletion forces AGA/AGG for Arg and can drop GC below vendor
     #: floors. e2_gc_band already names this rule from its side.
     conflicts_with: ClassVar[tuple[str, ...]] = ("e2_gc_band",)
     brief_ref: ClassVar[str] = "2.D8"

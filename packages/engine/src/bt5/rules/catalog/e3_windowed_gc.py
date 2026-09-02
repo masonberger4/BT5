@@ -40,9 +40,12 @@ results: *"a 50 bp window at 4% GC, diluted by 50 bp of 50% background, is ~27% 
 probes tripped IDT's windowed rule and were accepted anyway, because what denies an order
 is the TOTAL complexity score reaching 24, and for GC that total is driven by GLOBAL GC
 (`score = 1.40 x GC% - 83.8`, denial at 77%). So no windowed GC threshold was measured to
-refuse anything at either vendor. A `HARD_REPAIR` windowed rule -- including one built on
-IDT's own stated number -- would refuse constructs IDT scores green, which is the same
-mistake as the 50 bp trigger one step further in. Global GC is what gates, and that is
+refuse anything at either vendor *in this panel*. The panel bounds the claim rather than
+proving a universal: 18 probes at 500 bp, and the calibration's own Caveats section warns
+the numbers should not be extrapolated to a 3 kb order without re-running the ladder. What
+it does establish is that a `HARD_REPAIR` windowed rule -- including one built on IDT's own
+stated number -- would have refused probes IDT scored green, which is the same mistake as
+the 50 bp trigger one step further in. Global GC is what gates, and that is
 `e2_gc_band`'s job, not this rule's.
 
 **Overlap with `e2_gc_band`.** E2 carries `brief_ref = "2.E2/2.E3"` and already implements
@@ -189,9 +192,10 @@ class WindowedGC:
                 "maximum": 1.0,
                 "default": IDT_FLOOR,
                 "description": (
-                    "GC fraction below which a 100 bp window hard-fails. IDT's stated "
-                    "remediation threshold, and the only windowed rule any vendor was "
-                    "measured to apply."
+                    "GC fraction below which a 100 bp window is reported at the floor tier. "
+                    "IDT's stated remediation threshold, and the only windowed rule any "
+                    "vendor was measured to score against. Nothing here hard-fails: this "
+                    "rule is SOFT end to end."
                 ),
             },
             "report_fifty_bp": {

@@ -22,6 +22,7 @@ from bt5.core.types import (
     reverse_complement,
 )
 from bt5.rules.catalog.d3_splicing import (
+    LITERAL_DONORS,
     MAG_COARSE,
     MAG_FLAGGED,
     MAG_STRONG,
@@ -99,11 +100,34 @@ class TestDonorTiers:
             assert len(hits) == 1, motif
             assert motif in hits[0].message
 
-    def test_the_seven_mer_consensus_is_strong(self) -> None:
-        """`AN|GT(A/G)AG` is 7 nt, and brief.md:90 puts >=7 nt in the hard tier."""
-        hits = strong(Splicing(), whole("ATGAC" + "ACGTGAG" + "CCCTTTAAA", Topology.LINEAR))
+    def test_the_degenerate_consensus_is_reported_but_not_hard(self) -> None:
+        """`AN|GT(A/G)AG` is seven CHARACTERS but not a 7-mer, and brief.md:90's budget
+        is about expected occurrences. See the next test for the arithmetic."""
+        hits = donors(Splicing(), whole("ATGAC" + "ACGTGAG" + "CCCTTTAAA", Topology.LINEAR))
         assert len(hits) == 1
         assert "consensus" in hits[0].message
+        assert hits[0].magnitude == MAG_FLAGGED
+        assert hits[0].magnitude < MAG_STRONG
+
+    def test_the_degenerate_consensus_is_not_a_seven_mer(self) -> None:
+        """The finding that demoted it. N is 4-fold and R is 2-fold, so
+        P = (1/4)^5 x 1 x (1/2) = 1/2048 against 1/16384 for a true 7-mer -- effective
+        k = 5.5. brief.md:90 puts a <=5-mer at SOFT ONLY, so tiering this as a 7-mer
+        hard-constrains a pattern that arises ~2.9 times per 1.5 kb by chance, which is
+        that line's own figure for a 5-mer."""
+        import math
+
+        p_consensus = (1 / 4) ** 5 * 1 * (1 / 2)
+        assert math.log(1 / p_consensus, 4) == pytest.approx(5.5)
+        assert p_consensus > (1 / 4) ** 7 * 8 - 1e-12, "8x commoner than a true 7-mer"
+
+    def test_only_the_literal_six_mers_reach_the_hard_tier(self) -> None:
+        """Measured at 0.70 per 1.5 kb against brief.md:90's 0.73 for a 6-mer, and
+        strongly evidenced by the V5 17/17 result -- which is the exact condition
+        brief.md:90 sets for hard-constraining a 6-mer."""
+        for motif in LITERAL_DONORS:
+            hits = strong(Splicing(), whole("ATG" + motif + "CCCTTTAAA", Topology.LINEAR))
+            assert len(hits) == 1, motif
 
     def test_the_coarse_five_mer_is_soft_only(self) -> None:
         """GTNNG is a 5-mer: brief.md:90 says <=5-mer is SOFT ONLY, so it must never

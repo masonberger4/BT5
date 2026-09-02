@@ -77,8 +77,20 @@ DONOR_WINDOW = DONOR_EXONIC + DONOR_INTRONIC
 #: result (17/17, evidence A, `brief.md:105`) is that evidence.
 LITERAL_DONORS: tuple[str, ...] = ("GGTAAG", "GGTGAG")
 
-#: `brief.md:102` `AN|GT(A/G)AG` -- the exon|intron consensus, written here without
-#: the boundary bar. 7 nt, so `brief.md:90` puts it in the "hard (cheap)" tier.
+#: `brief.md:102` `AN|GT(A/G)AG` -- the exon|intron consensus, written here without the
+#: boundary bar.
+#:
+#: SEVEN CHARACTERS, BUT NOT A 7-MER, and `brief.md:90`'s budget is about expected
+#: OCCURRENCES rather than about length. Two positions are degenerate -- N is 4-fold and
+#: R is 2-fold -- so P = (1/4)^5 x 1 x (1/2) = 1/2048, against 1/16384 for a true 7-mer.
+#: Effective k = log4(2048) = 5.5, and measured on random 50% GC DNA it fires
+#: **2.85 times per 1.5 kb**, which is brief.md:90's own figure for a 5-mer (2.9), not
+#: its 0.18 for a 7-mer.
+#:
+#: brief.md:90 puts a <=5-mer at SOFT ONLY, so a consensus-only match is reported at the
+#: FLAG tier. Only the literal 6-mers (0.70/1.5 kb measured, against the brief's 0.73)
+#: and V5-overlapping hits reach the hard tier. Pinned by
+#: `TestDonorTiers::test_the_degenerate_consensus_is_not_a_seven_mer`.
 DONOR_CONSENSUS = "ANGTRAG"
 
 #: `brief.md:102` coarse screen `GTNNG`. 5 nt, and `brief.md:90` is explicit that a
@@ -348,7 +360,9 @@ class Splicing:
 
         consensus = self._at(text, p - 2, p + 5)
         if consensus and _matches(consensus, DONOR_CONSENSUS):
-            return _Donor(p, MAG_STRONG, f"donor consensus AN|GT(A/G)AG as {consensus!r}")
+            # MAG_FLAGGED, not MAG_STRONG: the consensus is 7 characters but only a
+            # 5.5-mer by occurrence, and brief.md:90 puts a <=5-mer at soft only.
+            return _Donor(p, MAG_FLAGGED, f"donor consensus AN|GT(A/G)AG as {consensus!r}")
 
         if self.report_coarse:
             coarse = self._at(text, p, p + 5)

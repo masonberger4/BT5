@@ -76,3 +76,55 @@ result"; `e2_gc_band.py:128-134, 151`; `solver/repair.py:253-267`.
 `bash scripts/gates.sh` ALL GATES PASSED, 1382 passed.
 
 **Where:** branch `claude/s4-rules-liabilities`, session S4 of the six-way buildout.
+
+---
+
+## Addendum, same day — the audit found two real defects here
+
+`/verify-provenance` over the five new rules returned **UNSUPPORTED** for this one. Both
+findings were checked and both were right.
+
+### 1. `SINGLE_PASS` was unsafe — this rule needs `FIXED_POINT`
+
+The original justification was that *"a windowed statistic cannot recreate itself the way
+a splice donor can, because the change is monotone in the quantity being measured."* That
+holds for a **one-sided** bound — `e3_windowed_gc` is a floor and is genuinely safe under
+`SINGLE_PASS` — and it is **false for a two-sided band**.
+
+Consecutive 100 nt windows overlap by up to 99 nt, so raising GC to clear a window below
+`hard_lo` raises it in every overlapping window too, and can push a neighbour that was
+already near `hard_hi` straight past it. Measured on a fixture with a 0% GC window beside a
+64% one: **lifting the low side created 79 new windows breaching the high side.**
+
+That is exactly `CLAUDE.md` §3.6's test — *"if your repair can create new instances of what
+it removes"* — so `FIXED_POINT` is mandatory, not a preference. This rule is now the second
+in the catalog to declare it, alongside `d3_splicing`. Cost: `tests/design` 9.2 s → 14.7 s,
+since a `FIXED_POINT` breach is never retired. Pinned by
+`TestRepairPolicy::test_clearing_the_low_side_can_breach_the_high_side`, which asserts the
+overshoot rather than describing it.
+
+### 2. `EVIDENCE_BACKED` let the unevidenced half of the band wear the evidenced half's grade
+
+`brief.md:159` grades the row **A**, and the first version took that at face value. But the
+grade covers the measurement, and **the measurement is one-sided**: toxic
+horizontally-acquired *E. coli* genes run 63-68% AT against a 55% AT control. That supports
+a **floor** on GC. It says nothing whatever about a GC **ceiling**.
+
+The 65% upper bound comes from `brief.md:159`'s own resolution instruction — *"resolve as a
+two-sided band ... hard-fail outside 35-65%"* — not from the cited paper. And BT5's own
+18-probe ladder cuts against a hard ceiling from the other side: 80% global GC was
+**accepted by Twist as Standard** and produced no windowed finding at IDT.
+
+Badging the whole band `EVIDENCE_BACKED` is the same trap `e3_windowed_gc` is `CONTESTED`
+for, and grading the two rules differently on the same structure was an inconsistency the
+audit caught. **Now `CONTESTED`**, with a third `Citation(sign="refutes")` naming the
+calibration so the ceiling's weaker footing is on the record rather than in a comment.
+
+**The band itself is unchanged.** The brief instructs it and F5 is a propagation rule, not
+a synthesis one; what changed is the badge, the repair discipline, and the honesty of the
+citation set. Enforcement staying `HARD_REPAIR` on an instruction rather than a measurement
+is worth an owner's eye.
+
+**Evidence:** `brief.md:159`; `docs/design/vendor-gc-calibration.md` "The combined result"
+rows for `GLB_gc80`; `CLAUDE.md` §3.6. `bash scripts/gates.sh` ALL GATES PASSED, 1445
+passed.

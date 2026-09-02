@@ -219,3 +219,45 @@ solver steers on.
 `tests/design` 16 passed in 9.18 s, having previously exceeded 500 s.
 
 **Where:** branch `claude/s4-rules-liabilities`, session S4 of the six-way buildout.
+
+---
+
+## Addendum, same day — `ANGTRAG` is seven characters but not a 7-mer
+
+`/verify-provenance` returned SUPPORTED for D3 with one **UNSUPPORTED** threshold, and it
+was right.
+
+The consensus `AN|GT(A/G)AG` was tiered `MAG_STRONG` on the reasoning that it is 7 nt and
+`brief.md:90` says *"≥7 nt → hard (cheap)"*. That reads the budget as a rule about
+**length**. It is a rule about **expected occurrences** — the line states them explicitly
+(5-mer ≈ 2.9, 6-mer ≈ 0.73, 7-mer ≈ 0.18 per 1.5 kb) — and two of the seven positions are
+degenerate:
+
+```
+A  N  G  T  R  A  G      N is 4-fold, R is 2-fold
+P = (1/4)^5 x 1 x (1/2) = 1/2048      a true 7-mer = 1/16384
+effective k = log4(2048) = 5.5        8x commoner than a 7-mer
+```
+
+Measured on random 50% GC DNA: **2.85 occurrences per 1.5 kb**, which is `brief.md:90`'s
+own figure for a **5-mer (2.9)** — and that line puts a ≤5-mer at **SOFT ONLY**. The
+literal blacklist measured 0.70 against the brief's 0.73 for a 6-mer, so it sits exactly
+where the budget expects.
+
+**Decided:** a consensus-only match reports at `MAG_FLAGGED`. `MAG_STRONG` — the tier that
+drives `passes=False` and Tier-B repair — is reserved for the literal 6-mers `GGTAAG` and
+`GGTGAG`, which `brief.md:90` permits to be hard *"only if strongly evidenced"* and which
+the V5 17/17 evidence-A result supplies, and for any donor inside a V5 tag.
+
+**What this changes in behaviour:** D3 now hard-constrains roughly a quarter as many sites.
+The consensus is still reported at every hit, so nothing is hidden — it stops *refusing*
+constructs over a pattern that arises ~3 times per 1.5 kb by chance. Pinned by
+`TestDonorTiers::test_the_degenerate_consensus_is_not_a_seven_mer`, which asserts the
+arithmetic so a later "it's 7 nt, promote it" cannot land unchallenged.
+
+**Rejected:** *keeping `MAG_STRONG` because the brief lists the consensus alongside the
+literal motifs.* Listing is not grading; `brief.md:90` is the grading rule and it is
+explicitly about occurrence rate.
+
+**Evidence:** `brief.md:90, 102`; measured over 200 seeded 1.5 kb sequences,
+`np.random.default_rng(0)`. `bash scripts/gates.sh` ALL GATES PASSED, 1445 passed.

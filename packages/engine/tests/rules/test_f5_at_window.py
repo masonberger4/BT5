@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from bt5.core.context import Modality
 from bt5.core.registry import discover, get
-from bt5.core.spec import Direction, Enforcement
+from bt5.core.spec import Direction, Enforcement, Evidence, RepairPolicy
 from bt5.core.types import Construct, Interval, Segment, SegmentKind, Topology
 from bt5.rules.catalog.f5_at_window import (
     HARD_HI,
@@ -172,6 +172,30 @@ class TestCircular:
         assert len(circular.breaches) != len(linear.breaches) or not linear.passes
 
 
+class TestRepairPolicy:
+    """CLAUDE.md 3.6: FIXED_POINT is mandatory when a repair can create new instances
+    of what it removes. A two-sided windowed band can."""
+
+    def test_it_declares_fixed_point(self) -> None:
+        assert ATWindow.repair is RepairPolicy.FIXED_POINT
+
+    def test_clearing_the_low_side_can_breach_the_high_side(self) -> None:
+        """The justification, executable. Consecutive 100 nt windows overlap by up to
+        99 nt, so raising GC to clear a window below hard_lo raises it in every
+        overlapping window too. A one-sided floor (e3_windowed_gc) is safe under
+        SINGLE_PASS for exactly the reason this is not."""
+        rule = ATWindow()
+        before = rule._windows(whole("AT" * 50 + ("GC" * 32 + "AT" * 18) + CLEAN))
+        after = rule._windows(whole(("GC" * 40 + "AT" * 10) + ("GC" * 32 + "AT" * 18) + CLEAN))
+
+        assert (before > HARD_HI).sum() == 0, "nothing breaches the ceiling to begin with"
+        assert (before < HARD_LO).sum() > 0, "the low side is what needs repairing"
+        assert (after > HARD_HI).sum() > 0, (
+            "raising GC to clear the floor pushed overlapping windows past the ceiling -- "
+            "the repair created new instances of what it removes"
+        )
+
+
 class TestSpecShape:
     def test_it_is_a_band_rule_with_a_non_inverted_band(self) -> None:
         assert ATWindow.direction is Direction.BAND
@@ -188,6 +212,14 @@ class TestSpecShape:
         assert ATWindow.enforcement is Enforcement.HARD_REPAIR
         assert ATWindow.default_weight == 0.0
         assert ATWindow.steering_weight > 0.0
+
+    def test_the_evidence_badge_is_contested_not_backed(self) -> None:
+        """brief.md:159 grades the row A, but that grade covers the FLOOR: the Nature
+        measurement is one-sided (AT-rich is toxic) and says nothing about a GC ceiling.
+        Badging the whole band EVIDENCE_BACKED lets the unevidenced half wear the
+        evidenced half's grade."""
+        assert ATWindow.evidence is Evidence.CONTESTED
+        assert any(c.sign == "refutes" for c in ATWindow.citations)
 
     def test_it_declares_the_vendor_conflict(self) -> None:
         """brief.md:159 in bold: "This directly conflicts with vendor GC ceilings.""" ""

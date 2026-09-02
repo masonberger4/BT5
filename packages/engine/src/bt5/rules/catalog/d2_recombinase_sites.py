@@ -24,9 +24,12 @@ than inventing a second one.
 **Bxb1 is deliberately not detected.** `brief.md:99` states that Bxb1 attB and attP both
 contain `GGTCTC` (BsaI) and says to flag that collision -- but it does not give the attB
 or attP sequences. Encoding a sequence from anywhere other than the cited source is the
-defect `/verify-provenance` exists to catch, so the collision is declared through
-`conflicts_with` and said out loud in the report, and site detection waits for a sourced
-sequence. See `docs/decisions/2026-09-02-d2-recombinase-check-only.md`.
+defect `/verify-provenance` exists to catch. So the collision is declared structurally
+through `conflicts_with`, and reported on any site this rule DOES detect that carries
+`GGTCTC`. Note what that leaves: a Bxb1 landing pad is not detected at all, so for Bxb1
+itself the conflict reaches the user only through the declared rule conflict, not through
+a finding. Closing that needs a sourced sequence.
+See `docs/decisions/2026-09-02-d2-recombinase-check-only.md`.
 """
 
 from __future__ import annotations

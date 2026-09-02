@@ -127,7 +127,15 @@ class ATWindow:
     version: ClassVar[str] = "1.0.0"
     title: ClassVar[str] = "AT-window rule: two-sided GC band per 100 nt"
     enforcement: ClassVar[Enforcement] = Enforcement.HARD_REPAIR
-    evidence: ClassVar[Evidence] = Evidence.EVIDENCE_BACKED  # brief.md:159 grades it A
+    #: CONTESTED, though brief.md:159 grades the row A -- because the grade covers the
+    #: FLOOR and this rule is two-sided. The Nature measurement is entirely about AT-RICH
+    #: being toxic (63-68% AT genes vs a 55% control); it says nothing about a GC
+    #: CEILING. The 65% upper bound comes from the brief's own resolution instruction,
+    #: not from that evidence, and the vendor calibration cuts against it (Twist ships
+    #: 80% GC as Standard). Badging the whole band EVIDENCE_BACKED would let the
+    #: unevidenced half wear the evidenced half's grade -- the same trap e3_windowed_gc
+    #: is CONTESTED for.
+    evidence: ClassVar[Evidence] = Evidence.CONTESTED
     direction: ClassVar[Direction] = Direction.BAND
     unit: ClassVar[str] = "GC fraction per 100 nt window"
     #: The PREFERENCE band brief.md:159 names, not the gate. The gate is
@@ -149,6 +157,16 @@ class ATWindow:
             2016,
             sign="qualifies",
         ),
+        Citation(
+            "The CEILING half of this band has no support in the toxicity measurement, "
+            "which is one-sided (AT-rich is toxic). BT5's own 18-probe vendor ladder "
+            "cuts against a hard GC ceiling from the other direction: 80% global GC was "
+            "accepted by Twist as Standard and produced no windowed finding at IDT. The "
+            "65% bound is brief.md:159's resolution instruction, not a measured refusal",
+            "https://github.com/masonberger4/BT5/blob/main/docs/design/vendor-gc-calibration.md",
+            2026,
+            sign="refutes",
+        ),
     )
     last_verified: ClassVar[str] = "2026-09-02"
     weight_provenance: ClassVar[str] = ""  # hard rule; the band is the gate, not a weight
@@ -159,11 +177,21 @@ class ATWindow:
     #: overlapping windows is one preference counted twice.
     steering_weight: ClassVar[float] = 0.25
     localization: ClassVar[LocalizationPolicy] = LocalizationPolicy.WINDOW_MINUS_1
-    #: A windowed statistic cannot recreate itself the way a splice donor can: raising
-    #: GC in one window does not manufacture a new out-of-band window elsewhere, because
-    #: the change is monotone in the quantity being measured. SINGLE_PASS is sufficient
-    #: (CLAUDE.md 3.6 asks for the justification when it is chosen).
-    repair: ClassVar[RepairPolicy] = RepairPolicy.SINGLE_PASS
+    #: FIXED_POINT, and the reasoning that first put SINGLE_PASS here was wrong.
+    #:
+    #: The tempting argument is that a windowed statistic cannot recreate itself the way
+    #: a splice donor can, because the change is monotone in the quantity measured. That
+    #: holds for a ONE-SIDED bound (see `e3_windowed_gc`, a floor). It fails for a
+    #: TWO-SIDED band: consecutive 100 nt windows overlap by up to 99 nt, so raising GC
+    #: to clear a window below `hard_lo` raises it in every overlapping window too and
+    #: can push a neighbour that was already near `hard_hi` straight past it. Measured on
+    #: a fixture with a 0% GC window beside a 64% one: lifting the low side created 79
+    #: new windows breaching the high side.
+    #:
+    #: That is precisely CLAUDE.md 3.6's test -- "if your repair can create new instances
+    #: of what it removes" -- so FIXED_POINT is mandatory here, not a preference. Pinned
+    #: by `TestRepairPolicy` in the paired test.
+    repair: ClassVar[RepairPolicy] = RepairPolicy.FIXED_POINT
     cost_class: ClassVar[str] = "cheap"
     #: brief.md:159 says so in bold: "This directly conflicts with vendor GC ceilings."
     conflicts_with: ClassVar[tuple[str, ...]] = ("e2_gc_band",)
