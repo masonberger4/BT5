@@ -31,6 +31,7 @@ from bt5.core.registry import discover, get
 from bt5.core.services import Services
 from bt5.core.spec import Direction, Enforcement, Evaluation, Evidence
 from bt5.core.types import Construct, Interval, Segment, SegmentKind, Strand, Topology
+from bt5.rules.catalog import c1_cai
 from bt5.rules.catalog.c1_cai import (
     BAND_HI,
     BAND_LO,
@@ -466,6 +467,10 @@ class TestBandCalibration:
         n = 300
         top, second = math.log(w[best]), math.log(w[alt])
         b = round(n * (math.log(target) - top) / (second - top))
+        # Outside the family reachable range `b` goes negative or past `n`,
+        # which silently returns a CDS that is not 300 codons and a CAI it
+        # does not have.
+        assert 0 <= b <= n, f"target {target} is outside the Leu family range"
         return "ATG" + alt * b + best * (n - b) + "TAA", math.exp((b * second + (n - b) * top) / n)
 
     def test_the_floor_barely_clears_chance_on_the_mammalian_tables(self) -> None:
@@ -640,6 +645,62 @@ class TestBandCalibration:
         rule = CodonAdaptationIndex(cai_min=0.50)
         assert rule._band_for(HostId.HEK293) == (0.50, CAI_BAND[HostId.HEK293][1])
         assert rule._band_for(HostId.E_COLI_K12) == (0.50, BAND_HI)
+
+    def test_the_report_goes_to_the_slot_nearest_a_binding_edge_of_its_own_band(
+        self,
+    ) -> None:
+        """The multi-slot tiebreak, which is the one place the per-host band changes
+        WHICH number gets reported rather than whether it breaches.
+
+        A lentiviral job makes its protein in HEK293 and carries an E. coli slot too.
+        Ranking in-band slots by distance to the band's MIDDLE handed the report to
+        E. coli always -- the middle of (0.0, 0.9548) is 0.477, below where any real
+        mammalian CDS sits. Ranking by RAW distance to an edge only narrowed it:
+        E. coli's band is 0.20 wide against ~0.955, so an E. coli slot is always
+        within 0.10 of an edge and still won at b=30 below. Normalizing by band width
+        is what makes the comparison mean the same thing on both bands.
+        """
+        both = context(
+            slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1),
+            slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11),
+        )
+        for target in (0.93, 0.9266):
+            cds, cai = self._cds_near(target, "human_highly_expressed_refseq_w")
+            c = construct(cds)
+            assert evaluate(c, both).passes, "both slots must be in band for a tiebreak"
+            assert evaluate(c, both).raw_score == pytest.approx(cai, abs=1e-6), (
+                "the HEK293 producer holds the CAI this job is about"
+            )
+
+    def test_a_host_with_a_table_but_no_band_is_unavailable_not_guessed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`CAI_BAND` and `CAI_REFERENCE_SET` are pinned in step, so this state is
+        unreachable today -- which is exactly why the branch needs constructing. It
+        is the shape the next added host takes if only one map is updated, and the
+        answer must be an honest `unavailable`, never E. coli's band by default."""
+        monkeypatch.setattr(
+            c1_cai,
+            "CAI_BAND",
+            {k: v for k, v in CAI_BAND.items() if k is not HostId.HEK293},
+        )
+        ev = evaluate(
+            construct(MAX_CAI), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        assert is_unavailable(ev)
+        assert "no calibrated CAI band" in ev.breaches[0].message
+
+    def test_the_composed_band_raise_does_not_depend_on_slot_order(self) -> None:
+        """Resolved lazily inside the per-slot loop, the same rule and construct
+        reported an honest `unavailable` for a deferred host when that slot came
+        first and raised when it came second. A contradictory parameter is
+        contradictory whichever slot is examined first."""
+        rule = CodonAdaptationIndex(cai_min=0.93)
+        deferred = slot("producer", HostId.SF9, Modality.LENTIVIRAL, 1)
+        ecoli = slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)
+        for slots in ((deferred, ecoli), (ecoli, deferred)):
+            with pytest.raises(ValueError, match="inverts"):
+                evaluate(construct(IN_BAND), context(*slots), rule=rule)
 
     def test_a_band_that_only_inverts_once_composed_is_refused(self) -> None:
         """`__init__` cannot catch this -- the host is not known until evaluation --

@@ -101,12 +101,18 @@ out of scope; this is its own change, in the same file, under one review.
   ships w-indices only, so the quantity the brief names cannot be computed here without
   inventing it. Second, the shape of the answer is wrong wherever that median lands in
   the plausible range. The nearest computable stand-in — the expected CAI of a random
-  synonymous encoding — is 0.656 on the human table, and ±0.1 around a value in that
-  neighbourhood puts the **ceiling near 0.756**: about 0.10 above the score a random
-  encoding gets for free, and 0.20 below the 0.9548 at which max-CAI collapse actually
-  begins. A ceiling that close to chance cannot separate the mechanical failure it
-  exists to catch from ordinary sequence — it would breach on the ordinary case and
-  bury the real one. Rejected on both counts.
+  synonymous encoding — is 0.656 on the human table, and ±0.1 around it puts the
+  **ceiling at 0.756**: 0.10 above the score a random encoding gets for free, and 0.20
+  below the 0.9548 at which max-CAI collapse actually begins. A ceiling that close to
+  chance cannot separate the mechanical failure it exists to catch from ordinary
+  sequence — this file's own `IN_BAND` fixture scores 0.807 against the human table
+  and would breach it. That is a claim about one computable point, not about every
+  median the construction might use: a native median well above ~0.855 would put the
+  ±0.1 ceiling back near 0.955 and the two constructions would agree. The objection
+  that does not depend on where the median lands is the first one — the median of a
+  host's native genes is not in `data/codon_usage/`, so this band cannot be built
+  here at all without inventing its input. Rejected on that, with the computed point
+  as evidence that guessing the input would not be harmless.
 - *Leaving the E. coli band on the mammalian hosts and documenting the caveat.*
   A disclosed wrong threshold is still a live 0.2-weighted objective pushing on
   native sequence; a comment does not stop a solver.
@@ -180,19 +186,27 @@ the rule ranked by distance from the band's *midpoint*, which for `(0.0, 0.9548)
 0.477 — below where any real mammalian CDS sits. The mammalian slot was therefore
 always the "least interesting" one and a two-slot report handed itself to the E. coli
 slot, discarding the CAI the job is actually about. Now ranked by distance to the
-nearest **binding edge**, which means the same thing on every band, inert floor
-included. Measured on a producer-HEK293 + target-E. coli context: a HEK293 CDS near
-its own ceiling now binds (0.929) where it previously reported the E. coli slot.
+nearest **binding edge as a fraction of the band's width**, with an inert `lo <= 0.0`
+edge excluded from the comparison outright — a floor that can never fire is not
+something a slot can be "near". Raw distance to an edge was tried first and only
+narrowed the pathology rather than removing it: E. coli's band is 0.20 wide against
+the mammalian ~0.955, so an in-band E. coli slot is always within 0.10 of an edge, and
+a HEK293 CDS sitting 0.028 below its max-CAI ceiling still lost the report. Measured
+on a producer-HEK293 + target-E. coli context, at both the 0.929 and 0.927 fixtures
+the review used to break the raw version, the HEK293 slot now binds. A test pins it;
+nothing pinned the tiebreak before.
 
 **Recorded, not fixed:** `Breach.magnitude` is a raw CAI deviation and is not
 comparable across hosts — human's chance-to-1.0 headroom is 0.344 against E. coli's
-0.762, so the same mechanical collapse yields a ~12x smaller magnitude on HEK293.
+0.762, so a full max-CAI collapse yields |1 − ceiling| = 0.045 on HEK293 against 0.100
+on E. coli, a factor of **2.2**, which is exactly that headroom ratio.
 Normalizing by headroom would be more honest within C1 but would misrank C1 against
 every other rule in `score/conflicts.py`, which compares unnormalized magnitudes
 repo-wide. The non-comparability is now stated where `rank` is defined rather than
 left to be inferred.
 
-**Out of lane:** `d3_splicing.py:584` cross-references `c1_cai.py:490-525` for the
-`_unavailable` pattern; that method has moved and the line range now points at
-unrelated code. `d*` belongs to another session, so the fix is flagged rather than
-made — it should cite `CodonAdaptationIndex._unavailable` by name, not by line range.
+**Left to its owner:** `d3_splicing.py:584` cross-references `c1_cai.py:490-525` for
+the `_unavailable` pattern; that method has moved (those lines are `lattice_terms`
+now) and the range was already stale before this change. `rules/catalog/` is this
+lane, but `d*` is another session's file in it, so the fix is flagged rather than made
+— it should cite `CodonAdaptationIndex._unavailable` by name, not by line range.
