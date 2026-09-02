@@ -33,6 +33,11 @@ _REPORTABLE_ERRORS = (
     VectorError,
     OrderError,
     OSError,
+    # An unrecognised --table-id (FileTableProvider.genetic_code) and a
+    # malformed --backbone file (Bio.SeqIO's own parse errors) both surface
+    # as ValueError; a raw traceback for either is not something a CLI user
+    # can act on the way a clean "bt5: ..." line is.
+    ValueError,
 )
 
 

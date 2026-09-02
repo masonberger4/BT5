@@ -102,6 +102,18 @@ def test_design_rejects_unknown_host() -> None:
     assert excinfo.value.code == 2
 
 
+def test_design_rejects_unknown_table_id(capsys: pytest.CaptureFixture[str]) -> None:
+    bad_args = list(_BASE_ARGS)
+    bad_args[bad_args.index("--table-id") + 1] = "999"
+
+    exit_code = main(bad_args)
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "bt5:" in captured.err
+    assert "999" in captured.err
+
+
 def test_design_requires_table_id() -> None:
     args = [a for a in _BASE_ARGS if a not in {"--table-id", "1"}]
     with pytest.raises(SystemExit) as excinfo:
