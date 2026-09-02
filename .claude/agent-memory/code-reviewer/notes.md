@@ -43,52 +43,38 @@ so explicitly under "Scientific impact" (not "none"), triggering §7b's
 owner-merge requirement. Treat its absence on a weight/ranking-affecting diff
 as a finding.
 
-## Reviewing prompt/doc diffs (docs/buildout/*.md session prompts)
-These carry dense `file.py:123` / commit-SHA / issue-number citations meant
-to be followed literally by unattended sessions. This repo's docs culture is
-precise — on two separate buildout reviews (2026-09-01 initial, then a
-follow-up after fixes) essentially every `file:line` citation, quoted
-docstring/string, exported-symbol list, and skill model/effort front-matter
-checked out exactly against source. Spend the verification budget instead on:
+## A thin adapter's "reportable errors" tuple is an allowlist, not a catch-all
+`bt5/cli.py`'s `_REPORTABLE_ERRORS` (DesignError, InfeasibleConstraints,
+VerificationError, VectorError, OrderError, OSError) misses at least two real
+raise sites reachable from `bt5 design`: `FileTableProvider.genetic_code()`
+raises bare `ValueError` for an unknown `--table-id`, and Biopython's
+`SeqIO.read()` raises its own (non-`VectorError`) exceptions on a malformed
+GenBank file passed to `--backbone`. Both escape as raw tracebacks instead of
+a clean `bt5: ...` stderr line, though the process still exits nonzero so
+scripted callers aren't broken — non-blocking UX gap, not a CLAUDE.md rule
+violation, but worth naming every time a new CLI/adapter layer wraps engine
+calls in a curated exception tuple: check the tuple against what the actual
+callees (including one level of transitive dependency, e.g. the table
+provider and the GenBank parser, not just `design()`'s own docstring) can
+raise, not just what `design()`'s docstring documents.
 
-- **Diff "never touch" lists against each other and against `ls
-  packages/engine/src/bt5/`** (currently 9 subdirs: cassette, codon, core,
-  design, rules, score, solver, structure, vector), not just against the
-  README's ownership table. A prior review caught one lane's file omitting
-  two of nine from its enumeration that every sibling included — confirmed
-  fixed in the 2026-09-01 buildout PR (S3 now lists `codon/`/`structure/`).
-  Keep re-checking this on every future edit to these prompts; it is a
-  copy-paste-prone spot.
-- **Shared fixture/support files one level up from a glob-partitioned test
-  directory** — e.g. `packages/engine/tests/rules/conftest.py`, shared by two
-  rule-catalog sessions splitting `rules/catalog/{b,c}*.py` vs `{d,e,f}*.py`.
-  Confirmed fixed 2026-09-01: both prompts and the README now declare it
-  read-only for both sessions, with an explicit fallback (define locally, or
-  open an issue for a truly-shared helper). Check every glob-partitioned
-  split for this class of gap: a support file that matches no session's
-  glob but that two sessions would plausibly both want to edit.
-- **A decision doc's "Rejected" section is a commitment, not just a note —
-  diff it against the actual prompt files.** The 2026-09-01
-  `docs/decisions/2026-09-01-parallel-buildout-sessions.md` states "S2 and S4
-  post a design note as their first PR comment instead [of plan mode]," but
-  only S2's prompt (`s2-biosecurity-screen.md`) actually contains that
-  instruction — S4's (`s4-rules-liabilities.md`, the one doing the
-  cross-lane D3 splice-repair problem at xhigh effort, unattended) did not
-  tell the session to do it. Confirmed fixed at a6c2250:
-  `s4-rules-liabilities.md` now carries an equivalent gate before D3, and the
-  README's "Not plan mode" paragraph names both sessions. Grep every session
-  file for a phrase the decision doc attributes to it by name; do not assume a
-  plural attribution ("S2 and S4 do X") was actually applied to both.
-- **Commit SHAs describing "current" main state go stale within one PR's
-  lifetime.** Check the cited SHA against `git log origin/main` directly. A
-  *living* doc (a reusable prompt/README) is fine if it explicitly says the
-  SHA is point-in-time and tells the reader to fetch fresh instead
-  (this repo's buildout docs do this correctly); flag it only if a living doc
-  states a stale fact as current without that qualifier. A `docs/decisions/`
-  ADR-style file is point-in-time by convention — don't flag staleness there.
-- **No GitHub API access in this sandbox.** Issue/PR number claims can only
-  be cross-checked against local squash-merge commit messages (`git log
-  --oneline`, real `(#N)` suffixes), not issue titles/bodies/state. Say so
-  explicitly rather than silently skipping those citations — e.g. issues
-  #45, #56, #69, #70, #74, #78, #80, #82, #83 in the 2026-09-01 buildout docs
-  have no corresponding merged-commit trail to check against.
+## Reviewing prompt/doc diffs (docs/buildout/*.md session prompts)
+This repo's docs culture is precise — file:line citations, quoted strings,
+exported-symbol lists and SHAs have consistently checked out exactly against
+source across multiple buildout reviews. Spend verification budget on the
+gap classes that actually recur, not on re-confirming precision:
+- diff each prompt's "never touch" list against the others and against
+  `ls packages/engine/src/bt5/` (9 subdirs: cassette, codon, core, design,
+  rules, score, solver, structure, vector), not just against the README table;
+- check a shared fixture/support file one level up from a glob-partitioned
+  test split (e.g. a lane-shared `conftest.py`) is declared read-only by
+  every session whose glob doesn't cover it, not just some;
+- diff a decision doc's "Rejected"/plural-attribution sentences ("S2 and S4
+  do X") against each named prompt individually — a plural claim applied to
+  only one file is the recurring failure shape;
+- treat a commit-SHA-pinned "current main" claim as stale unless the doc says
+  the SHA is point-in-time (living docs should; `docs/decisions/` ADRs are
+  point-in-time by convention, don't flag those);
+- no GitHub API access here — cross-check issue/PR numbers only against
+  `git log --oneline` squash-merge `(#N)` trails, and say explicitly when a
+  citation has no such trail rather than silently skipping it.
