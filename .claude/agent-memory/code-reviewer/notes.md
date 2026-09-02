@@ -50,3 +50,43 @@ diff says so explicitly in `docs/decisions.md` under "Scientific impact" and
 notes it is NOT "none", triggering §7b's owner-merge requirement rather than
 self-merge. This is the correct pattern to look for — treat its absence on a
 weight/ranking-affecting diff as a finding.
+
+## Reviewing prompt/doc diffs (e.g. docs/buildout/*.md session prompts)
+These carry dense `file.py:123` / commit-SHA / issue-number citations meant to
+be followed literally by unattended sessions. On the 2026-09-01 buildout
+review almost every citation checked out exactly (line ranges, exported
+symbol lists, quoted docstrings, file sizes in KB, gate numbers from PLAN.md,
+skill model/effort front-matter) — this repo's docs culture is precise, so
+spend the verification budget on things that are unusually cheap to get wrong
+and expensive to leave wrong:
+- **Commit SHAs describing "current" state of `main` go stale within the same
+  PR's lifetime** (main moved twice under one buildout PR in a few hours).
+  Check the cited SHA against `git log origin/main` directly; don't assume a
+  SHA written earlier in the same PR is still accurate later in review.
+  Prefer/require "fetch fresh and branch" commands over a hardcoded SHA in any
+  prompt meant to be reused.
+- **Decision files under `docs/decisions/` are point-in-time ADR-style
+  records** ("Evidence:" reflects state *at the time of the decision*) — do
+  not flag an unqualified stale fact inside an already-merged decision file
+  as a new defect; only flag it if a *living* doc (a prompt meant to be
+  re-run, a README) states the same fact without a "checked as of / verify
+  before trusting" qualifier.
+- **Path-glob ownership splits ("session A owns `b*.py`, session B owns
+  `d*.py`") reliably miss shared fixture files** that don't match anyone's
+  glob, e.g. `packages/engine/tests/rules/conftest.py` here — neither S3 nor
+  S4 explicitly owned it, and it's a plausible (if not certain) two-writer
+  collision the mutex list didn't cover. Check for this class of gap
+  specifically: shared `conftest.py`/`__init__.py`-adjacent support files one
+  level up from a glob-partitioned test directory.
+- **No GitHub API access in this sandbox** (github MCP tools are not actually
+  wired even though instructions describe them) — issue/PR number claims can
+  only be cross-checked against local squash-merge commit messages
+  (`git log --oneline`, which carries the real `(#N)` suffix), not against
+  issue titles/bodies/state. Say so explicitly rather than silently skipping
+  those citations.
+- **"Never touch" lists should be diffed against each other**, not just
+  against the ownership table — in this review one lane's file omitted two
+  of nine engine subdirectories from its explicit never-touch enumeration
+  that every sibling lane's file included, a copy-paste-style asymmetry that
+  is easy to miss reading files one at a time but obvious diffing them side
+  by side.
