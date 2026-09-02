@@ -408,6 +408,26 @@ class TestSpecMetadata:
         """
         assert "d1_restriction_sites" in KozakContext.conflicts_with
 
+    def test_it_is_second_in_the_catalog_and_never_ties_b1(self) -> None:
+        """The ordering the weight was lowered from 1.0 to establish.
+
+        `test_b1_five_prime.py` asserts B1 outranks everything; nothing asserted
+        where B8 then sits, so the "second only to B1" claim in
+        `weight_provenance` could have drifted silently. Both halves are pinned
+        here: strictly below B1, and strictly above every other spec.
+        """
+        from bt5.core.registry import all_specs
+        from bt5.rules.catalog.b1_five_prime import FivePrimeFolding
+
+        assert KozakContext.default_weight == 0.8
+        assert KozakContext.default_weight < FivePrimeFolding.default_weight
+        rest = [
+            s.default_weight
+            for s in all_specs()
+            if s.id not in (KozakContext.id, FivePrimeFolding.id)
+        ]
+        assert KozakContext.default_weight > max(rest)
+
     def test_the_window_offsets_match_noderers_measured_context(self) -> None:
         assert (UPSTREAM, DOWNSTREAM) == (6, 5)
 

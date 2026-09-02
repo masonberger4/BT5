@@ -117,13 +117,18 @@ class StructureWindows:
         ),
         Citation(
             "The sign of a structure term is context-dependent and unreconciled: "
-            "LinearDesign maximizes global structure for IVT mRNA half-life, and an "
-            "Expi293F benchmark found it the WORST of five schemes for a DNA "
-            "transgene despite 2-fold lower normalized MFE, with no correlation "
-            "between MFE and yield. The direct evidence for refusing to average "
-            "the two windows into one structure slider. Sourced to the Expi293F "
-            "benchmark itself (brief.md:13), NOT to Cambray above: Cambray is 2018 "
-            "and could not have discussed LinearDesign or a 2026 benchmark",
+            "LinearDesign maximizes global structure for IVT mRNA half-life, and "
+            "this benchmark of five schemes over 18 glycoproteins and 90 "
+            "small-scale screens found it 'the worst performer ... which produced "
+            "the lowest yields' for a DNA transgene in a human cell line. The "
+            "direct evidence for refusing to average the two windows into one "
+            "structure slider. Sourced here and NOT to Cambray above, which is "
+            "2018 and could not have discussed LinearDesign or a 2026 benchmark. "
+            "SCOPE: brief.md:333 adds two clauses this page does not carry -- "
+            "'2-fold lower normalized MFE' and 'no correlation between MFE and "
+            "yield' -- which belong to the preprint it links (bioRxiv "
+            "10.64898/2026.03.18.712111) and are deliberately not asserted here, "
+            "because that preprint has not been read against this claim",
             "https://proteininnovation.org/2026/03/codon-optimization-native-codon-mammalian-protein-expression/",
             2026,
             sign="qualifies",
