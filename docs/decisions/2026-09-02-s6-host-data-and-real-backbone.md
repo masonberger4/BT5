@@ -45,8 +45,10 @@ resolver above is the fix; the tables here are the regenerated, verified output.
 Result: **human 99/99** genes (all `NM_`, 25 846 codons); **mouse 96** (all `NM_`, 24 747
 codons; 3 unresolved — `RPS3A`, `TUBB`, `FTL`, whose mouse orthologs carry different
 *official* symbols `Rps3a1`/`Tubb5`/`Ftl1`, so the strict matcher refuses to guess);
-**CHO 91** (20 `NM_` + 71 predicted `XM_`, 23 903 codons; 4 unresolved, and 1 mismatch —
-`RPS19` → an uncharacterized `LOC` model — correctly dropped). All load through
+**CHO 91** (20 `NM_` + 71 predicted `XM_`, 23 903 codons; of the 99 requested, 4
+unresolved, 1 mismatch — `RPS19` → an uncharacterized `LOC` model, correctly dropped —
+and 3 predicted `XM_` models rejected for an unclean CDS, so 91 + 4 + 1 + 3 = 99, each
+disclosed in the file's `_provenance`). All load through
 `FileTableProvider` with 61 sense codons, no stops, `ATG`/`TGG` = 1.0, an https citation,
 and every row's symbol equal to its transcript's gene. Known mammalian bias reproduces
 (Leu `CTG` = 1.0, Ala `GCC` = 1.0, `GCG` rare ≈ 0.15–0.17).

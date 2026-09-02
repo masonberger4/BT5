@@ -400,7 +400,9 @@ def main() -> None:
             "genetic_code_table": 1,
             "unresolved_symbols": unresolved,
             "mismatched_symbols": mismatched,
-            "rejected_records": rejected,
+            # An accession rejected for a bad CDS is seen by both the fetch pass
+            # (by record.id) and the per-symbol pass (by acc), so dedupe to distinct.
+            "rejected_records": sorted(set(rejected)),
             "contributing_accessions": sorted(
                 used, key=lambda r: (str(r["category"]), str(r["symbol"]))
             ),
@@ -419,7 +421,7 @@ def main() -> None:
     print(
         f"{host_key}: {len(used)} genes, {total_codons} codons, "
         f"{len(unresolved)} unresolved, {len(mismatched)} mismatched, "
-        f"{len(rejected)} rejected -> {out_path}",
+        f"{len(set(rejected))} rejected -> {out_path}",
         file=sys.stderr,
     )
 
