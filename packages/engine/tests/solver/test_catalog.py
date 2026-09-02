@@ -11,6 +11,7 @@ file tests what the catalog HANDS to that machinery.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import ClassVar
 
 import pytest
@@ -328,3 +329,87 @@ class TestBuildingTheSet:
 
     def test_services_never_fabricate_a_folding_engine(self) -> None:
         assert default_services(seed=1, autoload_fold=False).fold is None
+
+
+class TestBreachFinderIsScoped:
+    """`breach_finder()` must walk only the HARD_REPAIR rules, as it says.
+
+    It is called once per repair candidate, up to `max_candidates` per
+    iteration, so a rule it touches is paid for hundreds of times per iteration.
+    It used to return `self.findings(c).repairable`, and `findings()` walks every
+    spec: measured on a 500 aa protein in the 3.1 kb synthetic lentiviral
+    backbone, 65 ms per candidate against 7 ms for the eight specs it consumes,
+    with `f3_inverted_repeats` (~29 ms) and `e8_kmer_uniqueness` (~20 ms)
+    evaluated and discarded every time.
+
+    These assert WHICH specs are evaluated, never how long it takes. A timing
+    assertion here would be flaky on shared CI and would not name what broke.
+    """
+
+    def _spy(self, rules: RuleSet) -> tuple[RuleSet, list[str]]:
+        """The same rule set, with every spec recording that it was evaluated."""
+        seen: list[str] = []
+
+        def wrap(spec: Spec) -> Spec:
+            original = spec.evaluate
+
+            def evaluate(c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
+                seen.append(spec.id)
+                return original(c, ctx, svc)
+
+            spec.evaluate = evaluate  # type: ignore[method-assign]
+            return spec
+
+        return dataclasses.replace(rules, specs=tuple(wrap(s) for s in rules.specs)), seen
+
+    def _rules(self, lentiviral_ctx: DesignContext) -> RuleSet:
+        return build_rule_set(lentiviral_ctx, default_services(seed=1, autoload_fold=False))
+
+    def test_it_evaluates_only_the_repair_specs(self, lentiviral_ctx: DesignContext) -> None:
+        rules, seen = self._spy(self._rules(lentiviral_ctx))
+        expected = {s.id for s in rules.repair_specs()}
+        untouched = {s.id for s in rules.specs} - expected
+        assert expected, "no HARD_REPAIR rule here, so this would prove nothing"
+        assert untouched, "every rule is HARD_REPAIR here, so nothing could be skipped"
+
+        rules.breach_finder()(linear_cds(CDS, PROTEIN))
+
+        assert set(seen) == expected
+        assert not (set(seen) & untouched), (
+            f"breach_finder evaluated rules it cannot use: {sorted(set(seen) & untouched)}"
+        )
+
+    def test_it_returns_exactly_what_the_unscoped_walk_returned(
+        self, lentiviral_ctx: DesignContext
+    ) -> None:
+        """The narrowing is behaviour-preserving, and this is the check.
+
+        A spec outside `repair_specs()` cannot produce a HARD_REPAIR breach:
+        `_enforcement_of` returns only values drawn from `enforcement_for(slot)`
+        over the active slots, which is the same set `repair_specs()` selects
+        on. So the two paths must agree breach for breach.
+        """
+        rules = self._rules(lentiviral_ctx)
+        c = linear_cds(CDS, PROTEIN)
+        assert rules.breach_finder()(c) == rules.findings(c).repairable
+
+    def test_a_context_with_no_enabled_slot_keeps_the_full_walk(
+        self, lentiviral_ctx: DesignContext
+    ) -> None:
+        """The one case the narrowing must not take.
+
+        `_enforcement_of` falls back to the `enforcement` ClassVar when there are
+        no active slots, while `repair_specs()` is empty there because its
+        `any()` is over nothing. `DesignContext` requires a slot but not an
+        ENABLED one, so narrowing would silently drop breaches.
+        """
+        rules = self._rules(lentiviral_ctx)
+        disabled = dataclasses.replace(
+            rules.ctx,
+            slots=tuple(dataclasses.replace(s, enabled=False) for s in rules.ctx.slots),
+        )
+        assert disabled.active_slots == ()
+        off = dataclasses.replace(rules, ctx=disabled)
+        assert off.repair_specs() == ()
+        c = linear_cds(CDS, PROTEIN)
+        assert off.breach_finder()(c) == off.findings(c).repairable
