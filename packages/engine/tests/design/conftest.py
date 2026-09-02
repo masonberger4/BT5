@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 import pytest
 from bt5.core.context import HostId, Modality
+from bt5.core.registry import all_specs, discover
 from bt5.design import design
 from bt5.vector import read_genbank
 from bt5.vector.backbone import VectorBackbone
@@ -64,6 +65,26 @@ def protein_of(length: int, *, seed: int = 0) -> str:
     """
     rng = np.random.default_rng(seed)
     return "M" + "".join(AMINO_ACIDS[i] for i in rng.integers(0, len(AMINO_ACIDS), length - 1))
+
+
+def fast_null_sizes() -> dict[str, int]:
+    """`FAST_NULL_N` for EVERY registered rule, derived rather than listed.
+
+    This was a hand-written tuple of objective ids, and it rotted the moment the
+    catalog grew: when b8, c3, d8 and e3 merged, each fell through to
+    `NULL_N_BY_COST["cheap"]` and drew 200 variants instead of 12 -- in every
+    test using the `fast` fixture. Since the memoised assembler builds `max(n)`
+    constructs, that also took the assemblies from 12 to 200 per design. The
+    lane's tests went from 75 s to over ten minutes, and nothing failed to say
+    so; a slow fixture is invisible until someone times it.
+
+    Deriving from `all_specs()` cannot drift: a rule added tomorrow is shrunk on
+    the day it lands. Ids that are not scored in a given context are simply
+    unused -- `null_size` only consults the override for objectives it is asked
+    about -- so over-covering is free and under-covering is the bug.
+    """
+    discover()
+    return {cls.id: FAST_NULL_N for cls in all_specs()}
 
 
 @pytest.fixture
@@ -115,19 +136,7 @@ def fast() -> Any:
             "modality": Modality.LENTIVIRAL,
             "hosts": [HostId.HEK293],
             "sweep_steps": FAST_SWEEP_STEPS,
-            "null_sizes": dict.fromkeys(
-                (
-                    "c1_cai",
-                    "d6_non_b_dna",
-                    "e4_gc_extent",
-                    "e6_repeat_density",
-                    "e8_kmer_uniqueness",
-                    "f2_near_perfect_repeats",
-                    "b1_five_prime",
-                    "d4_internal_polya",
-                ),
-                FAST_NULL_N,
-            ),
+            "null_sizes": fast_null_sizes(),
         }
         params.update(kw)
         return design(backbone=bb, **params)
