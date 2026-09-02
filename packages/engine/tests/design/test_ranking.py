@@ -13,11 +13,13 @@ import math
 
 import pytest
 from bt5.codon.tables import FileTableProvider
+from bt5.core.result import ObjectiveScore, ScoreCard
 from bt5.core.spec import Breach, Direction, Evaluation
 from bt5.core.types import Interval
 from bt5.design.ranking import (
     NULL_N_BY_COST,
     Nulls,
+    comparable_totals,
     null_size,
     score_candidate,
     synonymous_map,
@@ -243,3 +245,66 @@ class TestWeightedTotal:
 
     def test_nothing_available_is_zero_rather_than_a_division_by_zero(self) -> None:
         assert weighted_total([], [_Objective("a")]) == 0.0  # type: ignore[list-item]
+
+
+class TestComparableTotals:
+    """The rank key, and the three shapes `ScoreCard.total` cannot be trusted on.
+
+    `total` renormalises over the objectives THAT candidate could evaluate, so
+    two candidates normalised over different sets are not comparable — and the
+    comparison silently favours the one measured on less, which then becomes
+    `candidates[0]` and the design exported to GenBank.
+    """
+
+    def _card(self, specs: list[object], *scores: ObjectiveScore) -> ScoreCard:
+        """`total` computed against the REAL weights -- passing none would make
+        every total 0.0 and the bias this class is about invisible."""
+        return ScoreCard(scores=tuple(scores), total=weighted_total(list(scores), specs))  # type: ignore[arg-type]
+
+    def _scored(self, spec_id: str, percentile: float) -> ObjectiveScore:
+        return ObjectiveScore(
+            spec_id=spec_id,
+            raw=0.0,
+            unit="u",
+            percentile=percentile,
+            null_n=10,
+            null_mean=0.0,
+            null_sd=1.0,
+        )
+
+    def test_it_removes_the_bias_toward_the_less_measured_candidate(self) -> None:
+        """The docstring's own worked example. `a` weighs 3, `b` weighs 1.
+
+        On `ScoreCard.total` the candidate that could only evaluate `b` scores
+        0.9 and the one that evaluated both scores 0.375 — the less-measured one
+        wins. On the comparable key they TIE, because only `b` is common. The
+        bias is gone; the tie is then broken by sweep order, which is a smaller
+        claim than an invalid comparison.
+        """
+        specs = [_Objective("a", weight=3.0), _Objective("b", weight=1.0)]
+        less = self._card(
+            specs, ObjectiveScore.unavailable("a", "u", "no engine"), self._scored("b", 0.9)
+        )
+        more = self._card(specs, self._scored("a", 0.2), self._scored("b", 0.9))
+        assert less.total > more.total, "the bias this exists to remove"
+
+        keys = comparable_totals({"less": less, "more": more}, specs)  # type: ignore[arg-type]
+        assert keys["less"] == pytest.approx(keys["more"])
+
+    def test_an_empty_intersection_gives_every_candidate_the_same_key(self) -> None:
+        """Nothing is common, so nothing distinguishes them and the order is
+        sweep order. `score_candidate` still names every unavailable objective
+        with its reason, so a reader can see the ranking rests on nothing."""
+        specs = [_Objective("a"), _Objective("b")]
+        one = self._card(specs, self._scored("a", 0.9), ObjectiveScore.unavailable("b", "u", "x"))
+        two = self._card(specs, ObjectiveScore.unavailable("a", "u", "x"), self._scored("b", 0.1))
+        keys = comparable_totals({"one": one, "two": two}, specs)  # type: ignore[arg-type]
+        assert keys == {"one": 0.0, "two": 0.0}
+
+    def test_a_single_candidate_uses_its_own_set(self) -> None:
+        specs = [_Objective("a")]
+        keys = comparable_totals({"only": self._card(specs, self._scored("a", 0.75))}, specs)  # type: ignore[arg-type]
+        assert keys == {"only": pytest.approx(0.75)}
+
+    def test_no_candidates_is_an_empty_mapping_rather_than_a_raise(self) -> None:
+        assert comparable_totals({}, [_Objective("a")]) == {}  # type: ignore[arg-type]

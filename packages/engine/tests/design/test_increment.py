@@ -152,12 +152,22 @@ class TestTheGallery:
             )
 
     def test_candidates_are_ranked_best_first(self, backbone: VectorBackbone, fast: Any) -> None:
+        """Ranked on `comparable_totals`, NOT on `ScoreCard.total`.
+
+        Asserting `total` descending would be asserting the invariant
+        `comparable_totals` deliberately breaks: when two candidates have
+        different available-objective sets their `total`s are not comparable, and
+        a suite pinned to `total` would report that fix as a regression. The
+        labels carry the order, so they are what to check.
+        """
+        from bt5.design.ranking import comparable_totals
+
         res = fast(backbone)
-        totals = [candidate.scorecard.total for candidate in res.result.candidates]
-        assert totals == sorted(totals, reverse=True)
-        assert [c.label for c in res.result.candidates] == [
-            f"design_{i + 1}" for i in range(len(totals))
-        ]
+        candidates = res.result.candidates
+        assert [c.label for c in candidates] == [f"design_{i + 1}" for i in range(len(candidates))]
+        keys = comparable_totals({c.label: c.scorecard for c in candidates}, [])
+        ordered = [keys[c.label] for c in candidates]
+        assert ordered == sorted(ordered, reverse=True)
 
     def test_the_exported_genbank_is_the_top_ranked_candidate(
         self, backbone: VectorBackbone, fast: Any
@@ -387,7 +397,13 @@ class TestCompleteness:
         or not, host tables shipped or not), so the same protection is expressed
         as a closed set of RECOGNISED sentences instead."""
         res = fast(backbone)
-        for degradation in res.result.provenance.degradations:
+        # BOTH lists. `provenance.degradations` is what `design()` assembles;
+        # `build_report` appends its own (the screening-burden line) to the
+        # report's copy, so scanning only provenance leaves a whole source
+        # uncovered -- in the test named for catching uncovered sources.
+        seen = set(res.result.provenance.degradations) | set(res.report.degradations)
+        assert set(res.report.degradations) >= set(res.result.provenance.degradations)
+        for degradation in seen:
             assert any(re.match(pattern, degradation) for pattern in KNOWN_DEGRADATIONS), (
                 f"unrecognised degradation: {degradation!r}. If this is a real new "
                 f"source, add it to KNOWN_DEGRADATIONS deliberately."
@@ -422,6 +438,41 @@ class TestCompleteness:
         assert set(samples) == set(KNOWN_DEGRADATIONS), "a pattern has no sample sentence"
         for pattern, sample in samples.items():
             assert re.match(pattern, sample), f"{pattern!r} does not match {sample!r}"
+
+    def test_every_sample_sentence_appears_in_the_source(self) -> None:
+        """The samples above are hand-written, so a pattern could drift away from
+        its source and the sample drift with it. This anchors them: a
+        distinctive fragment of each must appear literally in the module that
+        emits it."""
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[4] / "packages/engine/src/bt5"
+        corpus = "".join(
+            (root / name).read_text()
+            for name in (
+                "design/runner.py",
+                "design/ranking.py",
+                "score/report.py",
+                "structure/vienna.py",
+            )
+        )
+        fragments = (
+            "ViennaRNA is not installed",
+            "protein-level biosecurity screening: ",
+            "the sweep produced ",
+            "-candidate panel does not meet gate G4:",
+            "single candidate only:",
+            "no codon usage table on file",
+            "no native baseline:",
+            "the native CDS was supplied",
+            "not ranked: ",
+            "not run: its thresholds",
+            "carried by the backbone",
+            "screening burden unavailable:",
+        )
+        assert len(fragments) == len(KNOWN_DEGRADATIONS)
+        for fragment in fragments:
+            assert fragment in corpus, f"no source emits {fragment!r} any more"
 
 
 class TestOrderFile:
@@ -519,60 +570,75 @@ class TestTheNullNeverFoldsWholeTranscripts:
 
     Its own docstring says ~0.24 s at 1 kb and ~6.5 s at 3 kb, "so this must
     never run inside the interactive loop or the empirical null" — a 200-variant
-    null calling it would be minutes, not milliseconds. `build_nulls` hard-codes
-    `windowed_fold_only=True` on every `NullDistribution`, and
-    `null_distribution` refuses a default for that flag precisely because "a
-    caller that has not thought about whether its scorer folds whole transcripts
-    has not earned a percentile". This is the test that makes the hard-coded
-    value a checked claim rather than an assertion about itself.
+    null calling it would be minutes. `build_nulls` hard-codes
+    `windowed_fold_only=True`, and `null_distribution` refuses a default for that
+    flag precisely because "a caller that has not thought about whether its
+    scorer folds whole transcripts has not earned a percentile".
+
+    **This is a forward-looking guard, and on this context it is vacuous today.**
+    No scored objective touches the fold engine at all: `b1_five_prime` is the
+    only rule that folds, it uses `mfe_window` rather than `mfe`, and it is
+    gated OUT of a HEK293 producer slot. So the test proves the flag is safe
+    rather than exercising a rule that could break it. That is worth having —
+    it fails the moment a scored rule starts folding — but the vacuity is
+    asserted below rather than left for a reader to discover, because a guard
+    that is silently vacuous is indistinguishable from one that is passing.
     """
+
+    def _counting_fold(self) -> tuple[object, dict[str, int]]:
+        from bt5.solver.catalog import default_services
+
+        inner = default_services(seed=0).fold
+        if inner is None:
+            pytest.fail(
+                "ViennaRNA is not installed, so this test cannot prove anything. "
+                "/bootstrap installs the [fold] extra."
+            )
+        calls: dict[str, int] = dict.fromkeys(("mfe", "mfe_window", "accessibility", "duplex"), 0)
+
+        class Counting:
+            """Wraps rather than replaces, so `check_engine_calibration` still
+            sees the calibrated engine identity and no rule is dropped for the
+            wrong reason — the point is to catch a rule that folds, not to hide
+            one."""
+
+            name = inner.name
+            version = inner.version
+            param_set = inner.param_set
+
+            def mfe(self, seq: str) -> object:
+                calls["mfe"] += 1
+                raise AssertionError(
+                    "a scored objective called FoldEngine.mfe, which is reserved for "
+                    "report time. Inside the null that is ~0.24 s per variant at 1 kb; "
+                    "at DEFAULT_NULL_N, minutes. Either the rule must use mfe_window, "
+                    "or build_nulls must stop claiming windowed_fold_only."
+                )
+
+            def mfe_window(self, seq: str, iv: object) -> object:
+                calls["mfe_window"] += 1
+                return inner.mfe_window(seq, iv)
+
+            def accessibility(self, seq: str, iv: object, u: int) -> object:
+                calls["accessibility"] += 1
+                return inner.accessibility(seq, iv, u)
+
+            def duplex(self, a: str, b: str) -> object:
+                calls["duplex"] += 1
+                return inner.duplex(a, b)
+
+        return Counting(), calls
 
     def test_no_scored_objective_calls_mfe(self, backbone: VectorBackbone, protein: str) -> None:
         from bt5.design.catalog import scored_objectives
         from bt5.design.runner import _context
         from bt5.design.sites import choose_site
         from bt5.solver.catalog import build_rule_set, default_services
+        from bt5.solver.reference import back_translate
         from bt5.vector import assemble
 
-        class NoWholeTranscriptFold:
-            """The real engine with `mfe` removed.
-
-            Wraps rather than replaces, so `check_engine_calibration` still sees
-            the calibrated engine identity and no rule is dropped for the wrong
-            reason — the point is to catch a rule that folds, not to hide it.
-            """
-
-            def __init__(self, inner: object) -> None:
-                self._inner = inner
-                self.name = inner.name  # type: ignore[attr-defined]
-                self.version = inner.version  # type: ignore[attr-defined]
-                self.param_set = inner.param_set  # type: ignore[attr-defined]
-
-            def mfe(self, seq: str) -> object:
-                raise AssertionError(
-                    "a scored objective called FoldEngine.mfe, which is reserved for "
-                    "report time. Inside the null this is ~0.24 s per variant at 1 kb; "
-                    "at DEFAULT_NULL_N that is minutes. Either the rule must use "
-                    "mfe_window, or build_nulls must stop claiming windowed_fold_only."
-                )
-
-            def mfe_window(self, seq: str, iv: object) -> object:
-                return self._inner.mfe_window(seq, iv)  # type: ignore[attr-defined]
-
-            def accessibility(self, seq: str, iv: object, u: int) -> object:
-                return self._inner.accessibility(seq, iv, u)  # type: ignore[attr-defined]
-
-            def duplex(self, a: str, b: str) -> object:
-                return self._inner.duplex(a, b)  # type: ignore[attr-defined]
-
-        real = default_services(seed=0).fold
-        if real is None:
-            pytest.fail(
-                "ViennaRNA is not installed, so this test cannot prove anything. "
-                "/bootstrap installs the [fold] extra; a run without it is not a "
-                "run this claim may rest on."
-            )
-        services = default_services(seed=0, fold=NoWholeTranscriptFold(real))  # type: ignore[arg-type]
+        engine, calls = self._counting_fold()
+        services = default_services(seed=0, fold=engine)  # type: ignore[arg-type]
         site = choose_site(backbone, table_id=1)
         ctx = _context(
             modality=Modality.LENTIVIRAL,
@@ -584,27 +650,27 @@ class TestTheNullNeverFoldsWholeTranscripts:
         objectives = scored_objectives(rules)
         assert objectives, "no scored objective to check"
 
+        # Any valid CDS serves; a full design() run would add seconds and prove
+        # nothing extra, since what is under test is what the RULES call.
         construct = assemble(
             backbone,
-            design(
-                backbone=backbone,
-                protein=protein,
-                table_id=1,
-                modality=Modality.LENTIVIRAL,
-                hosts=[HostId.HEK293],
-                sweep_steps=1,
-                null_sizes={spec.id: 2 for spec in objectives},
-            )
-            .result.candidates[0]
-            .cds,
+            back_translate(protein, CODE),
             protein=protein,
             table_id=1,
             site=site,
         ).construct
-
-        # The proxy raises if any of them folds a whole transcript.
         for spec in objectives:
             spec.evaluate(construct, ctx, services)
+
+        assert calls["mfe"] == 0  # the claim
+
+        # And the vacuity, stated. If either of these changes the test above
+        # starts doing real work and this assertion is what tells you.
+        assert "b1_five_prime" not in {spec.id for spec in objectives}
+        assert calls == dict.fromkeys(calls, 0), (
+            f"a scored objective now touches the fold engine ({calls}); this test is "
+            f"no longer vacuous, which is good — update the docstring."
+        )
 
 
 class _StubSpace:
@@ -722,3 +788,52 @@ class TestPanelDegradations:
             vectors = len(simplex_weights(axes, DEFAULT_SWEEP_STEPS))
             assert vectors >= MIN_GALLERY
             assert vectors <= DEFAULT_GALLERY_SIZE
+
+
+class TestTheFallbackWhenNothingSolves:
+    """The branch `_panel` checks first and nothing covered.
+
+    `_StubSpace` above cannot express it: it returns the same thing for a swept
+    vector and for the unsteered `solve(None)`. This stub separates them, which
+    is the whole distinction the fallback rests on.
+    """
+
+    class _NothingSweeps:
+        def __init__(self, fallback: str | None) -> None:
+            self._fallback = fallback
+            self.usage: dict[str, float] = {}
+
+        def solve(self, weights: object) -> object:
+            from bt5.solver.pipeline import OptimizeResult
+            from bt5.solver.repair import RepairOutcome
+
+            if weights is not None or self._fallback is None:
+                return None  # every swept vector infeasible or refused
+            return OptimizeResult(
+                cds=self._fallback,
+                construct=None,  # type: ignore[arg-type]
+                repair_outcome=RepairOutcome(self._fallback, 0, True, stop_reason="clean"),
+            )
+
+    def test_the_unsteered_solve_stands_alone_and_says_there_is_no_gallery(self) -> None:
+        from bt5.design.runner import _panel
+
+        gallery, picks, solved, degradation = _panel(
+            self._NothingSweeps(_cds()),  # type: ignore[arg-type]
+            steps=1,
+            k=5,
+        )
+        assert gallery is None, "there is no panel, so there is no Gallery to report"
+        assert picks == [_cds()]
+        assert solved[_cds()] is not None
+        assert degradation is not None
+        assert degradation.startswith("single candidate only:")
+        assert "%" not in degradation
+
+    def test_nothing_at_all_raises_rather_than_returning_a_partial_result(self) -> None:
+        """Refusing is the guarantee working. Returning an empty panel would let
+        a caller index `candidates[0]` on nothing."""
+        from bt5.design.runner import _panel
+
+        with pytest.raises(DesignError, match="no candidate survived"):
+            _panel(self._NothingSweeps(None), steps=1, k=5)  # type: ignore[arg-type]

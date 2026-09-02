@@ -95,13 +95,19 @@ to `not_run`, so this lane RENDERS whatever verdict it is handed and never
 upgrades one — making the screen real is S2's, per the buildout's inter-session
 contract.
 
-### A panel smaller than the one requested says so
+### A panel smaller than the one requested is not a degradation
 
-`gallery_size` is a ceiling, not a promise: PLAN asks for 3-8 genuinely different
-candidates. On the reference fixture the sweep reaches 3, so the panel is 3 and
-the report states how many vectors were solved and how many distinct designs they
-produced. "We chose 3 from many" and "3 is all there was" would otherwise render
-identically in a gallery UI.
+**Superseded once, then corrected — see "Corrected after review" below.** The
+first version of this made a short panel emit a degradation. That was wrong: with
+the shipped lattice it fired on every run and pinned `is_complete` to False by
+construction.
+
+What stands: `gallery_size` is a **ceiling**, not a promise. PLAN asks for 3-8
+genuinely different candidates, so a sweep that exhausted the front at three has
+answered completely and degrades nothing. `Gallery.swept` and `Gallery.distinct`
+carry how many vectors solved and how many distinct designs they reached, for a
+caller that wants to show "3 is all there was" rather than "we chose 3 from many".
+Only a panel below `MIN_GALLERY` degrades.
 
 ### A G4 shortfall is a finding
 
@@ -251,8 +257,21 @@ carry the counts for a caller that wants to show them. Only a panel below
 
 **`is_complete` still does not reach True with the data that ships**, and that is
 the honest answer rather than a remaining defect: every run carries at least the
-biosecurity screen (S2's), and a mammalian host also carries the missing codon
-usage table (S6's) and c1's missing CAI reference set (S3's). What changed is that
+biosecurity screen (S2's) and the missing codon usage table (S6's), and a
+non-E. coli host also carries c1's missing CAI reference set (S3's).
+
+The usage-table gap is worse than "S6 has not shipped the data yet", and the
+re-review caught me understating it. `_host_usage` reads
+`data/codon_usage/{host}.json`, but the one file that ships is named by
+REFERENCE SET (`sharp_li_1987_ecoli_w.json`), not by host id — so all nine
+`HostId` values miss, `kind="host_frequency"` is unreachable in the shipped
+build, `SolveSpace.usage` is always empty, and `live_axes` therefore always drops
+`codon_adaptation`. The "provably dead axis" is dead by a lookup-key mismatch as
+much as by absent data. `c1_cai` gets this right by looking up through
+`CAI_REFERENCE_SET`, which is why CAI works for E. coli while the null never
+does. Every sentence the report emits about it is true; the mapping is what is
+missing, and wiring it is S3's edit to `c1_cai.py` plus S6's data — not this
+lane's. What changed is that
 the `False` is now *derived from five named absences* instead of produced by a
 sentence that could never be absent — and a test proves the mechanism by supplying
 a clear verdict and watching exactly that degradation disappear.

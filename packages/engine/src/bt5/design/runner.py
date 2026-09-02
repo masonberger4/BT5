@@ -119,9 +119,14 @@ class SkeletonResult:
     Fields are only ever ADDED here. S5's CLI is built against this type, so a
     removal or a rename breaks a lane that cannot see this file.
 
-    `result.candidates` is ranked best-first by `ScoreCard.total`, and
-    `assembly`, `optimize_result` and `genbank` all describe `candidates[0]` --
-    the top-ranked design, which is the one a user takes away.
+    `result.candidates` is ranked best-first by `ranking.comparable_totals` --
+    NOT by `ScoreCard.total`, which renormalises over whatever each candidate
+    could evaluate and is therefore the right number to show beside one
+    candidate and the wrong one to sort by. When two candidates have different
+    available-objective sets the two orders differ, and this order is the one to
+    trust. `assembly`, `optimize_result` and `genbank` all describe
+    `candidates[0]` -- the top-ranked design, which is the one a user takes
+    away.
     """
 
     inputs: DesignInputs
@@ -136,6 +141,13 @@ class SkeletonResult:
     #: distinct designs they produced, and the minimum pairwise codon distance
     #: across the panel -- the number gate G4 reads. None when the sweep produced
     #: nothing and the design fell back to a single unsteered solve.
+    #:
+    #: **A renderer must check `len(gallery.picks) >= 2` before showing
+    #: `min_pairwise_distance`.** `pairwise_minimum` returns 1.0 for fewer than
+    #: two sequences, so a one-candidate panel carries 1.0 here and displaying it
+    #: says "100% distinct" of a panel with nothing to be distinct from. The
+    #: degradation deliberately makes no distance claim in that case; this field
+    #: is the one place the number still exists.
     gallery: Gallery | None = None
     #: One order line per orderable candidate, and the CSV of them. PLAN locks
     #: v1's output as "annotated construct + vendor order CSV"; this is the
@@ -721,10 +733,11 @@ def _panel(
             picks,
             solved,
             f"the sweep produced {len(picks)} distinct design"
-            f"{'' if len(picks) == 1 else 's'} from {gallery.swept} weight vectors, "
-            f"below the {MIN_GALLERY} at which a panel offers a genuine choice. No "
-            f"pairwise distance is reported: there are too few candidates for one to "
-            f"mean anything.",
+            f"{'' if len(picks) == 1 else 's'} from {gallery.swept} weight vector"
+            f"{'' if gallery.swept == 1 else 's'} that solved, below the "
+            f"{MIN_GALLERY} at which a panel offers a genuine choice. No pairwise "
+            f"distance is reported: there are too few candidates for one to mean "
+            f"anything.",
         )
 
     if gallery.min_pairwise_distance < G4_MIN_PAIRWISE_DISTANCE:

@@ -213,7 +213,8 @@ def build_nulls(
             unavailable[spec.id] = (
                 f"the null could not be built: {bad} of {drawn.n} synonymous variants "
                 f"produced no measurable score, so a percentile against it would be "
-                f"measured partly against variants this rule never scored"
+                f"measured {'entirely' if bad == drawn.n else 'partly'} against "
+                f"variants this rule never scored"
             )
             continue
         by_spec[spec.id] = drawn
@@ -334,16 +335,28 @@ def comparable_totals(cards: Mapping[str, ScoreCard], specs: Sequence[Spec]) -> 
     `candidates[0]`, and is the design exported to GenBank and put on the order
     file.
 
-    Restricting the key to the intersection is what makes the sort fair. Nothing
-    on today's catalog reaches this -- b1 and c1 return NaN for reasons constant
-    across a run, so every candidate has the same available set -- but the
-    ranking is what the user acts on, and "unreachable today" is not a property
-    a report can carry.
+    Restricting the key to the intersection removes the systematic BIAS, not
+    every bad outcome. Run the example above through it: both candidates score
+    0.9 on `b` alone, so they TIE and sweep order decides -- the less-measured
+    candidate can still land first. What it can no longer do is win *because* it
+    was measured on less. Ordering a tie is a smaller claim than ordering a
+    comparison that was never valid.
+
+    When the intersection is EMPTY every key is 0.0 and the order is sweep order
+    with no measurement behind it. That is reported: `score_candidate` names
+    every unavailable objective with its reason, so a reader can see the ranking
+    rests on nothing rather than being told it rests on something.
+
+    Nothing on today's catalog reaches any of this -- b1 and c1 return NaN for
+    reasons constant across a run, so every candidate has the same available set
+    -- but the ranking is what the user acts on, and "unreachable today" is not
+    a property a report can carry.
     """
     if not cards:
         return {}
+    # `cards` is non-empty by the guard above, so `available_sets` is too.
     available_sets = [{s.spec_id for s in card.available} for card in cards.values()]
-    common = set.intersection(*available_sets) if available_sets else set()
+    common = set.intersection(*available_sets)
     shared = [spec for spec in specs if spec.id in common]
     return {
         key: weighted_total([s for s in card.scores if s.spec_id in common], shared)
