@@ -185,40 +185,55 @@ identical problem one axis over.
 the rule ranked by distance from the band's *midpoint*, which for `(0.0, 0.9548)` is
 0.477 — below where any real mammalian CDS sits. The mammalian slot was therefore
 always the "least interesting" one and a two-slot report handed itself to the E. coli
-slot, discarding the CAI the job is actually about. Now ranked by distance to the
-nearest **binding edge measured in chance-to-1.0 headroom**, `(x - chance)/(1 - chance)`,
-with an inert `lo <= 0.0` edge excluded outright — a floor that can never fire is not
-something a slot can be "near".
+slot, discarding the CAI the job is actually about. Now decided by **`slot.role`**, as a declared policy rather than a derived number,
+after three attempts to derive it from the CAIs each failed in the same way. Each
+produced a *fixed preference for one host across a large region of realizable CAI*
+while presenting as a neutral comparator:
 
-Two further spellings were tried and rejected first, and the second is worth recording
-because it looked like a fix and was reviewed as one. **Raw distance to an edge** only
-narrowed the pathology: E. coli's band is 0.20 wide against the mammalian ~0.955, so an
-in-band E. coli slot is always within 0.10 of an edge, and a HEK293 CDS 0.028 below its
-max-CAI ceiling still lost the report. **Distance as a fraction of band width** then
-mirrored the bug instead of fixing it — structurally, not marginally: an in-band E. coli
-slot scores at most 0.5 (its exact midpoint) while a mammalian slot scores `(hi-cai)/hi`
-< 0.5 for any CAI above `hi/2` = 0.477, which chance alone (0.656) already clears, so the
-mammalian slot won unconditionally against every in-band E. coli slot. Measured: a HEK293
-slot 0.0237 below a ceiling it would not breach took the report from an E. coli slot
-0.0051 from a live floor breach, and the near-breach was invisible in `raw_score`,
-`binding_side` and `breaches`. The deeper objection is that **band width is not a
-measurement here**: HEK293's 0.9548 is that wide only because the inert floor is written
-as `0.0`, and writing the same inert floor as chance (0.656) flips the answer back. A
-comparator whose output turns on the encoding of a value declared inert measures
-bookkeeping, not the design.
+| comparator | who wins, and where |
+|---|---|
+| distance to the band's **middle** | E. coli, always — the middle of (0.0, 0.9548) is 0.477, below where any real mammalian CDS sits |
+| **raw** distance to nearest live edge | E. coli, for every human CAI below 0.8548 |
+| distance / **band width** | the mammal, *unconditionally* |
+| distance in **chance-to-1.0 headroom** | E. coli, for every human CAI below 0.9096 |
 
-Headroom is not an arbitrary third try — it is the scale `CAI_BAND` was built on, so
-every host's ceiling sits at `CEILING_FRACTION_OF_HEADROOM` = 0.8687 by construction and
-a ceiling-to-ceiling comparison is exact rather than approximate, while E. coli's floor
-sits at a real 0.6062 instead of being scaled against a floor that cannot fire. It makes
-the tiebreak consistent with the band construction instead of orthogonal to it. All four
-counter-examples the review used to break the width version now resolve to E. coli, and a
-fifth case (E. coli mid-band at 0.800, HEK293 0.005 from its own ceiling) resolves to
-HEK293 — which is what stops this becoming a fixed preference in the other direction. All
-five are parametrized tests built on a decoupled construction (`CGT`/`CCC` are extreme in
-one table and neutral in the other, so each host's CAI is placed independently); the
-previous test could only move both slots together, which is why it could not express the
-case that broke it.
+The width version inverted the preference rather than removing it: an in-band E. coli
+slot scores at most 0.5 while a mammalian slot scores `(hi-cai)/hi` < 0.5 for any CAI
+above 0.477, which chance alone (0.656) already clears. It also rested on a quantity that
+is not a measurement — HEK293's band is 0.9548 wide only because the inert floor is
+*written* as `0.0`, and writing it as chance (0.656) flips the result.
+
+Headroom fixed that encoding dependence and was still a fixed preference, in a way that
+was worse than what it replaced: E. coli carries **two** live edges in a narrow band, so
+its distance is bounded above by 0.1313, while a weak-bias host carries **one** (its floor
+is inert) and its distance is unbounded. Headroom multiplies the mammalian distance by
+2.904 and E. coli's by 1.313 — a constant 2.212× tilt — so the dominance region *grew*,
+from human CAI 0.8548 up to 0.9096. The commit that shipped it rejected raw distance in
+its own comment as "the same pathology, narrower" and then shipped the same pathology,
+wider.
+
+**The common failure is structural, and no rescaling addresses it.** "Nearest a binding
+edge" is not a symmetric predicate across slots whose hosts have different *numbers* of
+live edges: a min over two edges is systematically smaller than a min over one drawn from
+a wider interval. Every rescaling moved the dominance region instead of removing it,
+which is why the fourth attempt stops rescaling.
+
+So the policy is stated. CAI is a statement about **translation** — which is already why
+`gate` keys on `role` and not on `host`, and why propagation slots are excluded outright —
+and the producer slot is where the protein is actually made. "The CAI this job is about"
+is the producer's, by the same argument that excludes propagation. Within one role the
+higher CAI wins, which is the side the operative ceiling is on and is deterministic.
+Breaches are unaffected and still outrank every in-band slot, ordered by deviation: that
+ordering is about safety, not relevance, and a breach must never be hidden behind the
+producer's comfortable number.
+
+The tests changed shape with it. The previous set asserted five specific winners, of which
+only three could distinguish the new comparator from the old one and *none* could
+distinguish headroom from raw distance — reverting to raw would have left the suite green.
+The set now includes the two cases where the rejected comparators disagreed (human 0.88
+and 0.70 against E. coli 0.80), a role-swap on an identical construct proving the answer
+follows the role and not the host, and a case where a breaching target must still outrank
+an in-band producer.
 
 **Recorded, not fixed:** `Breach.magnitude` is a raw CAI deviation and is not
 comparable across hosts — human's chance-to-1.0 headroom is 0.344 against E. coli's

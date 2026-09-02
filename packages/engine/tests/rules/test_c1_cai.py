@@ -646,16 +646,23 @@ class TestBandCalibration:
         assert rule._band_for(HostId.HEK293) == (0.50, CAI_BAND[HostId.HEK293][1])
         assert rule._band_for(HostId.E_COLI_K12) == (0.50, BAND_HI)
 
-    def _decoupled(self, human_cai: float, ecoli_cai: float, total: int = 3000) -> str:
-        """One CDS landing EACH host on a CAI I choose, independently of the other.
+    def _decoupled(
+        self, human_cai: float, ecoli_cai: float, total: int = 3000
+    ) -> tuple[str, float, float]:
+        """One CDS landing EACH host on a CAI I choose, plus the ACHIEVED pair.
 
         `_cds_near` cannot do this: it scores a single sequence against both
-        tables, so the two CAIs move together and the E. coli slot can never be
-        parked near an edge while the HEK293 slot sits somewhere else. That is
-        why the first version of this test could not express the case that broke
-        it. The trick is a pair of codons extreme in one table and NEUTRAL in the
-        other, so each host's count solves independently -- ln w = 0 contributes
-        nothing to the other host's geometric mean.
+        tables, so the two CAIs move together and one slot can never be parked
+        near an edge while the other sits elsewhere. The trick is a pair of codons
+        extreme in one table and NEUTRAL in the other, so each host's count solves
+        independently -- ln w = 0 contributes nothing to the other host's
+        geometric mean.
+
+        Returns what it actually built, not what was asked for: solving for an
+        integer codon count rounds by up to half a codon, which is 5.9e-4 in
+        E. coli CAI at 0.80 -- larger than any tolerance worth asserting. Callers
+        compare against the achieved values so a regenerated table cannot make a
+        correct rule look broken.
         """
         provider = FileTableProvider()
         hw, ew = (
@@ -671,51 +678,99 @@ class TestBandCalibration:
         assert ew["CTG"] == 1.0, "the filler must be neutral for E. coli"
         n_cgt = round(total * math.log(human_cai) / math.log(hw["CGT"]))
         n_ccc = round(total * math.log(ecoli_cai) / math.log(ew["CCC"]))
-        assert 0 <= n_cgt + n_ccc <= total, "targets are outside the reachable range"
+        # Each count separately, not just the sum: a negative count makes its
+        # codon run empty and silently shortens the CDS instead of failing.
+        assert n_cgt >= 0, f"human target {human_cai} is above the family's reach"
+        assert n_ccc >= 0, f"E. coli target {ecoli_cai} is above the family's reach"
+        assert n_cgt + n_ccc <= total, "targets together exceed the CDS length"
         body = "CGT" * n_cgt + "CCC" * n_ccc + "CTG" * (total - n_cgt - n_ccc)
-        return "ATG" + body + "TAA"
+        cds = "ATG" + body + "TAA"
+        assert len(cds) == 3 * (total + 2), "the CDS must be exactly what was solved"
+        return (
+            cds,
+            math.exp(n_cgt * math.log(hw["CGT"]) / total),
+            math.exp(n_ccc * math.log(ew["CCC"]) / total),
+        )
 
     @pytest.mark.parametrize(
-        ("human_cai", "ecoli_cai", "winner", "why"),
+        ("human_cai", "ecoli_cai"),
         [
-            (0.9268, 0.7051, "ecoli", "E. coli 0.0051 from a live FLOOR breach"),
-            (0.9311, 0.7051, "ecoli", "the width-normalized crossover, now correct"),
-            (0.9268, 0.8953, "ecoli", "E. coli 0.0047 from max-CAI collapse"),
-            (0.9400, 0.8953, "ecoli", "ceiling vs ceiling, E. coli far nearer"),
-            (0.9501, 0.8004, "hek", "E. coli mid-band, HEK293 0.005 from its own"),
+            (0.9268, 0.7051),  # E. coli 0.005 from a live floor breach
+            (0.9311, 0.7051),
+            (0.9268, 0.8953),  # E. coli 0.005 from max-CAI collapse
+            (0.9400, 0.8953),
+            (0.9501, 0.8004),  # HEK293 0.005 from its own ceiling
+            (0.8800, 0.8004),  # the strip where the rejected comparators disagree
+            (0.7000, 0.8004),  # a mammalian CDS nowhere near anything
         ],
     )
-    def test_the_tiebreak_measures_headroom_not_band_width(
-        self, human_cai: float, ecoli_cai: float, winner: str, why: str
+    def test_the_producer_slot_holds_the_reported_cai_whatever_the_numbers_say(
+        self, human_cai: float, ecoli_cai: float
     ) -> None:
-        """Which in-band slot's CAI gets reported -- and it must not be a fixed
-        preference for either host.
+        """Which in-band slot's CAI is reported is a DECLARED policy, not a
+        measurement, and this pins it across the whole realizable range.
 
-        Two earlier comparators were exactly that. Distance to the band's MIDDLE
-        always chose E. coli, because the middle of (0.0, 0.9548) is 0.477 and no
-        real mammalian CDS is near it. Distance as a fraction of BAND WIDTH always
-        chose the mammal: an in-band E. coli slot scores at most 0.5 (its exact
-        midpoint) while a mammalian slot scores (hi-cai)/hi < 0.5 for any cai above
-        0.477 -- which chance alone (0.656) already clears. Both looked like
-        tiebreaks and were preferences.
+        Three attempts to derive it from the CAIs each produced a fixed preference
+        for one host over a large region while looking neutral: the band MIDDLE
+        always chose E. coli; RAW distance to an edge chose E. coli below human
+        0.8548; BAND WIDTH inverted it and chose the mammal unconditionally; and
+        chance-to-1.0 HEADROOM chose E. coli below human 0.9096 -- a wider
+        dominance region than the raw distance it replaced. The structural reason
+        is that "nearest a binding edge" is not symmetric across hosts with
+        different NUMBERS of live edges: E. coli has two and a narrow band, a
+        weak-bias host has one (its floor is inert) and an unbounded distance.
 
-        Headroom -- (x - chance)/(1 - chance) -- is the scale `CAI_BAND` was built
-        on, so every host's ceiling sits at 0.8687 by construction. The last case
-        is the one that stops this becoming a fixed preference for E. coli.
+        So the rule states the policy: CAI is about translation, `gate` already
+        keys on role for that reason, and the producer is where the protein is
+        made. The last two rows are the cases the derived comparators disagreed
+        on -- they are here to prove the answer no longer depends on the numbers.
         """
-        cds = self._decoupled(human_cai, ecoli_cai)
+        cds, human, ecoli = self._decoupled(human_cai, ecoli_cai)
         c = construct(cds)
         hek = slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)
         eco = slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)
-        alone = {
-            "hek": evaluate(c, context(hek)).raw_score,
-            "ecoli": evaluate(c, context(eco)).raw_score,
-        }
-        assert alone["hek"] == pytest.approx(human_cai, abs=5e-4)
-        assert alone["ecoli"] == pytest.approx(ecoli_cai, abs=5e-4)
+        assert evaluate(c, context(hek)).raw_score == pytest.approx(human, abs=1e-9)
+        assert evaluate(c, context(eco)).raw_score == pytest.approx(ecoli, abs=1e-9)
         both = evaluate(c, context(hek, eco))
         assert both.passes, "a tiebreak only arises when every slot is in band"
-        assert both.raw_score == pytest.approx(alone[winner], abs=1e-9), why
+        assert both.raw_score == pytest.approx(human, abs=1e-9)
+        assert both.breaches == ()
+
+    def test_role_precedence_is_the_rule_not_the_host(self) -> None:
+        """The other half of the same policy, and the test that stops it being a
+        disguised preference for the mammalian host: swap which host is the
+        producer and the report swaps with it, on the identical construct."""
+        cds, human, ecoli = self._decoupled(0.9268, 0.8004)
+        c = construct(cds)
+        hek_produces = context(
+            slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1),
+            slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11),
+        )
+        ecoli_produces = context(
+            slot("target", HostId.HEK293, Modality.LENTIVIRAL, 1),
+            slot("producer", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11),
+        )
+        assert evaluate(c, hek_produces).raw_score == pytest.approx(human, abs=1e-9)
+        assert evaluate(c, ecoli_produces).raw_score == pytest.approx(ecoli, abs=1e-9)
+
+    def test_a_breach_anywhere_outranks_an_in_band_producer(self) -> None:
+        """Role precedence orders RELEVANCE among in-band slots; it must never
+        hide a breach. A target slot over its own ceiling has to reach the report
+        even though the producer is the slot the job is about -- otherwise a
+        max-CAI collapse in the propagation-adjacent host is silently dropped."""
+        cds, human, ecoli = self._decoupled(0.9268, 0.9400)  # E. coli 0.94 > 0.90
+        c = construct(cds)
+        both = evaluate(
+            c,
+            context(
+                slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1),
+                slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11),
+            ),
+        )
+        assert not both.passes
+        assert both.binding_side == "upper"
+        assert both.raw_score == pytest.approx(ecoli, abs=1e-9)
+        assert both.breaches[0].slot_role == "target"
 
     def test_a_host_with_a_table_but_no_band_is_unavailable_not_guessed(
         self, monkeypatch: pytest.MonkeyPatch
