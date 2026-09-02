@@ -203,8 +203,58 @@ class RuleSet:
         for hundreds of times per iteration. A SOFT rule can never return a
         repairable breach (the weighted sum is not in this loop), and E8's k-mer
         index or B1's fold evaluated here would be pure waste.
+
+        That paragraph described the intent and not the code until now: this
+        returned `self.findings(c).repairable`, and `findings()` walks every
+        spec. Measured on a 500 aa protein assembled into the 3.1 kb synthetic
+        lentiviral backbone against the post-#92/#93 catalog: 65 ms per repair
+        candidate, against 7 ms for the eight HARD_REPAIR specs actually
+        consumed -- a ~9x waste. Two rules were most of it,
+        `f3_inverted_repeats` at ~29 ms and `e8_kmer_uniqueness` (the rule this
+        docstring already named) at ~20 ms, and every result was discarded.
+
+        The narrowing is behaviour-preserving, and the argument is short enough
+        to check: `repair_specs()` selects the specs where
+        `enforcement_for(slot)` is HARD_REPAIR for some active slot, and
+        `_enforcement_of` returns only values drawn from that same set -- so a
+        spec outside `repair_specs()` cannot produce a breach that reaches
+        `repairable`.
+
+        With ONE exception, handled explicitly below rather than inherited:
+        `_enforcement_of` falls back to the `enforcement` ClassVar when there
+        are no active slots, and `repair_specs()` is empty there because its
+        `any()` is over nothing. `DesignContext` requires a slot but does not
+        require one to be ENABLED, so a fully disabled context would silently
+        change behaviour. It keeps the full walk.
+
+        `findings()` is deliberately left alone -- `advise()` reads its
+        `hard_check` and the design lane reads its `evaluations` for the
+        scorecard, so both need every spec.
         """
-        return lambda c: self.findings(c).repairable
+        if not self.ctx.active_slots:
+            # No enabled slot, so `repair_specs()` is empty while
+            # `_enforcement_of` still reads each rule's ClassVar. Narrowing here
+            # would drop breaches the unscoped path returns.
+            return lambda c: self.findings(c).repairable
+
+        # Hoisted out of the per-candidate loop: `gate()` and `enforcement_for`
+        # read only the slot, so neither can change between repair iterations.
+        specs = self.repair_specs()
+
+        def find(c: Construct) -> tuple[Breach, ...]:
+            out: list[Breach] = []
+            for spec in specs:
+                ev = spec.evaluate(c, self.ctx, self.svc)
+                if ev.passes:
+                    continue  # the rule's own verdict; a warn-band finding is not a failure
+                out.extend(
+                    b
+                    for b in ev.breaches
+                    if self._enforcement_of(spec, b) is Enforcement.HARD_REPAIR
+                )
+            return tuple(out)
+
+        return find
 
     def advise(self) -> Callable[[Construct], tuple[Breach, ...]]:
         """The HARD_CHECK findings no codon can fix. Reported, never chased.
