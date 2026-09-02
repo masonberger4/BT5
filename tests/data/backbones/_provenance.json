@@ -20,5 +20,23 @@
       "3' LTR": "1521..1770 -- byte-identical to the 5' LTR, a genuine 250 bp direct repeat"
     },
     "notes": "The two LTRs are the same 250 bp on purpose: they are what SegmentKind.WHITELISTED_REPEAT exists for, and no codon choice can remove them."
+  },
+  "real_lenti_pFTMGW_EF177827.gb": {
+    "kind": "real lentiviral transfer vector (unmodified public deposit)",
+    "vector": "pFTMGW -- a FUGW-derived third-generation lentiviral transfer vector (CMV-driven 5' LTR, Psi, splice donor, cPPT, MCS, eGFP, WPRE, 3' LTR, ColE1 origin)",
+    "organism": "Lentiviral transfer vector pFTMGW (NCBI taxon:436015)",
+    "accession": "EF177827.1",
+    "source": "NCBI GenBank, fetched via E-utilities efetch (db=nuccore, rettype=gb). The bytes are the unmodified deposit -- BT5 added no annotation and changed no coordinate.",
+    "source_url": "https://www.ncbi.nlm.nih.gov/nuccore/EF177827.1",
+    "license": "Public domain (NCBI GenBank sequence records are not copyrighted)",
+    "retrieved": "2026-09-02",
+    "sha256": "16901b9f3736004037ddb7dc0651f57499225d0b74591fab3754344297d572be",
+    "length": 8928,
+    "topology": "circular",
+    "features": "12 features, 6 kinds (source, repeat_region x2, misc_feature x6, gene, CDS, rep_origin) -- the messy real-world annotation (misc_feature soup, real LTRs, real WPRE, a quirky /transl_table=11 on the eGFP CDS) that issue #74 wants and the synthetic fixtures smooth over.",
+    "why_a_real_map": "Issue #74 / PLAN #1: the synthetic fixtures are sufficient for coordinate-model CORRECTNESS but not for annotation QUALITY (G2). This is a genuine, publication-backed, named lentiviral transfer vector, verified to round-trip losslessly through bt5.vector (sequence, topology and every feature location/key/qualifier preserved; writer idempotent).",
+    "why_ncbi_not_addgene": "Issue #74 named Addgene and proposed keeping the map OUT of the repo behind an env var, because an Addgene-authored map carries redistribution ambiguity. Sourcing the same class of vector from an NCBI GenBank deposit -- public domain -- removes that ambiguity, so the fixture can be COMMITTED and round-trip-checked in-repo instead of hidden behind an env var.",
+    "what_it_does_not_carry": "No annotated 5'UTR feature and no origin-spanning join(): an unmodified linearized deposit has neither (the 5'UTR is implicit, and no feature wraps the depositor's chosen base 1). That geometry is deliberately covered by synthetic_lenti_ef1a.gb; hand-adding it here would corrupt the map's value as an independent, unmodified parse target. PLAN #1's origin-spanning bar remains satisfied by the synthetic fixture; this fixture closes the annotation-quality gap.",
+    "notes": "Issue #74 item 2 (a @pytest.mark.slow design() end-to-end round-trip test) lives in the design/vector lane, not the data lane; it remains open on #74. This fixture was verified to round-trip losslessly out-of-band."
   }
 }
