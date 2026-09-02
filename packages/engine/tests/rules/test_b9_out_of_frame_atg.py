@@ -311,14 +311,23 @@ class TestTheJunctionClause:
         assert not ev.passes
         assert not is_unavailable(ev)
 
-    def test_an_upstream_in_frame_atg_is_out_of_scope(self) -> None:
-        """brief.md:69's third clause says out-of-frame; in-frame is an N-terminal
-        EXTENSION, not a truncation, so reporting it under that message would
-        describe it wrongly. Regression for the `offset >= 0` frame bug, which
-        labelled every upstream AUG out-of-frame while detail["frame"] said 0."""
+    def test_an_upstream_in_frame_atg_is_reported_as_an_extension(self) -> None:
+        """It makes an N-terminally EXTENDED product, not a truncated one.
+
+        The first cut labelled every upstream AUG out-of-frame while
+        `detail["frame"]` said 0; the second dropped in-frame ones silently.
+        Neither is right: nothing else in the catalog covers this, so it is
+        reported with wording that matches what actually happens.
+        """
         c = atg_construct(CLEAN, leader="GCCATG")  # ATG at offset -3, in frame
         ev = evaluate(c, rule=OutOfFrameAtg(strong_context_only=False))
-        assert all(b.detail["upstream_of_cds"] == "False" for b in ev.breaches)
+        upstream = [b for b in ev.breaches if b.detail["upstream_of_cds"] == "True"]
+        assert len(upstream) == 1
+        assert upstream[0].detail["in_frame"] == "True"
+        assert upstream[0].detail["cds_offset"] == -3.0
+        assert "N-terminal extension" in upstream[0].message
+        assert "extended product" in upstream[0].message
+        assert "truncated or frameshifted" not in upstream[0].message
 
     def test_the_junction_flag_does_not_leak_between_slots(self) -> None:
         """Per-slot, not a running OR across the loop.
@@ -405,8 +414,8 @@ class TestStrand:
             context(slot(), orientation=-1),
             rule=OutOfFrameAtg(strong_context_only=False),
         )
-        if ev.breaches:
-            assert all(b.interval.strand == -1 for b in ev.breaches)
+        assert ev.breaches, "fixture drifted: no minus-strand finding to check"
+        assert all(b.interval.strand == -1 for b in ev.breaches)
 
     def test_two_negatives_compose_to_a_forward_read(self) -> None:
         both = context(slot(strand_of_interest=-1), orientation=-1)

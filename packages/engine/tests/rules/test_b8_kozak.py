@@ -446,6 +446,18 @@ class TestSpecMetadata:
         """
         assert "d1_restriction_sites" in KozakContext.conflicts_with
 
+    def test_the_b9_conflict_is_declared_from_both_sides(self) -> None:
+        """b9 already declared the reverse edge; d1/b8 is symmetric too.
+
+        Raising +4 to G strengthens the context of any downstream out-of-frame
+        ATG, and removing one can spoil a Kozak -- the interaction runs both ways
+        and the conflict panel reads both tuples.
+        """
+        from bt5.rules.catalog.b9_out_of_frame_atg import OutOfFrameAtg
+
+        assert "b9_out_of_frame_atg" in KozakContext.conflicts_with
+        assert "b8_kozak" in OutOfFrameAtg.conflicts_with
+
     def test_it_is_second_in_the_catalog_and_never_ties_b1(self) -> None:
         """The ordering the weight was lowered from 1.0 to establish.
 

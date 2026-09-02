@@ -256,6 +256,8 @@ class KozakContext:
             return self._unavailable(c, "no designable CDS whose start codon to read")
 
         scored: list[tuple[ContextSlot, Interval, str, float]] = []
+        no_initiator: str | None = None
+        no_initiator_at: Interval | None = None
         for slot in slots:
             strand = strand_for(ctx, slot)
             cds = editable[0] if strand == 1 else editable[-1]
@@ -297,16 +299,27 @@ class KozakContext:
                 )
             initiator = context[UPSTREAM : UPSTREAM + 3]
             if not code.is_start(initiator):
-                return self._unavailable(
-                    c,
-                    f"the designable CDS begins {initiator!r}, which is not a start "
-                    f"codon under NCBI table {slot.table_id}. A Kozak tier describes "
-                    f"how well a scanning ribosome initiates AT a start codon, so "
-                    f"scoring one here would describe an initiation event that "
-                    f"cannot happen",
-                    interval=window,
+                # SKIP this slot; do not abandon the rule. An antisense slot reads
+                # a window that begins mid-codon on its own strand, and returning
+                # unavailable for the whole Evaluation would throw away a
+                # perfectly readable tier for the slot that DOES initiate.
+                # Unavailable only if no slot has an initiator -- see below.
+                no_initiator = (
+                    f"the designable CDS begins {initiator!r} for the {slot.role} "
+                    f"slot ({slot.host}), which is not a start codon under NCBI "
+                    f"table {slot.table_id}. A Kozak tier describes how well a "
+                    f"scanning ribosome initiates AT a start codon, so scoring one "
+                    f"here would describe an initiation event that cannot happen"
                 )
+                no_initiator_at = window
+                continue
             scored.append((slot, window, context, self._tier(context)))
+
+        if not scored:
+            # `slots` was non-empty and every other per-slot failure returns, so
+            # the only way to arrive here is the initiator skip above.
+            assert no_initiator is not None
+            return self._unavailable(c, no_initiator, interval=no_initiator_at)
 
         # The WEAKEST slot binds. Averaging tiers across slots would let a strong
         # context in one hide a weak one in another, and the weak one is the finding.
@@ -388,6 +401,7 @@ class KozakContext:
                 "minus_3": context[UPSTREAM - 3],
                 "plus_4": context[UPSTREAM + 3],
                 "plus_5": context[UPSTREAM + 4],
+                "c_at_plus_5": str(self.c_at_plus_5(context)),
                 "purine_at_minus_3": str(purine),
                 "g_at_plus_4": str(g4),
                 "host": str(slot.host),

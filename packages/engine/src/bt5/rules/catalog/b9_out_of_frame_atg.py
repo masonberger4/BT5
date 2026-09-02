@@ -223,7 +223,7 @@ class OutOfFrameAtg:
         breaches: list[Breach] = []
         seen: set[tuple[int, int, int]] = set()
         scanned = 0
-        junction_checked = False
+        junction_checked = False  # rebound per slot inside the loop
         for slot in slots:
             strand = strand_for(ctx, slot)
             cds = editable[0] if strand == 1 else editable[-1]
@@ -305,6 +305,13 @@ class OutOfFrameAtg:
                 reason = f"additional ATG in the first {self.scan_nt} nt of the CDS"
             elif not in_frame and strong and self.strong_context_only:
                 reason = "out-of-frame ATG in strong initiation context"
+            elif in_frame and offset < 0:
+                # An upstream IN-frame AUG makes an N-terminally EXTENDED product,
+                # not a truncated or frameshifted one, so brief.md:69's third
+                # clause (out-of-frame uAUGs) does not cover it. Nothing else in
+                # the catalog does either, and dropping it silently was the wrong
+                # half of the choice between a wrong message and no message.
+                reason = "upstream in-frame ATG, an N-terminal extension"
             elif not in_frame and not self.strong_context_only:
                 reason = "out-of-frame ATG"
             else:
@@ -368,6 +375,11 @@ class OutOfFrameAtg:
                 "; the residue is Met, so this ATG is forced and must be moved or "
                 "accepted rather than recoded"
             ) + note
+        outcome = (
+            "an N-terminally extended product"
+            if in_frame and upstream_of_cds
+            else "a truncated or frameshifted product"
+        )
         frame = "in frame" if in_frame else f"frame +{offset % 3}"
         if upstream_of_cds:
             frame += ", starts upstream of the CDS"
@@ -380,7 +392,7 @@ class OutOfFrameAtg:
             message=(
                 f"{reason} at CDS offset {offset:+d} ({frame}) for the "
                 f"{slot.role} slot ({slot.host}). A scanning ribosome can initiate "
-                f"here and make a truncated or frameshifted product{note}"
+                f"here and make {outcome}{note}"
             ),
             # Forced Met cannot be recoded, and an ATG outside the designable
             # region is not the solver's to touch.

@@ -261,6 +261,11 @@ class TestStrand:
     """B2 is directional and had ZERO minus-strand coverage, which is why the
     origin-spanning window bug shipped. `slot(strand_of_interest=...)` and
     `context(orientation=...)` existed here and were never passed anything but 1.
+
+    Only the two `_wrapping` tests are regressions for that bug -- the other two
+    add strand coverage that passes either way, which is worth having and is not
+    the same claim. `_wrapping`'s CDS deliberately spans the whole plasmid, so it
+    exercises geometry only and can never catch a leader-annotation regression.
     """
 
     def _wrapping(self) -> Construct:
