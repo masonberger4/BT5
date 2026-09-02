@@ -271,25 +271,27 @@ class TestExcludedCodons:
 
 
 class TestUnavailable:
-    """The seven hosts BT5 has no reference set for, and the honest report for them."""
+    """The three hosts BT5 still has no reference set for, and the honest report.
+
+    Was seven. S6 shipped human, mouse and CHO sets (#90), so the mammalian hosts
+    now compute -- see `TestMammalianHosts`. SF9, S_CEREVISIAE and P_PASTORIS were
+    deferred deliberately: no shipped preset consumes them and their RefSeq
+    coverage is materially messier, so they stay absent and stay honest.
+    """
 
     @pytest.mark.parametrize(
         "host",
-        [
-            HostId.HUMAN,
-            HostId.HEK293,
-            HostId.CHO,
-            HostId.MOUSE,
-            HostId.SF9,
-            HostId.S_CEREVISIAE,
-            HostId.P_PASTORIS,
-        ],
+        [HostId.SF9, HostId.S_CEREVISIAE, HostId.P_PASTORIS],
     )
     def test_a_host_with_no_reference_set_reports_unavailable(self, host: HostId) -> None:
-        """`data/codon_usage/` holds exactly one file. Scoring a mammalian CDS
-        against E. coli weights because that table happened to be on disk is the
-        failure this rule exists to refuse."""
-        ev = evaluate(construct(IN_BAND), context(slot("producer", host, Modality.LENTIVIRAL, 1)))
+        """Scoring a CDS against another organism's weights because that table
+        happened to be on disk is the failure this rule exists to refuse."""
+        from bt5.core.context import LOCKED_TRANSLATION_TABLE
+
+        ev = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", host, Modality.LENTIVIRAL, LOCKED_TRANSLATION_TABLE[host])),
+        )
         assert is_unavailable(ev)
         assert host in ev.breaches[0].message
 
@@ -298,7 +300,7 @@ class TestUnavailable:
         rare-codon design and 0.8 reads as one exactly on target. Both would be
         affirmative false claims about a quantity nobody measured."""
         ev = evaluate(
-            construct(IN_BAND), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+            construct(IN_BAND), context(slot("producer", HostId.SF9, Modality.LENTIVIRAL, 1))
         )
         assert math.isnan(ev.raw_score)
         assert ev.binding_side is None
@@ -307,16 +309,92 @@ class TestUnavailable:
         """`passes` stays True: the objective was not computed, which is a
         different statement from 'this construct is out of band'."""
         ev = evaluate(
-            construct(IN_BAND), context(slot("producer", HostId.CHO, Modality.LENTIVIRAL, 1))
+            construct(IN_BAND),
+            context(slot("producer", HostId.S_CEREVISIAE, Modality.LENTIVIRAL, 1)),
         )
         assert ev.passes
         assert ev.breaches[0].detail["unavailable_reason"]
 
-    def test_only_the_e_coli_hosts_have_a_reference_set_in_this_build(self) -> None:
-        """The guard on the map itself. Adding a host here without adding its table
-        to `data/codon_usage/` would turn every 'unavailable' into a FileNotFoundError."""
-        assert set(CAI_REFERENCE_SET) == {HostId.E_COLI_K12, HostId.E_COLI_BL21}
-        assert set(CAI_REFERENCE_SET.values()) == {REFERENCE_SET}
+    def test_every_mapped_host_has_a_table_actually_on_disk(self) -> None:
+        """The guard on the map itself, and the one that matters when it grows.
+
+        Adding a host here without its table in `data/codon_usage/` turns every
+        honest 'unavailable' into a FileNotFoundError from inside a rule. Checked
+        against the filesystem rather than a hard-coded list, so the guard keeps
+        working as the map grows.
+        """
+        root = Path(__file__).resolve().parents[4]
+        for host, key in CAI_REFERENCE_SET.items():
+            path = root / "data" / "codon_usage" / f"{key}.json"
+            assert path.exists(), f"{host} maps to {key!r}, which is not on disk"
+
+    def test_the_deferred_hosts_are_absent_on_purpose(self) -> None:
+        """Not an oversight: S6 deferred these three, and C1 says so rather than
+        borrowing another organism's table."""
+        for host in (HostId.SF9, HostId.S_CEREVISIAE, HostId.P_PASTORIS):
+            assert host not in CAI_REFERENCE_SET
+
+
+class TestMammalianHosts:
+    """The four hosts S6's #90 took from `unavailable` to a real number.
+
+    This is the wiring `docs/decisions/2026-09-02-s6-host-data-and-real-backbone.md`
+    handed to S3: the data lane ships data, and `CAI_REFERENCE_SET` lives here.
+    """
+
+    @pytest.mark.parametrize(
+        ("host", "expected_set"),
+        [
+            (HostId.HUMAN, "human_highly_expressed_refseq_w"),
+            (HostId.HEK293, "human_highly_expressed_refseq_w"),
+            (HostId.MOUSE, "mouse_highly_expressed_refseq_w"),
+            (HostId.CHO, "cho_highly_expressed_refseq_w"),
+        ],
+    )
+    def test_it_now_computes_against_the_right_reference_set(
+        self, host: HostId, expected_set: str
+    ) -> None:
+        ev = evaluate(construct(IN_BAND), context(slot("producer", host, Modality.LENTIVIRAL, 1)))
+        assert not is_unavailable(ev)
+        assert not math.isnan(ev.raw_score)
+        assert 0.0 < ev.raw_score <= 1.0
+        assert CAI_REFERENCE_SET[host] == expected_set
+
+    def test_hek293_shares_the_human_set_and_is_not_a_separate_table(self) -> None:
+        """HEK293 is a Homo sapiens cell line, so this is the same same-species
+        approximation BL21/K-12 already makes, one taxon down. Codon usage is a
+        property of the organism's translational machinery, not the cell line.
+        S6 shipped the human set FOR this mapping."""
+        assert CAI_REFERENCE_SET[HostId.HEK293] == CAI_REFERENCE_SET[HostId.HUMAN]
+        human = evaluate(
+            construct(IN_BAND), context(slot("producer", HostId.HUMAN, Modality.LENTIVIRAL, 1))
+        )
+        hek = evaluate(
+            construct(IN_BAND), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        assert human.raw_score == pytest.approx(hek.raw_score)
+
+    def test_a_mammalian_host_is_not_scored_against_e_coli(self) -> None:
+        """The failure the unavailable path existed to prevent, now that a real
+        alternative exists: a mammalian CAI must not be the E. coli number."""
+        hek = evaluate(
+            construct(IN_BAND), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        ecoli = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)),
+        )
+        assert hek.raw_score != pytest.approx(ecoli.raw_score)
+
+    def test_the_mammalian_presets_no_longer_degrade_this_objective(self) -> None:
+        """The point of the wiring. Both shipped mammalian presets key on HEK293,
+        so before this they weighted 2.C1 at 0.2 and got `unavailable` back."""
+        from bt5.score.presets import PRESETS, resolve
+
+        for preset in PRESETS:
+            resolved = resolve(preset)
+            assert resolved.unimplemented == ()
+            assert "c1_cai" in resolved.weights
 
 
 class TestGating:
@@ -337,8 +415,28 @@ class TestGating:
                 slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1),
             ),
         )
-        assert is_unavailable(ev), "the E. coli propagation slot must not answer for HEK293"
-        assert "hek293" in ev.breaches[0].message
+        # Before S6 shipped a human table this asserted `is_unavailable` -- the gate
+        # was proved by ABSENCE, which stopped proving anything the moment HEK293
+        # got a reference set. Now it is proved positively: the number exists, and
+        # it was computed against the HUMAN set, never E. coli's.
+        assert not is_unavailable(ev)
+        assert ev.n_evaluated > 0
+
+        # Which table answered, proved without needing a breach's detail: the
+        # two-slot result must equal what HEK293 alone gives and differ from what
+        # E. coli alone gives. The same CDS scored against a different reference
+        # set is a different number -- that is why the set is part of CAI's
+        # definition, and it is what makes this assertion bite.
+        hek_only = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)),
+        )
+        ecoli_only = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)),
+        )
+        assert ev.raw_score == pytest.approx(hek_only.raw_score)
+        assert ev.raw_score != pytest.approx(ecoli_only.raw_score)
 
     def test_a_propagation_only_context_has_nothing_to_score(self) -> None:
         ev = evaluate(

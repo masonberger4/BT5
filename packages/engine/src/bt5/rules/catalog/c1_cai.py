@@ -40,14 +40,15 @@ the only spelling that stays correct across tables, and `synonymous_codons` alre
 excludes stops from every family (CLAUDE.md 3.1, 3.2).
 
 **Honest unavailability, because the data really is missing.** `data/codon_usage/`
-ships exactly one reference set -- `sharp_li_1987_ecoli_w.json`, Sharp & Li's E. coli
-w-index -- against nine `HostId` values. So C1 computes a number for the E. coli hosts
-and reports the objective UNAVAILABLE for HUMAN, HEK293, CHO, S_CEREVISIAE, P_PASTORIS,
-SF9 and MOUSE. Under the shipped presets that means only `bacterial_ecoli` yields a CAI;
-`lentiviral_hek293` and `aav_hek293` report it unavailable. That is the correct outcome
-and not a gap to paper over: inventing a mammalian w-table -- or, worse, scoring a human
-CDS against E. coli weights because that table happened to be on disk -- would produce a
-number that looks entirely reasonable and measures nothing. A human highly-expressed
+now ships four reference sets -- Sharp & Li's E. coli w-index plus highly-expressed
+human, mouse and CHO sets (S6, #90) -- against nine `HostId` values. So C1 computes a
+number for E. coli K-12/BL21, HUMAN, HEK293, MOUSE and CHO, and reports the objective
+UNAVAILABLE for S_CEREVISIAE, P_PASTORIS and SF9, which S6 deferred deliberately. All
+three shipped presets now yield a CAI, `lentiviral_hek293` and `aav_hek293` included.
+The three that remain unavailable are still the correct outcome and not a gap to paper
+over: inventing a w-table for them -- or, worse, scoring an insect or yeast CDS against
+whichever table happened to be on disk -- would produce a number that looks entirely
+reasonable and measures nothing. A human highly-expressed
 reference set is an evidence-bearing decision with its own provenance burden, and
 `data/codon_usage/**` is a protected path; it belongs in its own labelled change.
 
@@ -95,14 +96,32 @@ BAND_HI = 0.90
 #: `data/codon_usage/`. A host absent from this map has no CAI reference set in
 #: this build and C1 reports its objective unavailable rather than borrowing one.
 #:
-#: BL21 shares K-12's entry deliberately. Sharp & Li's w-index was computed from
-#: highly-expressed E. coli K-12 genes, and applying it to the B-strain is a
-#: same-species approximation -- universal practice for the standard T7
-#: expression host, and stated here rather than hidden: the reference set used
-#: travels in every breach's `detail["reference_set"]` so the report can name it.
+#: TWO entries are same-species approximations, and both are stated rather than
+#: hidden: the reference set used travels in every breach's
+#: `detail["reference_set"]`, so a report can always name what it scored against.
+#:
+#: - BL21 shares K-12's entry. Sharp & Li's w-index was computed from
+#:   highly-expressed E. coli K-12 genes; applying it to the B-strain is
+#:   universal practice for the standard T7 expression host.
+#: - HEK293 shares HUMAN's entry. HEK293 is a Homo sapiens cell line, so this is
+#:   the same move one taxon down, and it is the mapping the data lane shipped
+#:   the human set FOR: `docs/decisions/2026-09-02-s6-host-data-and-real-backbone.md`
+#:   records "HEK293 -> human is the load-bearing one: both shipped mammalian
+#:   presets (lentiviral_hek293, aav_hek293) key on HEK293". Codon usage is a
+#:   property of the organism's translational machinery, not of the cell line.
+#:
+#: S_CEREVISIAE, P_PASTORIS and SF9 remain absent and therefore still report
+#: unavailable -- S6 deferred them deliberately (no shipped preset consumes them,
+#: and their RefSeq coverage is materially messier). That is the correct state,
+#: not an oversight: a host absent from this map has no reference set in this
+#: build, and C1 says so rather than borrowing one.
 CAI_REFERENCE_SET: Mapping[HostId, str] = {
     HostId.E_COLI_K12: "sharp_li_1987_ecoli_w",
     HostId.E_COLI_BL21: "sharp_li_1987_ecoli_w",
+    HostId.HUMAN: "human_highly_expressed_refseq_w",
+    HostId.HEK293: "human_highly_expressed_refseq_w",
+    HostId.MOUSE: "mouse_highly_expressed_refseq_w",
+    HostId.CHO: "cho_highly_expressed_refseq_w",
 }
 
 #: What `TableProvider` implementations raise when a host's table is absent.
@@ -162,17 +181,27 @@ class CodonAdaptationIndex:
             sign="supports",
         ),
         Citation(
-            "Nine benchmarked commercial optimizers were a coin flip against native "
-            "sequence, and all computable design features together explain 5-31% "
-            "(mean ~14%) of protein-level variance. The ceiling every codon-composition "
-            "objective sits under, and the reason C1's output is a band position rather "
-            "than a predicted expression level",
+            "Ranaghan 2021 benchmarked nine commercial and academic optimizers and "
+            "found 'a roughly equivalent chance that an algorithm-optimized CDS will "
+            "increase or diminish recombinant yields', with three tools "
+            "non-deterministic. Half of the ceiling C1 sits under -- and cited here "
+            "rather than under Cambray below, which is 2018 and could not have "
+            "reported a 2021 benchmark",
+            "https://pmc.ncbi.nlm.nih.gov/articles/PMC7893858/",
+            2021,
+            sign="qualifies",
+        ),
+        Citation(
+            "Cambray 2018: all computable design features together explain 5-31% "
+            "(mean ~14%) of protein-level variance. The other half of that ceiling, "
+            "and the reason C1's output is a band position rather than a predicted "
+            "expression level",
             "https://www.nature.com/articles/nbt.4238",
             2018,
             sign="qualifies",
         ),
     )
-    last_verified: ClassVar[str] = "2026-09-01"
+    last_verified: ClassVar[str] = "2026-09-02"
     weight_provenance: ClassVar[str] = (
         "0.2, matching what all three shipped presets already assign 2.C1, and low on "
         "purpose. The brief grades C1's evidence 'A (that it's weak)' -- grade A for the "
@@ -306,11 +335,11 @@ class CodonAdaptationIndex:
             if reference_set is None:
                 return self._unavailable(
                     c,
-                    f"no CAI reference set for host {slot.host}. This build ships one "
-                    f"codon usage table, Sharp & Li's E. coli w-index, so CAI is "
-                    f"computable for the E. coli hosts only. Scoring a {slot.host} CDS "
-                    f"against E. coli weights would produce a plausible-looking number "
-                    f"measuring nothing",
+                    f"no CAI reference set for host {slot.host}. This build ships "
+                    f"reference sets for E. coli, human, mouse and CHO; "
+                    f"{slot.host} is not among them. Scoring a {slot.host} CDS "
+                    f"against another organism's weights would produce a "
+                    f"plausible-looking number measuring nothing",
                 )
             try:
                 w = svc.tables.weights(reference_set, "cai")
