@@ -128,3 +128,37 @@ is worth an owner's eye.
 **Evidence:** `brief.md:159`; `docs/design/vendor-gc-calibration.md` "The combined result"
 rows for `GLB_gc80`; `CLAUDE.md` §3.6. `bash scripts/gates.sh` ALL GATES PASSED, 1445
 passed.
+
+---
+
+## Addendum, same day — the same unfunded oracle promise D3 has, undisclosed here until now
+
+Found by an independent code-review pass, not by me: `d3_splicing`'s decision doc names a
+real gap — `HARD_REPAIR`'s contract (`core/spec.py:36-38`) promises the construct is
+*"PROVEN by the independent validator, which refuses to emit on failure"*, but that promise
+is unfunded for a rule the oracle does not know how to check. F5 is the **other** new
+`HARD_REPAIR` rule in this branch and has the identical gap, and I said nothing about it
+here. That is an inconsistency in how honestly the two decision docs represent the same
+class of risk, not two different facts.
+
+**Confirmed independently**, not taken on the reviewer's word:
+`solver/catalog.py:269-296`'s `_gc_bounds()` hard-matches `spec.id != "e2_gc_band": continue`
+— it reads **only** `e2_gc_band`'s resolved band into `OracleBounds.gc_bounds`, which is the
+one number `verify.py`'s I7 invariant checks. F5's windowed 35-65% band never reaches it.
+
+**Scope, so this is not read as bigger than it is.** This is a **pre-existing, repo-wide
+pattern**, not a defect this branch introduced: `e5_synthesis_repeats` and
+`f1_direct_repeats` have the identical gap, and `OracleBounds`'s own docstring
+(`solver/catalog.py:70-93`) already discloses it for `max_repeat`. Nothing about F5's own
+logic is wrong. What was missing is the same sentence D3 already has: if Tier-B repair
+stops on stagnation or the iteration cap — production always passes
+`raise_on_infeasible=False`, per `d3_splicing`'s own decision doc — a construct violating
+F5's hard band can still ship, silently, because nothing downstream re-derives the check.
+
+**Not fixed here, for the same reason D3's isn't**: closing it means feeding a second
+rule's band into `OracleBounds`, which is `solver/catalog.py` — the M1/oracle lane, not
+this one, and it needs `approved:oracle-change`. **Filed as the same follow-up D3's doc
+already raises**, now naming both rules rather than one.
+
+**Evidence:** `core/spec.py:36-38`; `solver/catalog.py:70-93, 269-296`; `verify.py`'s I7;
+`docs/decisions/2026-09-02-d3-splice-fixed-point.md` §3.

@@ -31,6 +31,16 @@ to *"every construct that passes through a cloning host"*, so it gates everywher
 plasmid is grown in E. coli whatever the final host is. That also means it is NOT
 governed by `docs/design/vendor-gc-calibration.md`, which measured what vendors refuse to
 SYNTHESISE. The two are different questions about the same number.
+
+**`HARD_REPAIR`'s independent-validator promise is unfunded for this rule.**
+`core/spec.py:36-38` says a hard-repair construct is "PROVEN by the independent validator,
+which refuses to emit on failure" -- but `solver/catalog.py`'s `_gc_bounds()` feeds
+`OracleBounds` from `e2_gc_band` alone, so `verify.py`'s I7 never re-checks this band. If
+Tier-B repair stops short (production always passes `raise_on_infeasible=False`), a
+construct outside 35-65% GC can still ship, silently. Pre-existing, repo-wide pattern --
+`e5_synthesis_repeats` and `f1_direct_repeats` have it too -- not something this rule
+introduced, and not something this lane can fund: closing it is a `solver/catalog.py`
+change under `approved:oracle-change`. See `docs/decisions/2026-09-02-f5-at-window-two-sided.md`.
 """
 
 from __future__ import annotations
