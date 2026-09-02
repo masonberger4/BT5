@@ -105,6 +105,13 @@ parallelism into a queue. It is also redundant: this repo already gates on
 `/pre-pr` → draft PR → owner merge, and `CLAUDE.md` §7b governs what an agent may
 merge alone.
 
+**S2 and S4 carry a substitute for it.** Those two have the most open approach — a
+degradation design that must never report "clear" for a screen that did not run, and a
+fixed-point splice repair whose seam belongs to a lane S4 may not edit — so each posts a
+**short design note as the first comment on its own draft PR before implementing**. That
+is the redirect opportunity plan mode would have given, at the point it is still cheap,
+without stalling four other sessions behind one approval.
+
 **Not `bypassPermissions` either.** `.claude/hooks/protect_paths.py` is what stops a
 session editing `core/`, `verify.py`, `.github/`, `data/` or `pyproject.toml` without
 stopping to think. Its decision is deliberately "ask, never deny". Bypassing

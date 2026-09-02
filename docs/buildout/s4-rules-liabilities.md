@@ -127,6 +127,16 @@ the solver honours it.
 orchestrates independent designs rather than answering alone. If the seam turns out to
 need a solver change, that is an issue for the M1 lane, not an edit you make.
 
+**Then post a short design note as the first comment on your own draft PR, before you
+implement D3.** What the fixed point is over, how you detect convergence and what you do
+if it does not converge, whether the seam needs anything from the solver, and what the
+V5-tag special case does to the scan. **That note is your review gate.** You run
+unattended and this prompt deliberately does not use plan mode — plan mode would block
+five other sessions behind one approval — so the note is what replaces it: the owner's
+chance to redirect you before the hardest change in this buildout is written, without
+stalling anyone else. Do not skip it because the approach feels obvious; D3 is the item
+`CLAUDE.md` §3.6 exists for, and §3.6 exists because the obvious approach is wrong.
+
 ## Delegation
 
 - **`/architect`** for D3's repair-policy seam, before implementing.
