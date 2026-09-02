@@ -144,16 +144,23 @@ class KozakContext:
     )
     last_verified: ClassVar[str] = "2026-09-02"
     weight_provenance: ClassVar[str] = (
-        "1.0, the same weight b1_five_prime carries, because the two are the same "
-        "claim in the two host classes: B1 gates to the BACTERIAL_EXPRESSION "
-        "modality and B8 to eukaryotic hosts, so on any sane context they do not "
-        "both fire and the number is not a ranking of one against the other. That "
-        "is a property of the host classification and NOT a guarantee -- "
-        "`ContextSlot.__post_init__` validates host against table_id only, so a "
-        "(HEK293, BACTERIAL_EXPRESSION) slot is constructible and would fire both. "
-        "If that combination ever becomes reachable in a real context these two "
-        "weights need re-deriving together, the way B1 and B2's were. "
-        "The evidence is at least as strong: the brief grades both rows A, "
+        "0.8 -- the highest in the catalog AFTER b1_five_prime, and strictly below "
+        "it. An earlier draft set 1.0, reasoning that B1 gates to the "
+        "BACTERIAL_EXPRESSION modality and B8 to eukaryotic hosts, so on any sane "
+        "context they do not both fire and the number is not a ranking of one "
+        "against the other. `test_b1_five_prime.py::TestContract::"
+        "test_it_is_soft_and_carries_the_highest_weight_in_the_catalog` says "
+        "otherwise, and it is right: it asserts B1 outranks EVERY other spec "
+        "catalog-wide, because B1 is 'the only objective in BT5 justified by a "
+        "measured effect size (r = 0.66, 44% of variance) rather than a feature "
+        "ranking'. Noderer's numbers are within-context percentages on individual "
+        "determinants, not variance explained on the objective, so they do not "
+        "meet that bar however large the dataset. 0.8 keeps B8 second only to B1, "
+        "which the evidence does support. Note also that the disjointness argument "
+        "was overstated regardless: `ContextSlot.__post_init__` validates host "
+        "against table_id only, so a (HEK293, BACTERIAL_EXPRESSION) slot is "
+        "constructible and would fire both rules. "
+        "The evidence is otherwise strong: the brief grades both rows A, "
         "B1's is Kudla's r = 0.66 over 154 variants and B8's is Noderer's complete "
         "65,536-variant enumeration with a 12-fold range. NOTE two things a "
         "reviewer should not have to discover: no shipped preset weights 2.B8 at "
@@ -165,7 +172,7 @@ class KozakContext:
         "table would be strictly better and needs no change to the band or gate."
     )
     default_enabled: ClassVar[bool] = True
-    default_weight: ClassVar[float] = 1.0
+    default_weight: ClassVar[float] = 0.8
     #: Zero because the engine honours no steering here, not because none is
     #: wanted: `solver/catalog.py:151-153` reads `terms.forbidden` and nothing
     #: else, so the `positional` term this rule would use is inert.
@@ -337,8 +344,8 @@ class KozakContext:
                 f"The target is gccRccATGG with +5 = C (currently "
                 f"{'C' if self.c_at_plus_5(context) else context[UPSTREAM + 4]}). "
                 f"Noderer 2014 measured a 12-fold range across this context, -3 "
-                f"purine at +58% over -3U; this is a finding to weigh, not a "
-                f"predicted expression level"
+                f"purine at +58% over -3U; this is a finding to weigh, "
+                f"never a target to maximize"
             ),
             # +4 is codon 2 and is designable; -3 is in the user's 5'UTR and no
             # codon choice reaches it. A context weak ONLY at -3 is advice, not a

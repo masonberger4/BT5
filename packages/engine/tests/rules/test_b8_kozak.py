@@ -278,7 +278,11 @@ class TestGating:
         """
         ev = evaluate(
             kozak_construct(leader="GCCTCC", cds="ATGCCTGAAGGTATCAAATAA"),
-            context(slot(host=HostId.HEK293), slot(host=HostId.CHO, table=HEK_TABLE)),
+            # Distinct roles: DesignContext.__post_init__ rejects duplicates.
+            context(
+                slot(role="producer", host=HostId.HEK293),
+                slot(role="target", host=HostId.CHO, table=HEK_TABLE),
+            ),
         )
         assert ev.raw_score == WEAK
         assert len(ev.windows) == 2
