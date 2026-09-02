@@ -73,10 +73,12 @@ checked out exactly against source. Spend the verification budget instead on:
   post a design note as their first PR comment instead [of plan mode]," but
   only S2's prompt (`s2-biosecurity-screen.md`) actually contains that
   instruction — S4's (`s4-rules-liabilities.md`, the one doing the
-  cross-lane D3 splice-repair problem at xhigh effort, unattended) never
-  tells the session to do it. Grep every session file for a phrase the
-  decision doc attributes to it by name; do not assume a plural attribution
-  ("S2 and S4 do X") was actually applied to both.
+  cross-lane D3 splice-repair problem at xhigh effort, unattended) did not
+  tell the session to do it. Confirmed fixed at a6c2250:
+  `s4-rules-liabilities.md` now carries an equivalent gate before D3, and the
+  README's "Not plan mode" paragraph names both sessions. Grep every session
+  file for a phrase the decision doc attributes to it by name; do not assume a
+  plural attribution ("S2 and S4 do X") was actually applied to both.
 - **Commit SHAs describing "current" main state go stale within one PR's
   lifetime.** Check the cited SHA against `git log origin/main` directly. A
   *living* doc (a reusable prompt/README) is fine if it explicitly says the
