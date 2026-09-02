@@ -9,8 +9,10 @@ a **band**, with the instruction "Never 1.0" (brief.md:77).
 
 **The band is per host, and (0.70-0.90) is E. coli's.** brief.md:77 offers those
 numbers as an example -- "e.g. 0.70-0.90, or +/-0.1 of host median" -- and they were
-calibrated on a strong-bias organism. Measured against a composition-neutral random
-synonymous encoding, E. coli's chance CAI is 0.238, so the 0.70 floor sits 0.46 above
+calibrated on a strong-bias organism. Against a random synonymous encoding -- the
+expectation for a protein of uniform amino-acid composition, see `chance_cai`, which a
+real composition shifts by ~0.05 without materially moving the ceilings -- E. coli's
+chance CAI is 0.238, so the 0.70 floor sits 0.46 above
 chance; on the three mammalian w-tables chance is 0.656/0.633/0.660 and the same floor
 sits 0.04-0.07 above chance, where it no longer discriminates. `CAI_BAND` therefore
 carries one band per host: E. coli's pair unchanged, and for the weak-bias hosts an
@@ -33,12 +35,20 @@ unmeasurable codon gain with a measurable repeat problem in E5/E6/F1.
 
 **The evidence badge is CONTESTED, and the brief agrees in an unusual way.** The row's
 own grade is `A (that it's weak)` -- grade-A evidence FOR THE CLAIM THAT CAI IS A WEAK
-PREDICTOR, not grade-A evidence that CAI predicts anything. Meanwhile Boel 2016 measured
-codon content as 3-5x MORE influential than structure on a soluble-protein readout under
-T7, on 6,348 genes. Those two results are not reconciled and BT5 cannot adjudicate them,
-which is what `Evidence.CONTESTED` is for. `EVIDENCE_BACKED` would badge a disputed
-objective as settled; `FOLKLORE` would ship it disabled and silently drop an objective
-all three presets weight.
+PREDICTOR, not grade-A evidence that CAI predicts anything. Boel 2016 is the
+counterweight -- codon content ~3-5x more influential than mRNA folding on a
+soluble-protein readout under T7 -- but it is a NARROWER counterweight than an earlier
+version of this file claimed. Boel's own qualifier is that folding dominates in the
+initial ~16 codons, and a -4..+37 window is precisely what B1 scores, so the two results
+overlap far less than "3-5x more influential than structure" suggests and are not
+straightforwardly in conflict. Boel also reports that its codon-influence metric
+correlates only weakly with genomic codon-usage FREQUENCY, which is the statistic CAI is
+built from, so it supports "codon composition matters" more than it supports CAI.
+
+CONTESTED is still the right badge, for a plainer reason than an unreconciled dispute:
+something about codon composition measurably matters, and CAI is a weak and disputed way
+of measuring it. `EVIDENCE_BACKED` would badge that as settled; `FOLKLORE` would ship it
+disabled and silently drop an objective all three presets weight.
 
 **Codon data arrives through `Services`, never by importing M5.** `svc.tables.weights()`
 and `svc.tables.genetic_code()` are the whole interface. `exp(mean ln w)` is recomputed
@@ -69,9 +79,10 @@ reference set is an evidence-bearing decision with its own provenance burden, an
 translation. The E. coli slot of a lentiviral job is a PROPAGATION slot -- the plasmid
 is maintained there and the transgene is never expressed -- so a rule keyed on "is any
 host E. coli" would find the one host BT5 has a table for, compute a confident CAI, and
-report it as an objective for a design whose protein is made in HEK293. Excluding
-propagation slots is what makes the mammalian presets report unavailable instead of
-reporting the wrong number.
+report it as an objective for a design whose protein is made in HEK293. Now that the
+mammalian reference sets are wired in, excluding propagation slots is what keeps the
+E. coli slot of a lentiviral job from supplying that job's CAI -- the HEK293 producer
+does, against its own table and its own band.
 """
 
 from __future__ import annotations
@@ -130,8 +141,8 @@ BAND_HI = 0.90
 #: ABOVE where a native human CDS sits -- so C1 would flag native sequence as
 #: "rare codons across the ORF" and hand the optimizer pressure to raise its CAI.
 #: That is precisely what the evidence forbids: brief.md:206 marks the CAI weight
-#: "very low" for CHO/HEK and the default mode "Native or harmonize", and
-#: brief.md:13's 18-glycoprotein / 90-screen Expi293F benchmark concluded "codon
+#: "very low" for CHO/HEK, brief.md:207 gives the default mode as "Native or
+#: harmonize", and brief.md:13's 18-glycoprotein / 90-screen benchmark concluded "codon
 #: optimization to make human proteins, in a human cell line, did not generate
 #: increased yields", with native constructs most consistent. There is no evidence
 #: that a low-CAI mammalian CDS is worse, so nothing here claims one. The floor is
@@ -289,7 +300,7 @@ class CodonAdaptationIndex:
     title: ClassVar[str] = "Codon adaptation index within a soft band, never maximized"
     enforcement: ClassVar[Enforcement] = Enforcement.SOFT
     #: See the module docstring: the brief grades C1 "A (that it's weak)" while
-    #: Boel 2016 measured the opposite ordering on a different readout. A disputed
+    #: Boel 2016 measured a codon-content effect on a different readout. A disputed
     #: objective badged EVIDENCE_BACKED would be asserting the dispute settled.
     evidence: ClassVar[Evidence] = Evidence.CONTESTED
     direction: ClassVar[Direction] = Direction.BAND
@@ -331,10 +342,16 @@ class CodonAdaptationIndex:
             sign="refutes",
         ),
         Citation(
-            "Boel 2016, 6,348 genes: codon content 3-5x MORE influential than structure "
-            "on a soluble-protein readout under T7. The unresolved counter-result that "
-            "keeps C1 in the objective at all rather than at weight zero, and the reason "
-            "this rule is badged CONTESTED rather than EVIDENCE_BACKED",
+            "Boel 2016, 6,348 experiments: codon content ~3-5x more influential than "
+            "mRNA-folding parameters on a soluble-protein readout under T7 -- ALTHOUGH "
+            "FOLDING DOMINATES IN THE INITIAL ~16 CODONS, which is the paper's own "
+            "qualifier and must travel with the number. B1 scores a -4..+37 window, so "
+            "the two results barely overlap and mostly do not conflict. Cited as what "
+            "keeps C1 in the objective at all rather than at weight zero: something "
+            "about codon composition measurably matters downstream of initiation. Note "
+            "the limit of that support for a CAI rule specifically -- the paper reports "
+            "its codon-influence metric correlates only WEAKLY with genomic "
+            "codon-usage frequency, which is the statistic CAI is built from",
             "https://pmc.ncbi.nlm.nih.gov/articles/PMC5054687/",
             2016,
             sign="supports",
@@ -342,14 +359,19 @@ class CodonAdaptationIndex:
         Citation(
             "The evidence that scopes this rule BY HOST, and the reason the "
             "mammalian floor is inert. brief.md:206 grades the CAI weight 'very "
-            "low (isochore GC, not selection)' for CHO/HEK with default mode "
-            "'Native or harmonize', and brief.md:215 marks the per-host evidence "
+            "low (isochore GC, not selection)' for CHO/HEK, brief.md:207 gives the "
+            "default mode as 'Native or harmonize', and brief.md:215 marks the "
+            "per-host evidence "
             "strength 'low for human, mouse, CHO, Sf9, Tni' against high for "
-            "E. coli. An 18-glycoprotein / 90-screen Expi293F benchmark concluded "
-            "'codon optimization to make human proteins, in a human cell line, did "
-            "not generate increased yields', with native and harmonized constructs "
-            "most consistent -- so nothing here claims a low-CAI mammalian CDS is "
-            "worse than a native one",
+            "E. coli. An 18-glycoprotein / 90-screen benchmark concluded 'codon "
+            "optimization to make human proteins, in a human cell line, did not "
+            "generate increased yields', with native and harmonized constructs most "
+            "consistent -- so nothing here claims a low-CAI mammalian CDS is worse "
+            "than a native one. TWO CAVEATS ON THIS SOURCE, because it carries the "
+            "inert mammalian floor: the URL is the institute's own news post about "
+            "its preprint (doi 10.64898/2026.03.18.712111, not peer reviewed), not "
+            "the preprint itself; and the post names only 'a human cell line' -- "
+            "Expi293F comes from brief.md:13, not from this page",
             "https://proteininnovation.org/2026/03/codon-optimization-native-codon-mammalian-protein-expression/",
             2026,
             sign="refutes",
@@ -394,7 +416,9 @@ class CodonAdaptationIndex:
         "B1's r = 0.66 on the same 154 variants, so C1 is weighted at a fifth of B1 to "
         "reproduce that ordering rather than a guess. It is not zero because Boel 2016 "
         "measured codon content as 3-5x more influential than structure on a different "
-        "readout, and BT5 cannot adjudicate that disagreement; a weight of zero would "
+        "readout -- though Boel's own qualifier is that folding dominates in the first "
+        "~16 codons, which is the window B1 scores, so the two conflict far less than a "
+        "bare '3-5x' reads; a weight of zero would "
         "settle it by omission. steering_weight is 0.0 and must stay there: a Lagrangian "
         "term on codon weights would steer the Tier-A DP toward MAXIMUM CAI, which is "
         "the one thing this rule's own band exists to forbid. The `band` ClassVar is "

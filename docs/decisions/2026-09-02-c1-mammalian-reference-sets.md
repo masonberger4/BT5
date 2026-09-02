@@ -132,9 +132,14 @@ a rule) and which keeps working as the map grows.
 badge — high for E. coli, low for human/mouse/CHO/Sf9/Tni. `Spec.evidence` and
 `default_weight` are single ClassVars with no per-host channel, so C1 ships one
 `CONTESTED` badge and one 0.2 weight across hosts whose evidence the brief grades
-differently. Expressing that needs a `core/` change (a new field or a per-host accessor),
-which is MAJOR under CLAUDE.md §2a and belongs to an RFC, not to this branch. The band is
-the half that was expressible here; the weight is not.
+differently. Expressing that needs a `core/` change, and the earlier version of this
+record got its classification wrong by picking the harder of two constructions and
+reporting the answer as if it covered both. Under CLAUDE.md §2a a new **defaulted** field
+— `evidence_by_host` / `weight_by_host`, empty by default — is **MINOR**: regenerate,
+commit the manifest and fixtures, done. Only a per-host *accessor* would be a new protocol
+method, which is MAJOR. So the fix is not RFC-blocked; it is a MINOR `core/` change that
+still needs `approved:contract-change` and belongs to its own PR in the `core/` lane, not
+to a rules-lane branch. The band was the half expressible here; the weight is not.
 
 **Where:** branch `claude/s3-c1-mammalian-hosts`.
 
@@ -249,3 +254,68 @@ the `_unavailable` pattern; that method has moved (those lines are `lattice_term
 now) and the range was already stale before this change. `rules/catalog/` is this
 lane, but `d*` is another session's file in it, so the fix is flagged rather than made
 — it should cite `CodonAdaptationIndex._unavailable` by name, not by line range.
+
+## Provenance audit, 2026-09-02 (post-merge)
+
+A `rule-auditor` pass over C1 after #94 merged returned **2 wrong, 8 overstated, 3
+unverifiable** — all of them on `main`, since #94 shipped every citation, every
+`brief.md` reference and all four band constants. Corrected here:
+
+**Boel 2016 lost the source's own scope qualifier — the load-bearing error.** The
+citation read "codon content 3-5x MORE influential than structure … on 6,348 genes".
+The paper says *"although the latter dominate in the initial ~16 codons"*, and
+`brief.md:331` keeps that qualifier ("beyond codon ~16"); C1 dropped it. This mattered
+in three places at once: Boel is the file's only empirical `supports` citation, the
+stated reason the badge is CONTESTED rather than FOLKLORE, and the stated reason the
+weight is 0.2 rather than 0. And the dropped clause is not incidental — **B1 scores a
+−4..+37 window, which is almost exactly the region where Boel says folding dominates**,
+so the "unreconciled disagreement" the docstring claimed is largely an artifact of the
+missing qualifier. The two results barely overlap.
+
+The badge stays CONTESTED, on a plainer footing: something about codon composition
+measurably matters, and CAI is a weak and disputed way of measuring it. Also recorded
+now, because it bounds how much Boel supports *this* rule: the paper reports its
+codon-influence metric correlates only **weakly** with genomic codon-usage frequency,
+which is the statistic CAI is built from. `sign="supports"` is kept — Boel does support
+a codon-composition objective existing — but the limitation travels with it. "6,348
+genes" corrected to "6,348 experiments".
+
+**The Expi293F attribution was not in the cited source.** The proteininnovation.org URL
+resolves and every quoted string is verbatim, but it is the institute's own news post
+about its own preprint (doi 10.64898/2026.03.18.712111, not peer reviewed), and it names
+only "a human cell line" — "Expi293F" came from `brief.md:13`. Both facts are now stated
+in the citation, which matters because this source carries the inert mammalian floor,
+the highest-consequence claim in the change.
+
+**This record's own MINOR/MAJOR call was wrong.** It said a per-host evidence badge needs
+a `core/` change that is "MAJOR under §2a and belongs to an RFC". Under §2a a new
+*defaulted* field is **MINOR**; only a new protocol method is MAJOR. The record picked the
+harder of its two constructions and reported the classification as covering both, making
+the fix look RFC-blocked when half of it is a regeneration. Corrected above.
+
+**Also corrected:** a stale docstring line still claiming the mammalian presets report
+unavailable (they yield a CAI now); "Measured against a composition-neutral random
+synonymous encoding" softened, since `chance_cai` is an analytic expectation under an
+assumed uniform amino-acid composition that a real composition shifts by ~0.05; and a
+`brief.md:206` reference that should be `:207` for "Native or harmonize".
+
+**Verified clean, and worth recording as verified:** five of eight citations check out
+fully against primary sources (Sharp & Li 1987; Kudla 2009's r=0.14/r=0.66, 154 variants,
+250-fold; Welch 2009's two quotes verbatim; Ranaghan 2021's nine algorithms and three
+non-deterministic tools; Cambray 2018's identifiers). The Ranaghan/Cambray split this PR
+made is correct on both sides. All five `brief.md` targets resolve and say what is
+claimed, with **no** strikethrough, "corrected", "superseded" or "provisional" markers on
+any resolved row. All three host→table mappings are correct, and the CHO disclosure is
+exact — independently counted: 91 accessions, 71 `XM_`, 20 `NM_` = 78.02%. Every band
+constant reproduces from the shipped tables.
+
+**Left unverifiable, and named as such:** Cambray's 5–31%/~14% and Boel's 3–5× are both
+behind paywalls and were checked only against `brief.md`. The Cambray figure is the number
+BT5's entire refusal posture rests on (CLAUDE.md §0 quotes it), so it deserves a primary
+read by someone with access.
+
+**Not corrected here:** the Pichia citation states a −0.81 trastuzumab correlation that is
+real and verbatim but is one protein of six over ~6–7 designs, in a study whose headline
+is a threefold titer *gain*; and `Evidence.CONTESTED` is one badge across six hosts where
+four have no supporting citation at all. Both are judgement calls that read as generous
+rather than wrong, and both are argued in the file. Flagged for the next rotation.
