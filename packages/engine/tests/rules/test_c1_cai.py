@@ -31,7 +31,16 @@ from bt5.core.registry import discover, get
 from bt5.core.services import Services
 from bt5.core.spec import Direction, Enforcement, Evaluation, Evidence
 from bt5.core.types import Construct, Interval, Segment, SegmentKind, Strand, Topology
-from bt5.rules.catalog.c1_cai import BAND_HI, BAND_LO, CAI_REFERENCE_SET, CodonAdaptationIndex
+from bt5.rules.catalog import c1_cai
+from bt5.rules.catalog.c1_cai import (
+    BAND_HI,
+    BAND_LO,
+    CAI_BAND,
+    CAI_REFERENCE_SET,
+    CEILING_FRACTION_OF_HEADROOM,
+    CodonAdaptationIndex,
+    chance_cai,
+)
 from bt5.vector.kmers import ConstructKmerIndex
 from conftest import construct, wrapping_construct
 
@@ -116,7 +125,18 @@ class TestSpecMetadata:
         maximized)'. Enforcement and Direction are that sentence, in code."""
         assert CodonAdaptationIndex.enforcement is Enforcement.SOFT
         assert CodonAdaptationIndex.direction is Direction.BAND
-        assert CodonAdaptationIndex.band == (0.70, 0.90)
+
+    def test_the_band_classvar_is_the_loosest_envelope_and_not_the_gate(self) -> None:
+        """e2_gc_band's convention, and `solver/catalog.py:272` states it: "Read off
+        the INSTANCE, never `Spec.band`." The bands are per host, so a single
+        ClassVar can only be an envelope -- and it must be computed from `CAI_BAND`
+        rather than transcribed, or adding a host silently makes it a lie."""
+        assert CodonAdaptationIndex.band == (
+            min(lo for lo, _ in CAI_BAND.values()),
+            max(hi for _, hi in CAI_BAND.values()),
+        )
+        assert CodonAdaptationIndex.band == (0.0, 0.9553)
+        assert "LOOSEST envelope" in CodonAdaptationIndex.weight_provenance
 
     def test_the_default_weight_matches_what_every_preset_already_assigns(self) -> None:
         """All three shipped presets weight 2.C1 at 0.2. A rule whose own default
@@ -154,6 +174,18 @@ class TestSpecMetadata:
         max-CAI sequence manufactures perfect repeats."""
         assert "e5_synthesis_repeats" in CodonAdaptationIndex.conflicts_with
         assert "f1_direct_repeats" in CodonAdaptationIndex.conflicts_with
+
+
+class TestParamSchema:
+    def test_neither_bound_advertises_a_default_it_cannot_honour(self) -> None:
+        """e2_gc_band's reasoning, per host instead of per vendor: the gate is the
+        slot host's own band, so a form materializing `default: 0.70` would show a
+        HEK293 job E. coli's floor and then post it back as an explicit override."""
+        props = CodonAdaptationIndex.param_schema["properties"]
+        assert isinstance(props, dict)
+        for name in ("cai_min", "cai_max"):
+            assert "default" not in props[name], f"{name} must not advertise a default"
+            assert "CAI_BAND" in props[name]["description"]
 
 
 class TestNeverMaximized:
@@ -271,25 +303,27 @@ class TestExcludedCodons:
 
 
 class TestUnavailable:
-    """The seven hosts BT5 has no reference set for, and the honest report for them."""
+    """The three hosts BT5 still has no reference set for, and the honest report.
+
+    Was seven. S6 shipped human, mouse and CHO sets (#90), so the mammalian hosts
+    now compute -- see `TestMammalianHosts`. SF9, S_CEREVISIAE and P_PASTORIS were
+    deferred deliberately: no shipped preset consumes them and their RefSeq
+    coverage is materially messier, so they stay absent and stay honest.
+    """
 
     @pytest.mark.parametrize(
         "host",
-        [
-            HostId.HUMAN,
-            HostId.HEK293,
-            HostId.CHO,
-            HostId.MOUSE,
-            HostId.SF9,
-            HostId.S_CEREVISIAE,
-            HostId.P_PASTORIS,
-        ],
+        [HostId.SF9, HostId.S_CEREVISIAE, HostId.P_PASTORIS],
     )
     def test_a_host_with_no_reference_set_reports_unavailable(self, host: HostId) -> None:
-        """`data/codon_usage/` holds exactly one file. Scoring a mammalian CDS
-        against E. coli weights because that table happened to be on disk is the
-        failure this rule exists to refuse."""
-        ev = evaluate(construct(IN_BAND), context(slot("producer", host, Modality.LENTIVIRAL, 1)))
+        """Scoring a CDS against another organism's weights because that table
+        happened to be on disk is the failure this rule exists to refuse."""
+        from bt5.core.context import LOCKED_TRANSLATION_TABLE
+
+        ev = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", host, Modality.LENTIVIRAL, LOCKED_TRANSLATION_TABLE[host])),
+        )
         assert is_unavailable(ev)
         assert host in ev.breaches[0].message
 
@@ -298,7 +332,7 @@ class TestUnavailable:
         rare-codon design and 0.8 reads as one exactly on target. Both would be
         affirmative false claims about a quantity nobody measured."""
         ev = evaluate(
-            construct(IN_BAND), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+            construct(IN_BAND), context(slot("producer", HostId.SF9, Modality.LENTIVIRAL, 1))
         )
         assert math.isnan(ev.raw_score)
         assert ev.binding_side is None
@@ -307,16 +341,419 @@ class TestUnavailable:
         """`passes` stays True: the objective was not computed, which is a
         different statement from 'this construct is out of band'."""
         ev = evaluate(
-            construct(IN_BAND), context(slot("producer", HostId.CHO, Modality.LENTIVIRAL, 1))
+            construct(IN_BAND),
+            context(slot("producer", HostId.S_CEREVISIAE, Modality.LENTIVIRAL, 1)),
         )
         assert ev.passes
         assert ev.breaches[0].detail["unavailable_reason"]
 
-    def test_only_the_e_coli_hosts_have_a_reference_set_in_this_build(self) -> None:
-        """The guard on the map itself. Adding a host here without adding its table
-        to `data/codon_usage/` would turn every 'unavailable' into a FileNotFoundError."""
-        assert set(CAI_REFERENCE_SET) == {HostId.E_COLI_K12, HostId.E_COLI_BL21}
-        assert set(CAI_REFERENCE_SET.values()) == {REFERENCE_SET}
+    def test_every_mapped_host_has_a_table_actually_on_disk(self) -> None:
+        """The guard on the map itself, and the one that matters when it grows.
+
+        Adding a host here without its table in `data/codon_usage/` turns every
+        honest 'unavailable' into a FileNotFoundError from inside a rule. Checked
+        against the filesystem rather than a hard-coded list, so the guard keeps
+        working as the map grows.
+        """
+        root = Path(__file__).resolve().parents[4]
+        for host, key in CAI_REFERENCE_SET.items():
+            path = root / "data" / "codon_usage" / f"{key}.json"
+            assert path.exists(), f"{host} maps to {key!r}, which is not on disk"
+
+    def test_the_deferred_hosts_are_absent_on_purpose(self) -> None:
+        """Not an oversight: S6 deferred these three, and C1 says so rather than
+        borrowing another organism's table."""
+        for host in (HostId.SF9, HostId.S_CEREVISIAE, HostId.P_PASTORIS):
+            assert host not in CAI_REFERENCE_SET
+
+
+class TestMammalianHosts:
+    """The four hosts S6's #90 took from `unavailable` to a real number.
+
+    This is the wiring `docs/decisions/2026-09-02-s6-host-data-and-real-backbone.md`
+    handed to S3: the data lane ships data, and `CAI_REFERENCE_SET` lives here.
+    """
+
+    @pytest.mark.parametrize(
+        ("host", "expected_set"),
+        [
+            (HostId.HUMAN, "human_highly_expressed_refseq_w"),
+            (HostId.HEK293, "human_highly_expressed_refseq_w"),
+            (HostId.MOUSE, "mouse_highly_expressed_refseq_w"),
+            (HostId.CHO, "cho_highly_expressed_refseq_w"),
+        ],
+    )
+    def test_it_now_computes_against_the_right_reference_set(
+        self, host: HostId, expected_set: str
+    ) -> None:
+        ev = evaluate(construct(IN_BAND), context(slot("producer", host, Modality.LENTIVIRAL, 1)))
+        assert not is_unavailable(ev)
+        assert not math.isnan(ev.raw_score)
+        assert 0.0 < ev.raw_score <= 1.0
+        assert CAI_REFERENCE_SET[host] == expected_set
+
+    def test_hek293_shares_the_human_set_and_is_not_a_separate_table(self) -> None:
+        """HEK293 is a Homo sapiens cell line, so this is the same same-species
+        approximation BL21/K-12 already makes, one taxon down. Codon usage is a
+        property of the organism's translational machinery, not the cell line.
+        S6 shipped the human set FOR this mapping."""
+        assert CAI_REFERENCE_SET[HostId.HEK293] == CAI_REFERENCE_SET[HostId.HUMAN]
+        human = evaluate(
+            construct(IN_BAND), context(slot("producer", HostId.HUMAN, Modality.LENTIVIRAL, 1))
+        )
+        hek = evaluate(
+            construct(IN_BAND), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        assert human.raw_score == pytest.approx(hek.raw_score)
+
+    def test_a_mammalian_host_is_not_scored_against_e_coli(self) -> None:
+        """The failure the unavailable path existed to prevent, now that a real
+        alternative exists: a mammalian CAI must not be the E. coli number."""
+        hek = evaluate(
+            construct(IN_BAND), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        ecoli = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)),
+        )
+        assert hek.raw_score != pytest.approx(ecoli.raw_score)
+
+    def test_the_mammalian_presets_no_longer_degrade_this_objective(self) -> None:
+        """The point of the wiring. Both shipped mammalian presets key on HEK293,
+        so before this they weighted 2.C1 at 0.2 and got `unavailable` back."""
+        from bt5.score.presets import PRESETS, resolve
+
+        for preset in PRESETS:
+            resolved = resolve(preset)
+            assert resolved.unimplemented == ()
+            assert "c1_cai" in resolved.weights
+
+
+class TestBandCalibration:
+    """(0.70, 0.90) is E. coli's band and does not transfer unchanged.
+
+    brief.md:77 offers those numbers as an EXAMPLE -- "e.g. 0.70-0.90, or +/-0.1
+    of host median" -- and they were calibrated on a strong-bias organism. The
+    mammalian w-tables are nearly flat (brief.md:206: "isochore GC, not
+    selection"), so the same floor sits ~0.04 above chance instead of ~0.46 and
+    stops discriminating. These tests re-derive every constant in `CAI_BAND` from
+    the shipped tables so it cannot drift away from the data it came from.
+    """
+
+    def _chance(self, key: str, table_id: int) -> float:
+        """The rule's own baseline, reached through its public helper.
+
+        Deliberately NOT reimplemented here. The baseline the ceilings are scaled
+        against has to use the same informative-family predicate as the metric being
+        scored -- family size from the table first, positive weight second -- and a
+        second copy in the test file is exactly how those two silently diverge, so
+        that the number calibrating the ceiling stops describing the number the
+        ceiling is applied to.
+        """
+        provider = FileTableProvider()
+        return chance_cai(provider.weights(key, "cai"), provider.genetic_code(table_id))
+
+    def _cds_near(self, target: float, key: str) -> tuple[str, float]:
+        """A Leu-run CDS landing as near `target` as the family allows, plus its CAI.
+
+        Built from the table rather than transcribed, so it cannot rot if the table
+        is regenerated: a run of Leu codons split between the family's best and
+        second-best, with the split solved for the target. Every codon is Leu, which
+        has six codons under table 1, so all 300 are informative.
+        """
+        provider = FileTableProvider()
+        w, code = provider.weights(key, "cai"), provider.genetic_code(1)
+        best, alt = sorted(code.synonymous_codons("L"), key=lambda c: w[c])[:-3:-1]
+        n = 300
+        top, second = math.log(w[best]), math.log(w[alt])
+        b = round(n * (math.log(target) - top) / (second - top))
+        # Outside the family reachable range `b` goes negative or past `n`,
+        # which silently returns a CDS that is not 300 codons and a CAI it
+        # does not have.
+        assert 0 <= b <= n, f"target {target} is outside the Leu family range"
+        return "ATG" + alt * b + best * (n - b) + "TAA", math.exp((b * second + (n - b) * top) / n)
+
+    def test_the_floor_barely_clears_chance_on_the_mammalian_tables(self) -> None:
+        """The measurement the band change rests on. If this ever stops holding,
+        the per-host band needs re-deriving rather than trusting."""
+        ecoli = self._chance("sharp_li_1987_ecoli_w", 11)
+        assert BAND_LO - ecoli > 0.4, "E. coli floor should sit far above chance"
+        for key in (
+            "human_highly_expressed_refseq_w",
+            "mouse_highly_expressed_refseq_w",
+            "cho_highly_expressed_refseq_w",
+        ):
+            assert BAND_LO - self._chance(key, 1) < 0.1, f"{key}: floor near chance"
+
+    @pytest.mark.parametrize(
+        ("host", "key"),
+        [
+            (HostId.HUMAN, "human_highly_expressed_refseq_w"),
+            (HostId.HEK293, "human_highly_expressed_refseq_w"),
+            (HostId.MOUSE, "mouse_highly_expressed_refseq_w"),
+            (HostId.CHO, "cho_highly_expressed_refseq_w"),
+        ],
+    )
+    def test_each_ceiling_is_that_hosts_share_of_its_own_headroom(
+        self, host: HostId, key: str
+    ) -> None:
+        """Re-derives the constant rather than restating it: the ceiling is the
+        same fraction of chance-to-1.0 that E. coli's 0.90 is of its own."""
+        chance = self._chance(key, 1)
+        expected = chance + CEILING_FRACTION_OF_HEADROOM * (1.0 - chance)
+        assert CAI_BAND[host][1] == pytest.approx(expected, abs=5e-4)
+
+    def test_the_ceiling_fraction_is_e_colis_published_0_90(self) -> None:
+        ecoli = self._chance("sharp_li_1987_ecoli_w", 11)
+        assert (
+            pytest.approx((BAND_HI - ecoli) / (1.0 - ecoli), abs=5e-4)
+            == CEILING_FRACTION_OF_HEADROOM
+        )
+
+    def test_e_colis_band_is_unchanged(self) -> None:
+        """The published pair, untouched. A change that moved it would be a
+        different rule, not a rescaling."""
+        for host in (HostId.E_COLI_K12, HostId.E_COLI_BL21):
+            assert CAI_BAND[host] == (BAND_LO, BAND_HI) == (0.70, 0.90)
+
+    def test_the_rejected_rescaled_floor_is_re_derived_too(self) -> None:
+        """The alternative the decision record turns down, pinned so it cannot drift
+        while the accepted one stays fresh.
+
+        Keeping E. coli's floor at the same share of headroom (0.6062) puts human's
+        floor at ~0.864 -- above where a native human CDS sits -- so C1 would flag
+        native sequence as "rare codons across the ORF" and hand the optimizer
+        pressure to raise its CAI, which is what brief.md:13's Expi293F benchmark and
+        brief.md:206 forbid. The shipped floor is inert instead, and the two must
+        stay visibly different numbers.
+        """
+        ecoli = self._chance("sharp_li_1987_ecoli_w", 11)
+        fraction = (BAND_LO - ecoli) / (1.0 - ecoli)
+        human = self._chance("human_highly_expressed_refseq_w", 1)
+        rescaled = human + fraction * (1.0 - human)
+        assert rescaled == pytest.approx(0.864, abs=5e-4)
+        assert CAI_BAND[HostId.HUMAN][0] == 0.0 < rescaled
+
+    def test_the_two_host_maps_stay_in_step(self) -> None:
+        """A host with a reference set but no calibrated band would otherwise be the
+        next silent regression: added to one map, scored against whatever the other
+        fell back to. `_band_for` refuses to guess, and this pins the pair so the
+        refusal shows up here rather than as an unexplained `unavailable` in a run.
+        """
+        assert CAI_BAND.keys() == CAI_REFERENCE_SET.keys()
+
+    def test_an_unmapped_host_gets_no_band_rather_than_e_colis(self) -> None:
+        """The fallback that used to be there is the bug this map exists to fix."""
+        assert CodonAdaptationIndex()._band_for(HostId.SF9) is None
+        assert CodonAdaptationIndex()._band_for(HostId.S_CEREVISIAE) is None
+
+    def test_the_mammalian_floor_is_inert_and_a_rare_cds_is_not_a_finding(self) -> None:
+        """The behaviour the whole change exists for.
+
+        A floor rescaled to keep E. coli's headroom would sit at ~0.864 -- above
+        where a native human CDS sits -- so C1 would flag native sequence as
+        "rare codons across the ORF" and hand the optimizer pressure to raise its
+        CAI. brief.md:206 marks the CAI weight "very low" for CHO/HEK with default
+        mode "Native or harmonize", and brief.md:13's Expi293F benchmark found
+        optimization did not increase yields. So nothing here claims a low-CAI
+        mammalian CDS is worse.
+        """
+        for host in (HostId.HEK293, HostId.MOUSE, HostId.CHO):
+            assert CAI_BAND[host][0] == 0.0
+            ev = evaluate(construct(RARE), context(slot("producer", host, Modality.LENTIVIRAL, 1)))
+            assert ev.passes, f"{host}: an inert floor must not breach"
+            assert ev.binding_side is None
+
+    def test_the_mammalian_ceiling_still_bites(self) -> None:
+        """Inert floor, live ceiling. Max-CAI collapse is MECHANICAL -- it drives
+        each amino acid onto one codon and manufactures perfect direct repeats --
+        so it transfers across organisms even where the floor does not."""
+        provider = FileTableProvider()
+        w, code = (
+            provider.weights("human_highly_expressed_refseq_w", "cai"),
+            provider.genetic_code(1),
+        )
+        # The human-optimal encoding of a Leu/Glu/Gly/Ile/Lys peptide, built from
+        # the table so it cannot rot if the table is regenerated.
+        best = {
+            aa: max((c for c in code.synonymous_codons(aa) if c in w), key=lambda c: w[c])
+            for aa in "LEGIK"
+        }
+        cds = "ATG" + "".join(best[a] for a in "LEGIK") * 4 + "TAA"
+        ev = evaluate(
+            construct(cds), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        assert not ev.passes
+        assert ev.binding_side == "upper"
+        assert ev.breaches[0].detail["band_hi"] == CAI_BAND[HostId.HEK293][1]
+
+    def test_the_widened_ceiling_is_what_actually_changed_for_hek293(self) -> None:
+        """The one behavioural difference this change makes, in both directions.
+
+        A max-CAI sequence breached before and breaches now, so it cannot tell the
+        old band from the new one. The band moved for sequences BETWEEN the two
+        ceilings: at CAI ~0.93 a HEK293 CDS breached E. coli's 0.90 and passes its
+        own 0.9548, and just above 0.9548 it breaches again. Nothing else in the
+        file pins where the ceiling sits.
+        """
+        hek = context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        ceiling = CAI_BAND[HostId.HEK293][1]
+
+        between, cai = self._cds_near(0.93, "human_highly_expressed_refseq_w")
+        assert BAND_HI < cai < ceiling, f"fixture must sit between the ceilings: {cai}"
+        assert evaluate(construct(between), hek).passes
+
+        above, cai = self._cds_near(0.97, "human_highly_expressed_refseq_w")
+        assert cai > ceiling, f"fixture must exceed the host ceiling: {cai}"
+        ev = evaluate(construct(above), hek)
+        assert not ev.passes
+        assert ev.binding_side == "upper"
+
+    def test_an_explicit_ceiling_equal_to_the_published_one_is_honoured(self) -> None:
+        """A value-equality sentinel silently discarded this, and on the ceiling
+        side it LOOSENED the limit: `cai_max=0.90` on a HEK293 job is a caller
+        asking for the tighter published anti-max-CAI ceiling, and reading it as
+        "unset" handed them 0.9548 instead -- permitting exactly the higher CAI the
+        rule exists to refuse, through the rule's own parameter. The only way to get
+        0.90 was to perturb the value.
+        """
+        between, cai = self._cds_near(0.93, "human_highly_expressed_refseq_w")
+        c, hek = (
+            construct(between),
+            context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)),
+        )
+        assert evaluate(c, hek).passes
+        ev = evaluate(c, hek, rule=CodonAdaptationIndex(cai_max=BAND_HI))
+        assert not ev.passes
+        assert ev.binding_side == "upper"
+        assert ev.breaches[0].detail["band_hi"] == BAND_HI
+
+    def test_an_explicit_floor_equal_to_the_published_one_is_honoured(self) -> None:
+        """The same defect on the side where it was merely a silent no-op. Asserted
+        through `evaluate`, not `_band_for`: a band composed correctly and then not
+        used would pass the implementation-level check."""
+        hek = context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        assert evaluate(construct(RARE), hek).passes
+        ev = evaluate(construct(RARE), hek, rule=CodonAdaptationIndex(cai_min=BAND_LO))
+        assert not ev.passes
+        assert ev.binding_side == "lower"
+        assert ev.breaches[0].detail["band_lo"] == BAND_LO
+
+    def test_an_explicit_bound_overrides_only_its_own_side(self) -> None:
+        """The user's own number wins, per side, so setting one does not discard
+        the other -- e2_gc_band's discipline."""
+        rule = CodonAdaptationIndex(cai_min=0.50)
+        assert rule._band_for(HostId.HEK293) == (0.50, CAI_BAND[HostId.HEK293][1])
+        assert rule._band_for(HostId.E_COLI_K12) == (0.50, BAND_HI)
+
+    def _decoupled(self, human_cai: float, ecoli_cai: float, total: int = 3000) -> str:
+        """One CDS landing EACH host on a CAI I choose, independently of the other.
+
+        `_cds_near` cannot do this: it scores a single sequence against both
+        tables, so the two CAIs move together and the E. coli slot can never be
+        parked near an edge while the HEK293 slot sits somewhere else. That is
+        why the first version of this test could not express the case that broke
+        it. The trick is a pair of codons extreme in one table and NEUTRAL in the
+        other, so each host's count solves independently -- ln w = 0 contributes
+        nothing to the other host's geometric mean.
+        """
+        provider = FileTableProvider()
+        hw, ew = (
+            provider.weights("human_highly_expressed_refseq_w", "cai"),
+            provider.weights("sharp_li_1987_ecoli_w", "cai"),
+        )
+        # Read from the tables, and asserted rather than assumed: if a regenerated
+        # table moves any of these the construction stops being orthogonal and the
+        # test must be rebuilt, not silently believed.
+        assert hw["CCC"] == 1.0, "CCC must be neutral for human"
+        assert ew["CGT"] == 1.0, "CGT must be neutral for E. coli"
+        assert hw["CTG"] == 1.0, "the filler must be neutral for human"
+        assert ew["CTG"] == 1.0, "the filler must be neutral for E. coli"
+        n_cgt = round(total * math.log(human_cai) / math.log(hw["CGT"]))
+        n_ccc = round(total * math.log(ecoli_cai) / math.log(ew["CCC"]))
+        assert 0 <= n_cgt + n_ccc <= total, "targets are outside the reachable range"
+        body = "CGT" * n_cgt + "CCC" * n_ccc + "CTG" * (total - n_cgt - n_ccc)
+        return "ATG" + body + "TAA"
+
+    @pytest.mark.parametrize(
+        ("human_cai", "ecoli_cai", "winner", "why"),
+        [
+            (0.9268, 0.7051, "ecoli", "E. coli 0.0051 from a live FLOOR breach"),
+            (0.9311, 0.7051, "ecoli", "the width-normalized crossover, now correct"),
+            (0.9268, 0.8953, "ecoli", "E. coli 0.0047 from max-CAI collapse"),
+            (0.9400, 0.8953, "ecoli", "ceiling vs ceiling, E. coli far nearer"),
+            (0.9501, 0.8004, "hek", "E. coli mid-band, HEK293 0.005 from its own"),
+        ],
+    )
+    def test_the_tiebreak_measures_headroom_not_band_width(
+        self, human_cai: float, ecoli_cai: float, winner: str, why: str
+    ) -> None:
+        """Which in-band slot's CAI gets reported -- and it must not be a fixed
+        preference for either host.
+
+        Two earlier comparators were exactly that. Distance to the band's MIDDLE
+        always chose E. coli, because the middle of (0.0, 0.9548) is 0.477 and no
+        real mammalian CDS is near it. Distance as a fraction of BAND WIDTH always
+        chose the mammal: an in-band E. coli slot scores at most 0.5 (its exact
+        midpoint) while a mammalian slot scores (hi-cai)/hi < 0.5 for any cai above
+        0.477 -- which chance alone (0.656) already clears. Both looked like
+        tiebreaks and were preferences.
+
+        Headroom -- (x - chance)/(1 - chance) -- is the scale `CAI_BAND` was built
+        on, so every host's ceiling sits at 0.8687 by construction. The last case
+        is the one that stops this becoming a fixed preference for E. coli.
+        """
+        cds = self._decoupled(human_cai, ecoli_cai)
+        c = construct(cds)
+        hek = slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)
+        eco = slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)
+        alone = {
+            "hek": evaluate(c, context(hek)).raw_score,
+            "ecoli": evaluate(c, context(eco)).raw_score,
+        }
+        assert alone["hek"] == pytest.approx(human_cai, abs=5e-4)
+        assert alone["ecoli"] == pytest.approx(ecoli_cai, abs=5e-4)
+        both = evaluate(c, context(hek, eco))
+        assert both.passes, "a tiebreak only arises when every slot is in band"
+        assert both.raw_score == pytest.approx(alone[winner], abs=1e-9), why
+
+    def test_a_host_with_a_table_but_no_band_is_unavailable_not_guessed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`CAI_BAND` and `CAI_REFERENCE_SET` are pinned in step, so this state is
+        unreachable today -- which is exactly why the branch needs constructing. It
+        is the shape the next added host takes if only one map is updated, and the
+        answer must be an honest `unavailable`, never E. coli's band by default."""
+        monkeypatch.setattr(
+            c1_cai,
+            "CAI_BAND",
+            {k: v for k, v in CAI_BAND.items() if k is not HostId.HEK293},
+        )
+        ev = evaluate(
+            construct(MAX_CAI), context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        )
+        assert is_unavailable(ev)
+        assert "no calibrated CAI band" in ev.breaches[0].message
+
+    def test_the_composed_band_raise_does_not_depend_on_slot_order(self) -> None:
+        """Resolved lazily inside the per-slot loop, the same rule and construct
+        reported an honest `unavailable` for a deferred host when that slot came
+        first and raised when it came second. A contradictory parameter is
+        contradictory whichever slot is examined first."""
+        rule = CodonAdaptationIndex(cai_min=0.93)
+        deferred = slot("producer", HostId.SF9, Modality.LENTIVIRAL, 1)
+        ecoli = slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)
+        for slots in ((deferred, ecoli), (ecoli, deferred)):
+            with pytest.raises(ValueError, match="inverts"):
+                evaluate(construct(IN_BAND), context(*slots), rule=rule)
+
+    def test_a_band_that_only_inverts_once_composed_is_refused(self) -> None:
+        """`__init__` cannot catch this -- the host is not known until evaluation --
+        and a silently inverted band reports a max-CAI sequence as "rare codons"."""
+        rule = CodonAdaptationIndex(cai_min=0.93)
+        assert rule._band_for(HostId.HEK293) == (0.93, CAI_BAND[HostId.HEK293][1])
+        with pytest.raises(ValueError, match="inverts"):
+            rule._band_for(HostId.E_COLI_K12)
 
 
 class TestGating:
@@ -337,8 +774,28 @@ class TestGating:
                 slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1),
             ),
         )
-        assert is_unavailable(ev), "the E. coli propagation slot must not answer for HEK293"
-        assert "hek293" in ev.breaches[0].message
+        # Before S6 shipped a human table this asserted `is_unavailable` -- the gate
+        # was proved by ABSENCE, which stopped proving anything the moment HEK293
+        # got a reference set. Now it is proved positively: the number exists, and
+        # it was computed against the HUMAN set, never E. coli's.
+        assert not is_unavailable(ev)
+        assert ev.n_evaluated > 0
+
+        # Which table answered, proved without needing a breach's detail: the
+        # two-slot result must equal what HEK293 alone gives and differ from what
+        # E. coli alone gives. The same CDS scored against a different reference
+        # set is a different number -- that is why the set is part of CAI's
+        # definition, and it is what makes this assertion bite.
+        hek_only = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)),
+        )
+        ecoli_only = evaluate(
+            construct(IN_BAND),
+            context(slot("producer", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)),
+        )
+        assert ev.raw_score == pytest.approx(hek_only.raw_score)
+        assert ev.raw_score != pytest.approx(ecoli_only.raw_score)
 
     def test_a_propagation_only_context_has_nothing_to_score(self) -> None:
         ev = evaluate(
