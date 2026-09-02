@@ -151,7 +151,7 @@ def is_unavailable(ev: Evaluation) -> bool:
 
 class TestTier:
     @pytest.mark.parametrize("base", ["A", "G"])
-    def test_minus_3_is_a_purine_class_not_the_letter_A(self, base: str) -> None:
+    def test_minus_3_is_a_purine_class_not_the_letter_a(self, base: str) -> None:
         """brief.md:68 writes `R` at -3, and Noderer's +58% is purine vs U.
 
         "-3 must be A" is the misreading this test exists to stop: it would
@@ -190,7 +190,8 @@ class TestTier:
     def test_an_adequate_context_is_not_a_finding_by_default(self) -> None:
         """Flagging every adequate start would put a finding on most real vectors."""
         ev = evaluate(kozak_construct(cds="ATGCCTGAAGGTATCAAATAA"))
-        assert ev.passes and ev.breaches == ()
+        assert ev.passes
+        assert ev.breaches == ()
 
     def test_require_strong_makes_adequate_a_finding(self) -> None:
         ev = evaluate(
@@ -212,9 +213,7 @@ class TestFixability:
         Sending the search after it is how a solver chases spurious infeasibility
         (docs/PLAN.md:372).
         """
-        ev = evaluate(
-            kozak_construct(leader="GCCTCC"), rule=KozakContext(require_strong=True)
-        )
+        ev = evaluate(kozak_construct(leader="GCCTCC"), rule=KozakContext(require_strong=True))
         assert ev.raw_score == ADEQUATE
         assert not ev.breaches[0].fixable_by_codon_choice
 
@@ -228,9 +227,11 @@ class TestFixability:
 
     def test_the_breach_never_predicts_expression(self) -> None:
         """CLAUDE.md: BT5 never reports a predicted expression level."""
-        message = evaluate(
-            kozak_construct(leader="GCCTCC", cds="ATGCCTGAAGGTATCAAATAA")
-        ).breaches[0].message.lower()
+        message = (
+            evaluate(kozak_construct(leader="GCCTCC", cds="ATGCCTGAAGGTATCAAATAA"))
+            .breaches[0]
+            .message.lower()
+        )
         for banned in ("will increase", "predicted expression", "fold-improvement"):
             assert banned not in message
 

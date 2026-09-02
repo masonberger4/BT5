@@ -186,7 +186,8 @@ class TestFamilyStatistics:
         """Neither carries codon-choice information, so neither is in %MinMax."""
         code = FileTableProvider().genetic_code(ECOLI_TABLE)
         stats = family_statistics(code, synthetic_frequencies(code))
-        assert "TAA" not in stats and "TGA" not in stats and "TAG" not in stats
+        for stop in ("TAA", "TGA", "TAG"):
+            assert stop not in stats
         assert "ATG" not in stats  # Met: one codon under table 11
         assert "TGG" not in stats  # Trp: one codon under table 11
         assert "CTG" in stats  # Leu: six codons, informative
@@ -201,7 +202,8 @@ class TestFamilyStatistics:
         table4 = provider.genetic_code(4)
         stats4 = family_statistics(table4, synthetic_frequencies(table4))
         assert table4.translate("TGA") == "W"
-        assert "TGG" in stats4 and "TGA" in stats4
+        assert "TGG" in stats4
+        assert "TGA" in stats4
 
         table11 = provider.genetic_code(ECOLI_TABLE)
         stats11 = family_statistics(table11, synthetic_frequencies(table11))
@@ -214,7 +216,8 @@ class TestFamilyStatistics:
         top = most_common(code, "L")
         used, mean, peak, trough = stats[top]
         assert used == freq[top] == 0.7
-        assert peak == 0.7 and trough == 0.1
+        assert peak == 0.7
+        assert trough == 0.1
         assert trough < mean < peak
 
     def test_a_partly_covered_family_is_dropped_whole(self) -> None:
@@ -254,11 +257,10 @@ class TestProfile:
         code, table = stats
         codons = [most_common(code, "L")] * 20 + [rarest(code, "L")] * 20
         profile = min_max_profile(codons, table, window=3)
-        assert profile[3] > 0 and profile[36] < 0
+        assert profile[3] > 0
+        assert profile[36] < 0
 
-    def test_the_window_shrinks_at_termini_rather_than_dropping_positions(
-        self, stats
-    ) -> None:
+    def test_the_window_shrinks_at_termini_rather_than_dropping_positions(self, stats) -> None:
         """brief.md:79. The profile is exactly as long as the CDS, ends included."""
         code, table = stats
         codons = [most_common(code, "L")] * 40
@@ -288,7 +290,7 @@ class TestProfile:
     def test_a_window_wider_than_the_cds_flattens_the_profile(self, stats) -> None:
         code, table = stats
         codons = [most_common(code, "L")] * 10 + [rarest(code, "L")] * 10
-        assert len(set(round(v, 9) for v in min_max_profile(codons, table, window=500))) == 1
+        assert len({round(v, 9) for v in min_max_profile(codons, table, window=500)}) == 1
 
     def test_window_must_be_at_least_one_codon(self, stats) -> None:
         _, table = stats
@@ -395,9 +397,7 @@ class TestUnavailableInThisBuild:
         assert ev.passes is True
         assert ev.binding_side is None
 
-    def test_the_map_is_the_only_wiring_a_frequency_table_needs(
-        self, wired: dict
-    ) -> None:
+    def test_the_map_is_the_only_wiring_a_frequency_table_needs(self, wired: dict) -> None:
         """One entry in MINMAX_REFERENCE_SET makes the host live, and nothing else."""
         ev = evaluate(construct("CTG" * 30))
         assert not is_unavailable(ev)
@@ -505,10 +505,9 @@ class TestConstructScope:
         """
         code = FileTableProvider().genetic_code(ECOLI_TABLE)
         forward = evaluate(construct(most_common(code, "R") * 20), context(slot()))
-        reverse = evaluate(
-            construct(most_common(code, "R") * 20), context(slot(), orientation=-1)
-        )
-        assert not is_unavailable(forward) and not is_unavailable(reverse)
+        reverse = evaluate(construct(most_common(code, "R") * 20), context(slot(), orientation=-1))
+        assert not is_unavailable(forward)
+        assert not is_unavailable(reverse)
         assert forward.raw_score == pytest.approx(100.0)
         assert reverse.raw_score == pytest.approx(-100.0)
 
