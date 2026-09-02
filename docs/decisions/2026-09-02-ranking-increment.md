@@ -95,6 +95,14 @@ to `not_run`, so this lane RENDERS whatever verdict it is handed and never
 upgrades one — making the screen real is S2's, per the buildout's inter-session
 contract.
 
+### A panel smaller than the one requested says so
+
+`gallery_size` is a ceiling, not a promise: PLAN asks for 3-8 genuinely different
+candidates. On the reference fixture the sweep reaches 3, so the panel is 3 and
+the report states how many vectors were solved and how many distinct designs they
+produced. "We chose 3 from many" and "3 is all there was" would otherwise render
+identically in a gallery UI.
+
 ### A G4 shortfall is a finding
 
 If the panel's minimum pairwise codon distance lands under 15%, the report says
@@ -110,12 +118,45 @@ obvious way to make the panel "pass". `score/gallery.py`'s own docstring says a
 G4 failure means re-planning around ε-constraint enumeration *before* a UI is
 built on it. Reported, never lowered.
 
-**Sweeping at `build_gallery`'s shipped `steps=8`.** Four axes at 8 steps is 165
-lattice points, so 165 full `optimize()` calls — Tier A, Tier B and a validator
-run each. That is not a 10 s design. `DEFAULT_SWEEP_STEPS = 3` (20 vectors) is
-what fits, and the sampling was never what makes a gallery diverse — Das & Dennis
-(1997) is the reason the SELECTION is greedy max-min on sequence distance and not
-the weights.
+**Sweeping densely at all.** This is the decision the measurements changed, and
+the first draft of this file had it wrong.
+
+`DEFAULT_SWEEP_STEPS` began at 3 (20 weight vectors) on the reasoning that
+`build_gallery`'s shipped `steps=8` is 165 solves and 20 "looked affordable".
+Measured at 500 aa on the reference backbone that was **36.2 s against a 10 s
+bar** — and the profile said something more useful than "too slow":
+
+| weight vectors | distinct designs | time |
+|---|---|---|
+| 3 | 3 | 5.2 s |
+| 4 | 3 | 7.5 s |
+| 6 | 3 | 10.4 s |
+| 20 | 3 | 33.6 s |
+
+Density bought **nothing**. Seventeen of the twenty solves rediscovered designs
+the first three had already found, and the minimum pairwise codon distance was
+0.399 at every setting — two and a half times G4's bar. The front these axes
+reach on this protein has three points on it.
+
+Cost is Tier B, not the DP: a solve whose CDS is already clean costs ~0.09 s, one
+that needs repair ~2.5 s, because `repair()` evaluates up to `max_candidates`
+candidates per iteration and each is a full catalog pass. So the only lever that
+matters is the NUMBER OF SOLVES.
+
+`DEFAULT_SWEEP_STEPS = 1` — the one-hot corners, each axis pushed alone. Those
+are the extremes of the trade-off, which is what `greedy_max_min` seeds itself
+from anyway; mixtures interpolate between designs the corners already reach. Das
+& Dennis (1997) is the reason the SELECTION was never the sampling's job. End to
+end at 500 aa: **7.37 s**, panel of 3, G4 met at 0.399. It stays a parameter of
+`design()` for a protein whose front is richer.
+
+**Sweeping a provably dead axis.** With no host codon-usage table on file,
+`codon_adaptation`'s cost term is identically zero, so its corner of the simplex
+solves to the unsteered design and `sweep` pays a full `optimize()` — ~2.4 s — to
+rediscover it. `live_axes` drops it. That this loses no design is an empirical
+claim, so it is a test and not a docstring: sweeping all four axes and sweeping
+the live ones produce the same design set, one solve apart. The axis comes back
+on its own when S6 ships a host table.
 
 **Scoring the null on bare CDSs.** Much cheaper, and it would make "94th
 percentile" a measurement against a distribution that never contained a backbone.

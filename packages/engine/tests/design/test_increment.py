@@ -20,17 +20,60 @@ from typing import Any
 
 import pytest
 from bt5.codon.tables import FileTableProvider
+from bt5.core.context import HostId, Modality
 from bt5.core.result import ObjectiveScore
 from bt5.core.types import DNA_ALPHABET
 from bt5.design import DesignError, design
 from bt5.design.errors import DesignError as DesignErrorAlias
-from bt5.design.gallery import DEFAULT_SWEEP_STEPS
+from bt5.design.gallery import DEFAULT_SWEEP_STEPS, SolveSpace, sweep_designs
 from bt5.design.runner import DEFAULT_GALLERY_SIZE, UNSCREENED
 from bt5.score.gallery import G4_MIN_PAIRWISE_DISTANCE, MAX_GALLERY, MIN_GALLERY
 from bt5.score.null import DEFAULT_NULL_N
+from bt5.score.steering import SWEEP_AXES, live_axes
 from bt5.vector.backbone import VectorBackbone
 
 CODE = FileTableProvider().genetic_code(1)
+
+
+def _solve_space(backbone: VectorBackbone, protein: str) -> SolveSpace:
+    """The same `SolveSpace` `design()` builds, for tests that need to sweep it
+    directly rather than through the whole pipeline."""
+    from bt5.design.catalog import partition_forbidden
+    from bt5.design.runner import _coding_flanks, _context
+    from bt5.design.sites import choose_site
+    from bt5.solver.catalog import build_rule_set, default_services
+    from bt5.vector import assemble
+
+    services = default_services(seed=0)
+    site = choose_site(backbone, table_id=1)
+    ctx = _context(
+        modality=Modality.LENTIVIRAL,
+        hosts=[HostId.HEK293],
+        table_id=1,
+        cassette_orientation=site.strand,
+    )
+    rules = build_rule_set(ctx, services)
+    usable, _carried = partition_forbidden(rules.forbidden(), backbone, site)
+    left, right = _coding_flanks(backbone, site, usable)
+    placeholder = "ATG" + "AAA" * (len(protein) - 1) + "TAA"
+    return SolveSpace(
+        protein=protein,
+        code=CODE,
+        assemble=lambda cds: (
+            assemble(backbone, cds, protein=protein, table_id=1, site=site).construct
+        ),
+        forbidden=usable,
+        seed=0,
+        table_id=1,
+        usage={},
+        find_breaches=rules.breach_finder(),
+        gc_bounds=rules.oracle_bounds().gc_bounds,
+        left_flank=left,
+        right_flank=right,
+        policies=rules.policies(50),
+        reference=assemble(backbone, placeholder, protein=protein, table_id=1, site=site).reference,
+    )
+
 
 #: Every degradation `design()` is allowed to emit, as the leading text of the
 #: sentence. A NEW source of degradation that is not one of these fails
@@ -41,7 +84,7 @@ CODE = FileTableProvider().genetic_code(1)
 KNOWN_DEGRADATIONS = (
     "ViennaRNA",
     "protein-level biosecurity screening:",
-    "the ",  # the G4 shortfall sentence
+    "the ",  # the G4 shortfall and short-panel sentences
     "single candidate only:",
     "no codon usage table on file",
     "no native baseline:",
@@ -99,9 +142,7 @@ class TestTheGallery:
                 for d in res.result.provenance.degradations
             )
 
-    def test_candidates_are_ranked_best_first(
-        self, backbone: VectorBackbone, fast: Any
-    ) -> None:
+    def test_candidates_are_ranked_best_first(self, backbone: VectorBackbone, fast: Any) -> None:
         res = fast(backbone)
         totals = [candidate.scorecard.total for candidate in res.result.candidates]
         assert totals == sorted(totals, reverse=True)
@@ -138,7 +179,7 @@ class TestTheGallery:
         being the default."""
         assert DEFAULT_GALLERY_SIZE == 5
         assert MIN_GALLERY <= DEFAULT_GALLERY_SIZE <= MAX_GALLERY
-        assert DEFAULT_SWEEP_STEPS == 3
+        assert DEFAULT_SWEEP_STEPS == 1
         assert DEFAULT_NULL_N == 200
 
 
@@ -266,9 +307,7 @@ class TestNativeBaseline:
         with pytest.raises(DesignError, match="not a baseline"):
             fast(backbone, native_cds=mutated)
 
-    def test_the_baseline_is_never_manufactured(
-        self, backbone: VectorBackbone, fast: Any
-    ) -> None:
+    def test_the_baseline_is_never_manufactured(self, backbone: VectorBackbone, fast: Any) -> None:
         """There is deliberately no parameter that asks BT5 to invent a native
         sequence, and no code path that back-translates one into the baseline
         slot. A manufactured baseline is a design wearing the word."""
@@ -316,9 +355,7 @@ class TestCompleteness:
         from bt5.core.context import BiosecurityVerdict
 
         unscreened = fast(backbone)
-        screened = fast(
-            backbone, screen=BiosecurityVerdict("clear", "test-db-1", "")
-        )
+        screened = fast(backbone, screen=BiosecurityVerdict("clear", "test-db-1", ""))
         assert UNSCREENED.status == "not_run"
         removed = set(unscreened.result.provenance.degradations) - set(
             screened.result.provenance.degradations
@@ -326,9 +363,7 @@ class TestCompleteness:
         assert all("biosecurity screening" in d for d in removed)
         assert removed
 
-    def test_no_degradation_arrives_unremarked(
-        self, backbone: VectorBackbone, fast: Any
-    ) -> None:
+    def test_no_degradation_arrives_unremarked(self, backbone: VectorBackbone, fast: Any) -> None:
         """The skeleton pinned its degradations by set equality so a new silent
         one would fail. That set is environment-dependent now (ViennaRNA present
         or not, host tables shipped or not), so the same protection is expressed
@@ -390,5 +425,42 @@ class TestNoPredictionVocabulary:
         fields = set(ObjectiveScore.__dataclass_fields__)
         banned = {"expression", "titer", "yield", "fold_improvement", "predicted"}
         assert not (fields & banned)
-        for word in ("predicted expression", "fold-improvement", "titer of"):
-            assert word not in res.rendered.lower()
+
+        # A bare word scan over the rendering cannot express this property: the
+        # DISCLAIMER contains "predicted expression level" and must, because
+        # saying what BT5 refuses to report is the point. What must hold is that
+        # the phrase appears ONLY there -- never on a line that reports a number.
+        disclaimer = "BT5 reports ranks and percentiles"
+        for line in res.rendered.splitlines():
+            lowered = line.lower()
+            if line.strip().startswith(disclaimer) or "explain 5-31%" in lowered:
+                continue
+            for phrase in ("predicted expression", "fold-improvement", "titer of"):
+                assert phrase not in lowered, f"prediction vocabulary on a report line: {line!r}"
+
+
+class TestSweepAxes:
+    """The dead-axis claim, tested rather than asserted in a docstring."""
+
+    def test_dropping_a_dead_axis_loses_no_design(
+        self, backbone: VectorBackbone, protein: str
+    ) -> None:
+        """`live_axes` drops `codon_adaptation` when no host codon-usage table is
+        on file, because its cost term is then identically zero. That is a claim
+        about the reachable front, so it is measured: sweeping all four axes and
+        sweeping the live ones must produce the SAME set of designs, and the
+        dead axis must cost a full `optimize()` to prove it.
+        """
+        space = _solve_space(backbone, protein)
+        assert live_axes({}) == ("repeat_avoidance", "gc_lean_at", "gc_lean_gc")
+        assert live_axes({"CTG": 1.0}) == SWEEP_AXES
+
+        everything, _ = sweep_designs(space, axes=SWEEP_AXES, steps=1, k=5)
+        live, _ = sweep_designs(space, steps=1, k=5)
+        assert {p.cds for p in everything.picks} == {p.cds for p in live.picks}
+        assert live.swept == everything.swept - 1  # one solve saved, nothing lost
+
+    def test_a_host_with_a_usage_table_keeps_the_adaptation_axis(self) -> None:
+        """The axis is dropped because it is DEAD here, not because it is
+        unwanted. When S6 ships a host table it comes back on its own."""
+        assert "codon_adaptation" in live_axes({"CTG": 1.0, "TTA": 0.1})

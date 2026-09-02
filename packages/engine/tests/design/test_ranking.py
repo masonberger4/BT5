@@ -230,8 +230,10 @@ class TestWeightedTotal:
             seed=0,
         )
         card = score_candidate(
-            {"a": _evaluation("a", float("nan"), reason="no folding engine"),
-             "b": _evaluation("b", -1.0)},
+            {
+                "a": _evaluation("a", float("nan"), reason="no folding engine"),
+                "b": _evaluation("b", -1.0),
+            },
             specs,  # type: ignore[arg-type]
             nulls=nulls,
         )

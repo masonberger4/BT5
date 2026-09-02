@@ -32,7 +32,7 @@ regardless of what weight the sweep picked.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from bt5.solver.reference import CodonScorer
 
@@ -96,3 +96,23 @@ def blended_scorer(
         return cost
 
     return score
+
+
+def live_axes(usage: Mapping[str, float], axes: Sequence[str] = SWEEP_AXES) -> tuple[str, ...]:
+    """The axes that can actually move the answer, given this usage table.
+
+    `codon_adaptation` reads `usage` and nothing else. With no host codon-usage
+    table on file its term is identically zero, so a weight vector pushing only
+    that axis solves to exactly the design an unsteered solve produces -- and
+    `sweep` pays a full `optimize()`, Tier B repair included, to rediscover it.
+    Measured at 500 aa on the reference backbone that is ~2.4 s bought for
+    nothing, against a 10 s end-to-end budget.
+
+    Dropping it is not a reduction in coverage. An axis whose contribution to the
+    objective is the zero function cannot reach a point on the front that the
+    remaining axes cannot; `Gallery.distinct` confirms it empirically, reporting
+    the same count with and without.
+    """
+    if any(weight for weight in usage.values()):
+        return tuple(axes)
+    return tuple(axis for axis in axes if axis != "codon_adaptation")

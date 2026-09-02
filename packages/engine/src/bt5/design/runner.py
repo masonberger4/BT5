@@ -459,9 +459,7 @@ def design(
         reference=reference,
     )
 
-    gallery, picks, solved, gallery_degradation = _panel(
-        space, steps=sweep_steps, k=gallery_size
-    )
+    gallery, picks, solved, gallery_degradation = _panel(space, steps=sweep_steps, k=gallery_size)
 
     assemblies = {
         cds: assemble(backbone, cds, protein=protein, table_id=table_id, site=chosen)
@@ -674,6 +672,21 @@ def _panel(
     picks = [point.cds for point in gallery.picks]
     if picks:
         if gallery.meets_g4:
+            if len(picks) < k:
+                # A panel smaller than the one asked for. NOT a failure -- PLAN
+                # asks for 3-8 genuinely different candidates, and `k` is a
+                # ceiling -- but the difference between "we chose 3 from many"
+                # and "3 is all the sweep could reach" is exactly the kind of
+                # thing a gallery UI would otherwise present identically.
+                return (
+                    gallery,
+                    picks,
+                    solved,
+                    f"the panel holds {len(picks)} candidates, not the {k} requested: "
+                    f"the sweep solved {gallery.swept} weight vectors and reached "
+                    f"{gallery.distinct} distinct designs. Every candidate shown is a "
+                    f"real alternative; there were simply no more to select from.",
+                )
             return gallery, picks, solved, None
         return (
             gallery,

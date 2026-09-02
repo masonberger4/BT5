@@ -86,7 +86,5 @@ class TestBlendedScorer:
         would solve to the same design."""
         for axis in SWEEP_AXES:
             scorer = blended_scorer({axis: 1.0}, usage=USAGE)
-            costs = {
-                scorer(0, codon, REPEATING_PREFIX) for codon in ("CTG", "TTA", "GGC", "GGA")
-            }
+            costs = {scorer(0, codon, REPEATING_PREFIX) for codon in ("CTG", "TTA", "GGC", "GGA")}
             assert len(costs) > 1, f"axis {axis} does not distinguish any two codons"
