@@ -74,6 +74,7 @@ from bt5.score.steering import (
     SWEEP_AXES,
     blended_scorer,
     gc_fraction,
+    live_axes,
 )
 
 __all__ = [
@@ -124,6 +125,7 @@ __all__ = [
     "gc_fraction",
     "greedy_max_min",
     "hard_versus_soft",
+    "live_axes",
     "normalise",
     "null_distribution",
     "nucleotide_distance",

@@ -122,12 +122,16 @@ class TestSiteHandling:
             # The insert on the plus strand is the reverse complement of the CDS.
             assert reverse_complement(candidate.cds) in candidate.construct.sequence
 
-    def test_an_origin_spanning_site_verifies(self, backbone: VectorBackbone, fast: Any) -> None:
+    def test_an_origin_spanning_site_verifies(
+        self, backbone: VectorBackbone, fast: Any, protein: str
+    ) -> None:
         """G2 geometry: an insert placed across position 0, with I9 still holding
         (design() would raise VerificationError if the backbone were touched)."""
         site = insertion_site_from_interval(Interval(1990, 2010, 1), label="wrap", table_id=1)
         res = fast(backbone, site=site)
         assert res.result.candidates
+        for candidate in res.result.candidates:
+            assert CODE.translate(candidate.cds)[:-1] == protein
 
 
 class TestCarriedMotif:

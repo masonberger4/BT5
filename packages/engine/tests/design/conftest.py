@@ -6,14 +6,14 @@ the order-file tests and the timing test all need them and none of them should
 own the other's fixture.
 
 Speed is a fixture concern in this lane and nowhere else. A full-default
-`design()` sweeps 20 weight vectors and draws a 200-variant null per cheap
-objective, which is the shipped behaviour and is what the end-to-end and timing
-tests must exercise. Every other test asks a question about ONE seam and pays
-for the whole pipeline to ask it, so `fast` shrinks the sweep and the null to the
-smallest values that still exercise the same code paths. Shrinking them is a
-test-runtime decision, never a claim about the product: `test_the_shipped_
-defaults_are_the_ones_measured` pins the real values so this cannot quietly
-become the default.
+`design()` sweeps one weight vector per live axis (3-4) and draws a 200-variant
+null per cheap objective; the null is the expensive half, and it is what `fast`
+shrinks. `FAST_SWEEP_STEPS` equals `DEFAULT_SWEEP_STEPS` because the shipped
+lattice is already minimal -- the constant is kept so a future rise in the
+default does not silently slow every unit test. Shrinking the null is a
+test-runtime decision, never a claim about the product:
+`test_the_shipped_defaults_are_the_ones_measured` pins the real values so this
+cannot quietly become the default.
 """
 
 from __future__ import annotations

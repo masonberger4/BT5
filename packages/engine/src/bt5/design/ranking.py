@@ -184,7 +184,7 @@ def build_nulls(
                 f"objective is not ranked"
             )
             continue
-        by_spec[spec.id] = null_distribution(
+        drawn = null_distribution(
             anchor_cds,
             synonyms=synonyms,
             build=build,
@@ -192,13 +192,31 @@ def build_nulls(
             seed=seed,
             n=n,
             kind=kind,  # type: ignore[arg-type]
-            # Every rule in the scored set reads windows or counts motifs; none
-            # calls `FoldEngine.mfe`, which its own docstring reserves for report
-            # time. Asserted rather than assumed -- see `test_the_null_never_folds
-            # _whole_transcripts`.
+            # `FoldEngine.mfe` is reserved for report time by its own docstring
+            # -- ~0.24 s at 1 kb and ~6.5 s at 3 kb, so it must never run inside
+            # the empirical null. Hard-coded True because every rule in the
+            # scored set reads windows or counts motifs and none calls `mfe`;
+            # `test_the_null_never_folds_whole_transcripts` holds that by running
+            # each scored objective against a fold engine whose `mfe` raises.
             windowed_fold_only=True,
             weights=weights,
         )
+        # A rule can compute its objective on the anchor and fail on a variant.
+        # `unavailability` guards the CANDIDATE's raw score; nothing else looks
+        # at the null's own values, and `percentile_of` counts a NaN variant as
+        # neither better nor a tie -- silently deflating the percentile toward 0
+        # while `null_mean` and `null_sd` render as `nan`. That is the same
+        # "confident number about a quantity nobody measured" failure one level
+        # down, so the null is discarded rather than reported.
+        bad = sum(1 for value in drawn.values if math.isnan(value))
+        if bad:
+            unavailable[spec.id] = (
+                f"the null could not be built: {bad} of {drawn.n} synonymous variants "
+                f"produced no measurable score, so a percentile against it would be "
+                f"measured partly against variants this rule never scored"
+            )
+            continue
+        by_spec[spec.id] = drawn
     return Nulls(by_spec=by_spec, unavailable=unavailable, seed=seed)
 
 
@@ -301,3 +319,33 @@ def weighted_total(scores: Sequence[ObjectiveScore], specs: Sequence[Spec]) -> f
     if total_weight <= 0.0:
         return 0.0
     return sum(s.percentile * w for s, w in usable) / total_weight
+
+
+def comparable_totals(cards: Mapping[str, ScoreCard], specs: Sequence[Spec]) -> dict[str, float]:
+    """A rank key per candidate, over the objectives EVERY candidate could evaluate.
+
+    `ScoreCard.total` renormalises over whatever THAT candidate managed to score,
+    which is the right number to show beside one candidate and the wrong one to
+    sort by. Two candidates normalised over different objective sets are not
+    comparable, and the comparison silently favours the one measured on less:
+    with spec `a` at weight 3 and `b` at weight 1, a candidate that could only
+    evaluate `b` and scored 0.9 totals 0.9, while one that evaluated both and
+    scored (0.2, 0.9) totals 0.375. The less-measured candidate wins, becomes
+    `candidates[0]`, and is the design exported to GenBank and put on the order
+    file.
+
+    Restricting the key to the intersection is what makes the sort fair. Nothing
+    on today's catalog reaches this -- b1 and c1 return NaN for reasons constant
+    across a run, so every candidate has the same available set -- but the
+    ranking is what the user acts on, and "unreachable today" is not a property
+    a report can carry.
+    """
+    if not cards:
+        return {}
+    available_sets = [{s.spec_id for s in card.available} for card in cards.values()]
+    common = set.intersection(*available_sets) if available_sets else set()
+    shared = [spec for spec in specs if spec.id in common]
+    return {
+        key: weighted_total([s for s in card.scores if s.spec_id in common], shared)
+        for key, card in cards.items()
+    }

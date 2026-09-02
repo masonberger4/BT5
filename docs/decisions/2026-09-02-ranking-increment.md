@@ -208,3 +208,91 @@ may be waiting on it.
 - No file under `rules/`, `solver/`, `vector/`, `cassette/`, `codon/`,
   `structure/`, `core/`, `.github/`, `data/`, `tests/contract/`,
   `tests/invariants/`, `tests/data_integrity/` or `pyproject.toml` was modified.
+
+
+## Corrected after review
+
+`/pre-pr`'s review pass found two blocking defects. Both were mine, both were in
+the honesty vocabulary this session exists to protect, and both are recorded here
+rather than quietly fixed.
+
+### The G4 degradation reported a distance for a failure that was not about distance
+
+`Gallery.meets_g4` is False for **two** reasons — fewer than `MIN_GALLERY`
+candidates, *or* a minimum pairwise distance under 15% — and `pairwise_minimum`
+returns **1.0** for a single sequence. `_panel` treated both as the distance
+failure, so a one-candidate panel emitted:
+
+> the 1-candidate panel does not meet gate G4: its minimum pairwise codon
+> distance is **100.0%, below the 15%** …
+
+A literally false sentence, in the one vocabulary this lane is for. A two-candidate
+panel is the same bug wearing a plausible number ("41.8%, below the 15%"), which is
+worse because nothing looks wrong. `_panel` now branches on the two conditions
+separately and the short-panel sentence makes **no distance claim at all**;
+`SkeletonResult.meets_g4`'s docstring carried the same conflation and is fixed.
+
+### The short-panel degradation replaced one permanent False with another
+
+`DEFAULT_GALLERY_SIZE` is 5 and the shipped lattice yields at most 4 weight
+vectors (3 without a host usage table), so `len(picks) < k` on **every** run — the
+degradation added to report a short panel fired unconditionally, and
+`QcReport.is_complete` was therefore False by construction. The skeleton's
+hard-wired `False` had been replaced by a different permanent `False`, which is
+precisely what this increment claimed to remove.
+
+The fix is not to lower `DEFAULT_GALLERY_SIZE`. `k` is a **ceiling**
+(`greedy_max_min` returns every point when there are at most `k`), PLAN asks for
+3-8 candidates, and capping at 3 would refuse a richer protein a fuller panel. A
+sweep that exhausted the front at three genuinely different designs has answered
+**completely**, so it no longer degrades; `Gallery.swept` and `Gallery.distinct`
+carry the counts for a caller that wants to show them. Only a panel below
+`MIN_GALLERY` degrades now.
+
+**`is_complete` still does not reach True with the data that ships**, and that is
+the honest answer rather than a remaining defect: every run carries at least the
+biosecurity screen (S2's), and a mammalian host also carries the missing codon
+usage table (S6's) and c1's missing CAI reference set (S3's). What changed is that
+the `False` is now *derived from five named absences* instead of produced by a
+sentence that could never be absent — and a test proves the mechanism by supplying
+a clear verdict and watching exactly that degradation disappear.
+
+### Also corrected
+
+- **A rank key that compared incomparable totals.** `ScoreCard.total` renormalises
+  over the objectives *that candidate* could evaluate, so a candidate measured on
+  strictly less could outrank one measured on more — and the winner is what gets
+  exported to GenBank and put on the order file. `comparable_totals` now computes
+  the sort key over the objectives available to **every** candidate. Unreachable on
+  today's catalog; the ranking is what the user acts on, and "unreachable today" is
+  not a property a report can carry.
+- **NaN in the null's own values was unguarded.** `unavailability` guarded the
+  candidate's raw score only. A rule that computes on the anchor and fails on a
+  variant would put NaNs in the null, which `percentile_of` counts as neither
+  better nor a tie — silently deflating the percentile while `null_mean` renders as
+  `nan`. The null is now discarded with a stated reason.
+- **A comment cited a test that did not exist.** `build_nulls` hard-codes
+  `windowed_fold_only=True` and claimed a test held it.
+  `test_the_null_never_folds_whole_transcripts` now does, by running every scored
+  objective against a fold engine whose `mfe` raises.
+- **The degradation guard had become a catch-all.** Replacing set equality with
+  prefix matching was right; using `"the "` as one of the prefixes was not — four
+  characters matching any future sentence starting "the ", inside the test named
+  for catching unremarked degradations. Anchored regexes now, each pinned to the
+  sentence its source actually emits.
+- **The `is_complete` test was a tautology** restating the property's own body. It
+  now tests that filling an absence removes its degradation.
+- **A dropped assertion** at the origin-spanning site, and a **dead tie-break**
+  whose comment claimed work `sorted`'s stability already did.
+
+### Left as a follow-up, deliberately
+
+`RuleSet.gated_out` objectives are named nowhere on the report. On the reference
+fixture `b1_five_prime` — the highest-weight SOFT objective — is gated out because
+the slot is HEK293 rather than E. coli, which means "does not apply" rather than
+"could not be evaluated", so it does not belong in `unavailable` or in
+`degradations`. But `solver/catalog.py` records `gated_out` precisely so a report
+can say which, and this lane's whole argument is that an absent objective is
+indistinguishable from one that was never configured. Surfacing it needs a new
+`QcReport` field and a render section; that is a report-contract change S5's CLI
+renders, and it belongs in its own PR rather than bolted onto this one.

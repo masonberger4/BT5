@@ -64,12 +64,12 @@ from bt5.design.provenance import (
     constraint_set_hash,
     design_hash_context,
 )
-from bt5.design.ranking import Nulls, build_nulls, score_candidate
+from bt5.design.ranking import Nulls, build_nulls, comparable_totals, score_candidate
 from bt5.design.sites import choose_site
 from bt5.rules.vendors import DEFAULT_SELECTION, VendorSelection
 from bt5.score import build_report, design_hash, render
 from bt5.score.distance import distance_matrix
-from bt5.score.gallery import Gallery
+from bt5.score.gallery import G4_MIN_PAIRWISE_DISTANCE, MIN_GALLERY, Gallery
 from bt5.score.order import OrderEntry
 from bt5.score.report import QcReport
 from bt5.solver.catalog import RuleSet, build_rule_set, default_services
@@ -148,9 +148,16 @@ class SkeletonResult:
 
     @property
     def meets_g4(self) -> bool:
-        """Did the panel clear gate G4's 15% minimum pairwise codon distance?
+        """Did the panel clear gate G4 -- enough candidates, far enough apart?
 
-        A False here invalidates a PRODUCT decision, not a technical one: if the
+        TWO conditions, and they fail for different reasons: at least
+        `MIN_GALLERY` candidates, AND a minimum pairwise codon distance of at
+        least `G4_MIN_PAIRWISE_DISTANCE`. Read this as a single verdict; the
+        degradation on the report says which condition failed, because
+        `pairwise_minimum` returns 1.0 for one sequence and a short panel would
+        otherwise be reported as a distance failure at 100%.
+
+        A False invalidates a PRODUCT decision, not a technical one: if the
         sweep cannot produce genuinely distinct designs then the gallery is not
         a feature and a UI built on it is a lie. It is reported, never lowered.
         """
@@ -513,9 +520,11 @@ def design(
         )
         for cds in picks
     }
-    # Best total first; the sweep's own order is the tie-break, so two candidates
-    # that score identically rank deterministically rather than by sort accident.
-    ordered_cds = sorted(picks, key=lambda cds: (-cards[cds].total, picks.index(cds)))
+    rank_keys = comparable_totals(cards, objectives)
+    # Best first, on a key computed over the objectives available to EVERY
+    # candidate. `sorted` is stable and `picks` is the sweep's own order, so ties
+    # keep that order without a secondary key.
+    ordered_cds = sorted(picks, key=lambda cds: -rank_keys[cds])
     labels = {cds: f"design_{rank + 1}" for rank, cds in enumerate(ordered_cds)}
 
     native, native_degradation = (
@@ -658,60 +667,78 @@ def _panel(
 ) -> tuple[Gallery | None, list[str], dict[str, OptimizeResult], str | None]:
     """The candidate panel, or the honest single candidate that replaces it.
 
-    Three outcomes, and collapsing any two of them would hide a real finding:
+    FOUR outcomes, and `Gallery.meets_g4` deliberately does not distinguish two
+    of them, so this function must. `meets_g4` is False when the panel is too
+    SMALL (`len(picks) < MIN_GALLERY`) *or* when its members are too CLOSE
+    (`min_pairwise_distance < G4_MIN_PAIRWISE_DISTANCE`), and reporting the
+    second sentence for the first case produces a false statement in the one
+    vocabulary this lane exists to keep honest: `pairwise_minimum` returns 1.0
+    for a single sequence, so a one-candidate panel would be reported as
+    "minimum pairwise codon distance is 100.0%, below the 15%". A two-candidate
+    panel is the same bug wearing a plausible number, which is worse.
 
-    - a panel meeting G4 -- no degradation;
-    - a panel that solved but is not diverse enough -- reported with the
-      distance it actually reached, NEVER by lowering `G4_MIN_PAIRWISE_DISTANCE`,
-      because a G4 failure invalidates a product decision rather than a technical
-      one;
-    - nothing at all, when every weight vector was infeasible or refused. Then
-      the unsteered solve stands alone and the report says there is no gallery.
+    - **A panel of three or more, far enough apart.** No degradation -- including
+      when it holds fewer than `k`. `k` is a CEILING (`greedy_max_min` returns
+      every point when there are at most `k` of them) and PLAN asks for 3-8
+      genuinely different candidates, so a sweep that exhausted the front at
+      three has answered completely. `Gallery.swept` and `Gallery.distinct`
+      carry how many vectors were solved and how many designs they reached, for
+      a caller that wants to show it. Degrading here was a real defect: with the
+      shipped lattice `len(picks)` is at most 4, so the degradation fired on
+      every run and pinned `QcReport.is_complete` to False by construction --
+      the skeleton's hard-wired False wearing a different sentence.
+    - **Fewer than `MIN_GALLERY`.** Not a panel at all. Reported as the shortfall
+      it is, with no distance claim attached.
+    - **Far enough in number, too close together.** Reported with the distance it
+      actually reached, NEVER by lowering `G4_MIN_PAIRWISE_DISTANCE`: a G4
+      failure invalidates a product decision rather than a technical one.
+    - **Nothing at all**, when every weight vector was infeasible or refused.
+      The unsteered solve stands alone and the report says there is no gallery.
     """
     gallery, solved = sweep_designs(space, steps=steps, k=k)
     picks = [point.cds for point in gallery.picks]
-    if picks:
-        if gallery.meets_g4:
-            if len(picks) < k:
-                # A panel smaller than the one asked for. NOT a failure -- PLAN
-                # asks for 3-8 genuinely different candidates, and `k` is a
-                # ceiling -- but the difference between "we chose 3 from many"
-                # and "3 is all the sweep could reach" is exactly the kind of
-                # thing a gallery UI would otherwise present identically.
-                return (
-                    gallery,
-                    picks,
-                    solved,
-                    f"the panel holds {len(picks)} candidates, not the {k} requested: "
-                    f"the sweep solved {gallery.swept} weight vectors and reached "
-                    f"{gallery.distinct} distinct designs. Every candidate shown is a "
-                    f"real alternative; there were simply no more to select from.",
-                )
-            return gallery, picks, solved, None
+
+    if not picks:
+        fallback = space.solve(None)
+        if fallback is None:
+            raise DesignError(
+                "no candidate survived: every weight vector in the sweep and the "
+                "unsteered solve were either infeasible or refused by the independent "
+                "validator"
+            )
+        solved[fallback.cds] = fallback
+        return (
+            None,
+            [fallback.cds],
+            solved,
+            "single candidate only: no weight vector in the sweep produced a design, "
+            "so there is no gallery to choose from",
+        )
+
+    if len(picks) < MIN_GALLERY:
+        return (
+            gallery,
+            picks,
+            solved,
+            f"the sweep produced {len(picks)} distinct design"
+            f"{'' if len(picks) == 1 else 's'} from {gallery.swept} weight vectors, "
+            f"below the {MIN_GALLERY} at which a panel offers a genuine choice. No "
+            f"pairwise distance is reported: there are too few candidates for one to "
+            f"mean anything.",
+        )
+
+    if gallery.min_pairwise_distance < G4_MIN_PAIRWISE_DISTANCE:
         return (
             gallery,
             picks,
             solved,
             f"the {len(picks)}-candidate panel does not meet gate G4: its minimum "
             f"pairwise codon distance is {gallery.min_pairwise_distance:.1%}, below "
-            f"the 15% at which candidates are genuinely different designs rather "
-            f"than one design shown several times",
+            f"the {G4_MIN_PAIRWISE_DISTANCE:.0%} at which candidates are genuinely "
+            f"different designs rather than one design shown several times",
         )
-    fallback = space.solve(None)
-    if fallback is None:
-        raise DesignError(
-            "no candidate survived: every weight vector in the sweep and the "
-            "unsteered solve were either infeasible or refused by the independent "
-            "validator"
-        )
-    solved[fallback.cds] = fallback
-    return (
-        None,
-        [fallback.cds],
-        solved,
-        "single candidate only: no weight vector in the sweep produced a design, "
-        "so there is no gallery to choose from",
-    )
+
+    return gallery, picks, solved, None
 
 
 def _degradations(

@@ -16,11 +16,12 @@ from __future__ import annotations
 import csv
 import io
 import math
+import re
 from typing import Any
 
 import pytest
 from bt5.codon.tables import FileTableProvider
-from bt5.core.context import HostId, Modality
+from bt5.core.context import BiosecurityVerdict, HostId, Modality
 from bt5.core.result import ObjectiveScore
 from bt5.core.types import DNA_ALPHABET
 from bt5.design import DesignError, design
@@ -75,24 +76,32 @@ def _solve_space(backbone: VectorBackbone, protein: str) -> SolveSpace:
     )
 
 
-#: Every degradation `design()` is allowed to emit, as the leading text of the
-#: sentence. A NEW source of degradation that is not one of these fails
-#: `test_no_degradation_arrives_unremarked` -- which is the property the
-#: skeleton's set-equality test was protecting, kept while letting the CONTENT
-#: vary with the environment (ViennaRNA present or not, host tables shipped or
-#: not) instead of pinning a set that only holds on one machine.
+#: Every degradation `design()` is allowed to emit, as an anchored regex.
+#:
+#: Regexes rather than prefixes because two of these embed a count ("the
+#: 3-candidate panel...") and a prefix that covered them would have to be short
+#: enough to be a catch-all. An earlier version of this list used `"the "` --
+#: four characters matching any future sentence starting "the ...", inside the
+#: very test named for catching unremarked degradations.
+#:
+#: A NEW source of degradation that matches none of these fails
+#: `test_no_degradation_arrives_unremarked`. That is the property the skeleton's
+#: set-equality test protected, kept while letting the CONTENT vary with the
+#: environment (ViennaRNA present or not, host tables shipped or not) instead of
+#: pinning a set that only holds on one machine.
 KNOWN_DEGRADATIONS = (
-    "ViennaRNA",
-    "protein-level biosecurity screening:",
-    "the ",  # the G4 shortfall and short-panel sentences
-    "single candidate only:",
-    "no codon usage table on file",
-    "no native baseline:",
-    "the native CDS was supplied",
-    "objective ",
-    "rule ",
-    "forbidden motif ",
-    "screening burden unavailable:",
+    r"ViennaRNA .*",
+    r"protein-level biosecurity screening: \w+",
+    r"the sweep produced \d+ distinct designs? from \d+ weight vectors, below the \d+",
+    r"the \d+-candidate panel does not meet gate G4:",
+    r"single candidate only:",
+    r"no codon usage table on file",
+    r"no native baseline:",
+    r"the native CDS was supplied",
+    r"objective \S+ not ranked:",
+    r"rule \S+ not run:",
+    r"forbidden motif \S+ carried by the backbone",
+    r"screening burden unavailable:",
 )
 
 
@@ -324,11 +333,20 @@ class TestCompleteness:
         self, backbone: VectorBackbone, fast: Any
     ) -> None:
         """The skeleton hard-wired `is_complete` to False by always emitting
-        three degradations. It is now derived, so the equivalence is the property
-        worth pinning -- and it is what makes a True here mean something."""
+        three degradations. It is now DERIVED, so the property worth testing is
+        that filling an absence actually removes its degradation and moves the
+        report toward complete -- not that `is_complete` equals its own body,
+        which is a tautology that cannot fail.
+        """
         res = fast(backbone)
-        expected = not res.report.unavailable and not res.report.degradations
-        assert res.report.is_complete is expected
+        supplied = fast(backbone, screen=BiosecurityVerdict("clear", "test-db-1", ""))
+        removed = set(res.report.degradations) - set(supplied.report.degradations)
+        assert removed, "filling an absence removed no degradation"
+        assert len(supplied.report.degradations) < len(res.report.degradations)
+        # Still False, and for reasons that are real rather than hard-wired: no
+        # host codon-usage table ships for hek293, and no wild-type CDS was given.
+        assert supplied.report.is_complete is False
+        assert supplied.report.degradations
 
     def test_an_unscreened_run_can_never_be_complete(
         self, backbone: VectorBackbone, fast: Any
@@ -370,10 +388,40 @@ class TestCompleteness:
         as a closed set of RECOGNISED sentences instead."""
         res = fast(backbone)
         for degradation in res.result.provenance.degradations:
-            assert degradation.startswith(KNOWN_DEGRADATIONS), (
+            assert any(re.match(pattern, degradation) for pattern in KNOWN_DEGRADATIONS), (
                 f"unrecognised degradation: {degradation!r}. If this is a real new "
                 f"source, add it to KNOWN_DEGRADATIONS deliberately."
             )
+
+    def test_every_known_degradation_pattern_is_reachable(self) -> None:
+        """A pattern nothing can produce is a dead entry that quietly widens the
+        guard's allow-list. Each one must match the sentence the source actually
+        emits, so the sentences are reproduced here and matched."""
+        samples = {
+            r"ViennaRNA .*": "ViennaRNA is not installed, so folding objectives",
+            r"protein-level biosecurity screening: \w+": (
+                "protein-level biosecurity screening: not_run (did not run)"
+            ),
+            r"the sweep produced \d+ distinct designs? from \d+ weight vectors, below the \d+": (
+                "the sweep produced 1 distinct design from 3 weight vectors, below the 3 at"
+            ),
+            r"the \d+-candidate panel does not meet gate G4:": (
+                "the 3-candidate panel does not meet gate G4: its minimum pairwise"
+            ),
+            r"single candidate only:": "single candidate only: no weight vector",
+            r"no codon usage table on file": "no codon usage table on file for host hek293",
+            r"no native baseline:": "no native baseline: the caller supplied no wild-type",
+            r"the native CDS was supplied": "the native CDS was supplied but is not offered",
+            r"objective \S+ not ranked:": "objective c1_cai not ranked: no CAI reference set",
+            r"rule \S+ not run:": "rule b1_five_prime not run: its thresholds are",
+            r"forbidden motif \S+ carried by the backbone": (
+                "forbidden motif TCTAGA carried by the backbone, excluded"
+            ),
+            r"screening burden unavailable:": "screening burden unavailable: no published",
+        }
+        assert set(samples) == set(KNOWN_DEGRADATIONS), "a pattern has no sample sentence"
+        for pattern, sample in samples.items():
+            assert re.match(pattern, sample), f"{pattern!r} does not match {sample!r}"
 
 
 class TestOrderFile:
@@ -464,3 +512,213 @@ class TestSweepAxes:
         """The axis is dropped because it is DEAD here, not because it is
         unwanted. When S6 ships a host table it comes back on its own."""
         assert "codon_adaptation" in live_axes({"CTG": 1.0, "TTA": 0.1})
+
+
+class TestTheNullNeverFoldsWholeTranscripts:
+    """`FoldEngine.mfe` is report-time only, and the null must honour that.
+
+    Its own docstring says ~0.24 s at 1 kb and ~6.5 s at 3 kb, "so this must
+    never run inside the interactive loop or the empirical null" — a 200-variant
+    null calling it would be minutes, not milliseconds. `build_nulls` hard-codes
+    `windowed_fold_only=True` on every `NullDistribution`, and
+    `null_distribution` refuses a default for that flag precisely because "a
+    caller that has not thought about whether its scorer folds whole transcripts
+    has not earned a percentile". This is the test that makes the hard-coded
+    value a checked claim rather than an assertion about itself.
+    """
+
+    def test_no_scored_objective_calls_mfe(self, backbone: VectorBackbone, protein: str) -> None:
+        from bt5.design.catalog import scored_objectives
+        from bt5.design.runner import _context
+        from bt5.design.sites import choose_site
+        from bt5.solver.catalog import build_rule_set, default_services
+        from bt5.vector import assemble
+
+        class NoWholeTranscriptFold:
+            """The real engine with `mfe` removed.
+
+            Wraps rather than replaces, so `check_engine_calibration` still sees
+            the calibrated engine identity and no rule is dropped for the wrong
+            reason — the point is to catch a rule that folds, not to hide it.
+            """
+
+            def __init__(self, inner: object) -> None:
+                self._inner = inner
+                self.name = inner.name  # type: ignore[attr-defined]
+                self.version = inner.version  # type: ignore[attr-defined]
+                self.param_set = inner.param_set  # type: ignore[attr-defined]
+
+            def mfe(self, seq: str) -> object:
+                raise AssertionError(
+                    "a scored objective called FoldEngine.mfe, which is reserved for "
+                    "report time. Inside the null this is ~0.24 s per variant at 1 kb; "
+                    "at DEFAULT_NULL_N that is minutes. Either the rule must use "
+                    "mfe_window, or build_nulls must stop claiming windowed_fold_only."
+                )
+
+            def mfe_window(self, seq: str, iv: object) -> object:
+                return self._inner.mfe_window(seq, iv)  # type: ignore[attr-defined]
+
+            def accessibility(self, seq: str, iv: object, u: int) -> object:
+                return self._inner.accessibility(seq, iv, u)  # type: ignore[attr-defined]
+
+            def duplex(self, a: str, b: str) -> object:
+                return self._inner.duplex(a, b)  # type: ignore[attr-defined]
+
+        real = default_services(seed=0).fold
+        if real is None:
+            pytest.fail(
+                "ViennaRNA is not installed, so this test cannot prove anything. "
+                "/bootstrap installs the [fold] extra; a run without it is not a "
+                "run this claim may rest on."
+            )
+        services = default_services(seed=0, fold=NoWholeTranscriptFold(real))  # type: ignore[arg-type]
+        site = choose_site(backbone, table_id=1)
+        ctx = _context(
+            modality=Modality.LENTIVIRAL,
+            hosts=[HostId.HEK293],
+            table_id=1,
+            cassette_orientation=site.strand,
+        )
+        rules = build_rule_set(ctx, services)
+        objectives = scored_objectives(rules)
+        assert objectives, "no scored objective to check"
+
+        construct = assemble(
+            backbone,
+            design(
+                backbone=backbone,
+                protein=protein,
+                table_id=1,
+                modality=Modality.LENTIVIRAL,
+                hosts=[HostId.HEK293],
+                sweep_steps=1,
+                null_sizes={spec.id: 2 for spec in objectives},
+            )
+            .result.candidates[0]
+            .cds,
+            protein=protein,
+            table_id=1,
+            site=site,
+        ).construct
+
+        # The proxy raises if any of them folds a whole transcript.
+        for spec in objectives:
+            spec.evaluate(construct, ctx, services)
+
+
+class _StubSpace:
+    """The two attributes `_panel` and `sweep_designs` actually read.
+
+    A real `SolveSpace` would solve, repair and verify for every weight vector,
+    which is seconds per case and measures the solver rather than the branch
+    under test. What these tests are about is which SENTENCE comes back for
+    which shape of panel.
+    """
+
+    def __init__(self, sequences: list[str]) -> None:
+        self._sequences = sequences
+        self._calls = 0
+        self.usage: dict[str, float] = {}
+
+    def solve(self, weights: object) -> object:
+        from bt5.solver.pipeline import OptimizeResult
+        from bt5.solver.repair import RepairOutcome
+
+        if not self._sequences:
+            return None
+        cds = self._sequences[min(self._calls, len(self._sequences) - 1)]
+        self._calls += 1
+        return OptimizeResult(
+            cds=cds,
+            construct=None,  # type: ignore[arg-type]
+            repair_outcome=RepairOutcome(cds, 0, True, stop_reason="clean"),
+        )
+
+
+def _cds(*codons: str) -> str:
+    """A CDS of ten codons, differing from its siblings at the given positions."""
+    base = ["ATG"] + ["AAA"] * 9
+    for i, codon in enumerate(codons):
+        base[i + 1] = codon
+    return "".join(base)
+
+
+class TestPanelDegradations:
+    """Which sentence comes back for which shape of panel.
+
+    `Gallery.meets_g4` is False for two different reasons — too FEW candidates
+    (`len(picks) < MIN_GALLERY`) or candidates too CLOSE
+    (`min_pairwise_distance < 0.15`) — and `pairwise_minimum` returns 1.0 for a
+    single sequence. Reporting the distance sentence for the count failure emits
+    a literally false claim, in the one vocabulary this lane exists to keep
+    honest.
+    """
+
+    def test_a_short_panel_makes_no_distance_claim(self) -> None:
+        """The regression. Before the fix this said "its minimum pairwise codon
+        distance is 100.0%, below the 15%" — of a one-candidate panel."""
+        from bt5.design.runner import _panel
+
+        gallery, picks, _solved, degradation = _panel(
+            _StubSpace([_cds()]),  # type: ignore[arg-type]
+            steps=1,
+            k=5,
+        )
+        assert len(picks) == 1
+        assert gallery is not None
+        assert not gallery.meets_g4
+        assert degradation is not None
+        # The property is that no NUMBER is asserted as a distance. The sentence
+        # may say a distance is not reported; it may not report one.
+        assert "%" not in degradation
+        assert f"below the {MIN_GALLERY}" in degradation
+
+    def test_a_close_panel_reports_the_distance_it_reached(self) -> None:
+        from bt5.design.runner import _panel
+
+        # Three designs differing at one codon in ten -> 10% pairwise, under 15%.
+        _gallery, picks, _solved, degradation = _panel(
+            _StubSpace([_cds("GCA"), _cds("GCC"), _cds("GCG")]),  # type: ignore[arg-type]
+            steps=1,
+            k=5,
+        )
+        assert len(picks) == MIN_GALLERY
+        assert degradation is not None
+        assert "does not meet gate G4" in degradation
+        assert "10.0%" in degradation
+
+    def test_a_complete_short_panel_is_not_a_degradation(self) -> None:
+        """`k` is a CEILING. A sweep that exhausted the front at three genuinely
+        different designs has answered completely, and degrading it pinned
+        `is_complete` to False on every run — the skeleton's hard-wired False
+        wearing a different sentence."""
+        from bt5.design.runner import _panel
+
+        far = [
+            _cds("GCA", "GCA", "GCA", "GCA"),
+            _cds("TGC", "TGC", "TGC", "TGC"),
+            _cds("GAT", "GAT", "GAT", "GAT"),
+        ]
+        gallery, picks, _solved, degradation = _panel(
+            _StubSpace(far),  # type: ignore[arg-type]
+            steps=1,
+            k=5,
+        )
+        assert len(picks) == 3 < 5
+        assert gallery is not None
+        assert gallery.meets_g4
+        assert degradation is None, f"a complete panel must not degrade: {degradation!r}"
+
+    def test_the_shipped_lattice_can_reach_min_gallery(self) -> None:
+        """The arithmetic behind the fix: with `k` as a ceiling the defaults must
+        still be able to fill a real panel. `steps=1` gives one vector per axis,
+        so 3 without a host usage table and 4 with one — both at or above
+        `MIN_GALLERY`, and both below `DEFAULT_GALLERY_SIZE`, which is why `k`
+        had to become a ceiling rather than a promise."""
+        from bt5.score.gallery import simplex_weights
+
+        for axes in (live_axes({}), SWEEP_AXES):
+            vectors = len(simplex_weights(axes, DEFAULT_SWEEP_STEPS))
+            assert vectors >= MIN_GALLERY
+            assert vectors <= DEFAULT_GALLERY_SIZE
