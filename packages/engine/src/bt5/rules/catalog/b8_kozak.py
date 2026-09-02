@@ -103,6 +103,9 @@ EUKARYOTIC_HOSTS = frozenset(
     }
 )
 
+#: What `TableProvider` implementations raise when a table is absent.
+_MISSING_TABLE = (OSError, LookupError, NotImplementedError, ValueError)
+
 #: The three tiers of brief.md:68, as the raw score. HIGHER_IS_BETTER.
 WEAK, ADEQUATE, STRONG = 0.0, 1.0, 2.0
 
@@ -189,7 +192,10 @@ class KozakContext:
     #: brief.md:96 asks for this to be surfaced rather than silently broken: a
     #: strong Kozak ending ...CCATGG contains the NcoI site CCATGG, so raising +4
     #: to G is what creates it. D1 is HARD_LATTICE and wins when NcoI is selected.
-    conflicts_with: ClassVar[tuple[str, ...]] = ("d1_restriction_sites",)
+    #: b9 declares the reverse edge already; the interaction is bidirectional --
+    #: raising +4 to G strengthens the context of any downstream out-of-frame ATG,
+    #: and removing one can spoil a Kozak -- so both sides say so, as d1 does.
+    conflicts_with: ClassVar[tuple[str, ...]] = ("d1_restriction_sites", "b9_out_of_frame_atg")
     brief_ref: ClassVar[str] = "2.B8"
     #: A base-identity check, not a folding energy: no engine calibration applies.
     engine_calibration: ClassVar[str | None] = None
@@ -277,6 +283,29 @@ class KozakContext:
                 return self._unavailable(
                     c, "the Kozak context window could not be read from the construct"
                 )
+            # A Kozak tier is a statement about an initiation event, so there has
+            # to be an initiator. Without this the rule happily scores the context
+            # around any triplet -- its own reverse-strand fixture lands on TTA --
+            # and reports a confident "adequate" for a start that is not there.
+            # `is_start` from the INJECTED table, never a hard-coded "ATG": which
+            # triplets initiate is table-dependent (CLAUDE.md 3.1).
+            try:
+                code = svc.tables.genetic_code(slot.table_id)
+            except _MISSING_TABLE as exc:
+                return self._unavailable(
+                    c, f"NCBI table {slot.table_id} could not be loaded: {exc}"
+                )
+            initiator = context[UPSTREAM : UPSTREAM + 3]
+            if not code.is_start(initiator):
+                return self._unavailable(
+                    c,
+                    f"the designable CDS begins {initiator!r}, which is not a start "
+                    f"codon under NCBI table {slot.table_id}. A Kozak tier describes "
+                    f"how well a scanning ribosome initiates AT a start codon, so "
+                    f"scoring one here would describe an initiation event that "
+                    f"cannot happen",
+                    interval=window,
+                )
             scored.append((slot, window, context, self._tier(context)))
 
         # The WEAKEST slot binds. Averaging tiers across slots would let a strong
@@ -342,7 +371,7 @@ class KozakContext:
                 f"Kozak context {context[:UPSTREAM].lower()}{context[UPSTREAM:]} for "
                 f"the {slot.role} slot ({slot.host}) is {name}: {'; '.join(missing)}. "
                 f"The target is gccRccATGG with +5 = C (currently "
-                f"{'C' if self.c_at_plus_5(context) else context[UPSTREAM + 4]}). "
+                f"{context[UPSTREAM + 4]}). "
                 f"Noderer 2014 measured a 12-fold range across this context, -3 "
                 f"purine at +58% over -3U; this is a finding to weigh, "
                 f"never a target to maximize"
@@ -382,6 +411,14 @@ class KozakContext:
             if not c.is_circular:
                 return None
             start += c.length
+        elif start >= c.length:
+            # An origin-spanning CDS puts a minus-strand window start past the
+            # end, where `Construct.slice` yields a short string. The length
+            # check in `evaluate` catches it, but degrading to "unavailable" for
+            # a window that exists is still the wrong answer.
+            if not c.is_circular:
+                return None
+            start %= c.length
         if not c.is_circular and start + span > c.length:
             return None
         return Interval(start, start + span, cds.strand)

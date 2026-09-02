@@ -257,7 +257,62 @@ class TestTheTwoWindowsAreNotAveraged:
 # -- aggregation and availability ---------------------------------------------
 
 
-class TestAggregation:
+class TestStrand:
+    """B2 is directional and had ZERO minus-strand coverage, which is why the
+    origin-spanning window bug shipped. `slot(strand_of_interest=...)` and
+    `context(orientation=...)` existed here and were never passed anything but 1.
+    """
+
+    def _wrapping(self) -> Construct:
+        """A CDS that runs off the end and resumes at 0, so `cds.end > c.length`.
+
+        This is the shape that broke: on the minus strand `start = cds.end - 30`
+        then exceeds the sequence, `Construct.slice` yields "" for `seq[start:]`,
+        and the window comes back a different length folded on different bases --
+        with a plausible dG and passes=True.
+        """
+        seq = "GC" * 100
+        return Construct(
+            sequence=seq,
+            topology=Topology.CIRCULAR,
+            segments=(Segment(Interval(100, 300), SegmentKind.DESIGNABLE_CDS, "cds"),),
+            features=(Feature(Interval(0, 200), "5'UTR"),),
+        )
+
+    def test_an_origin_spanning_minus_strand_window_is_the_right_length(self) -> None:
+        fold = StubFold()
+        ev = evaluate(self._wrapping(), context(slot(), orientation=-1), services(fold))
+        assert not is_unavailable(ev)
+        assert [f.length for f in fold.folded] == [60, 60]
+        assert [len(self._wrapping().slice(f)) for f in fold.folded] == [60, 60]
+
+    def test_it_folds_the_windows_the_minus_strand_transcript_actually_has(self) -> None:
+        """Not just the right length -- the right bases. The 5' end of a
+        minus-strand transcript is at HIGH coordinates, so STR(-30:+30) sits
+        below the CDS end and STR(+31:+90) below that again."""
+        fold = StubFold()
+        evaluate(self._wrapping(), context(slot(), orientation=-1), services(fold))
+        assert fold.folded[0] == Interval(70, 130, -1)
+        assert fold.folded[1] == Interval(10, 70, -1)
+
+    def test_the_two_strands_do_not_fold_the_same_window(self) -> None:
+        forward, reverse = StubFold(), StubFold()
+        evaluate(folded_construct(), context(slot()), services(forward))
+        evaluate(folded_construct(), context(slot(), orientation=-1), services(reverse))
+        assert forward.folded[0] != reverse.folded[0]
+
+    def test_two_negatives_compose_to_a_forward_read(self) -> None:
+        both, plain = StubFold(), StubFold()
+        evaluate(
+            folded_construct(),
+            context(slot(strand_of_interest=-1), orientation=-1),
+            services(both),
+        )
+        evaluate(folded_construct(), context(slot()), services(plain))
+        assert both.folded[0] == plain.folded[0]
+
+
+class TestAggregationSlots:
     def test_a_second_slot_does_not_dilute_the_score(self) -> None:
         """`min` over gated slots, not a mean: the most structured 5' end is the
         finding. Both slots read the same window here, so this pins the shape --

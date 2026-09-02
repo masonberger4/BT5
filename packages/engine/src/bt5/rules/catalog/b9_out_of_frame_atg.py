@@ -43,6 +43,13 @@ breach ships `fixable_by_codon_choice=False` and goes to the advisor rather than
 driving the search into an infeasibility it cannot resolve (docs/PLAN.md:372).
 Whether Met is forced is read from the INJECTED table, never hard-coded: NCBI
 tables differ on which codons a residue has (CLAUDE.md 3.1).
+
+**Scope boundary: an upstream IN-FRAME AUG is not reported.** brief.md:69's third
+clause asks only about an upstream OUT-OF-FRAME AUG. An in-frame one makes an
+N-terminally EXTENDED product rather than a truncated or frameshifted one -- a
+real design concern, and a different one the brief does not put on this row. It
+is skipped deliberately rather than folded in under a message that would describe
+it wrongly.
 """
 
 from __future__ import annotations
@@ -214,6 +221,7 @@ class OutOfFrameAtg:
             return self._unavailable(c, "no designable CDS to scan for additional ATGs")
 
         breaches: list[Breach] = []
+        seen: set[tuple[int, int, int]] = set()
         scanned = 0
         junction_checked = False
         for slot in slots:
@@ -226,7 +234,10 @@ class OutOfFrameAtg:
                     c, f"NCBI table {slot.table_id} could not be loaded: {exc}"
                 )
             lead = self._leader(c, cds, strand)
-            junction_checked = junction_checked or lead > 0
+            # Per slot, NOT a running OR across slots: a plus-strand slot with an
+            # annotated leader must not make a minus-strand slot (whose leader is
+            # the unannotated trailer) report that its junction was scanned.
+            junction_checked = lead > 0
             span = self._span(c, cds, strand, lead)
             if span is None:
                 return self._unavailable(
@@ -234,7 +245,18 @@ class OutOfFrameAtg:
                 )
             transcript = c.slice(span)
             scanned = max(scanned, len(transcript))
-            breaches.extend(self._scan(c, transcript, lead, span, slot, code, junction_checked))
+            for breach in self._scan(c, transcript, lead, span, slot, code, junction_checked):
+                # One ATG is one finding, however many slots read it. Two
+                # eukaryotic translating slots (producer HEK293 + target CHO) are
+                # a routine lentiviral job and resolve to the same strand and the
+                # same sequence, so unioning would put the same interval in the
+                # conflict panel twice and double a raw_score whose declared unit
+                # is a COUNT. B8 takes `min` over slots and C3 picks one binding
+                # slot; this is the same choice, made by interval.
+                key = (breach.interval.start, breach.interval.end, breach.interval.strand)
+                if key not in seen:
+                    seen.add(key)
+                    breaches.append(breach)
 
         return Evaluation(
             spec_id=self.id,
@@ -272,7 +294,11 @@ class OutOfFrameAtg:
             offset = index - lead
             if offset == 0:
                 continue  # the start codon itself
-            in_frame = offset >= 0 and offset % 3 == 0
+            # `offset % 3` is already the right frame class for negatives in
+            # Python (-1 % 3 == 2), so the old `offset >= 0` guard did not dodge
+            # a hazard -- it mislabelled every upstream in-frame AUG as
+            # out-of-frame while `detail["frame"]` said 0.
+            in_frame = offset % 3 == 0
             near_start = 0 <= offset < self.scan_nt
             strong = self._strong_context(transcript, index)
             if near_start:
@@ -440,7 +466,10 @@ class OutOfFrameAtg:
             start = (span.start + index) % construct_length
         else:
             start = (span.end - index - 3) % construct_length
-        return Interval(start, start + 3)
+        # Carrying `span.strand`: a minus-strand hit reported on a plus-strand
+        # interval points at bases that read CAT, and `Interval.contains` tells
+        # callers to compare `.strand` themselves.
+        return Interval(start, start + 3, span.strand)
 
     def _unavailable(self, c: Construct, reason: str) -> Evaluation:
         """NaN plus a breach carrying the reason -- B1's pattern, B1's argument.

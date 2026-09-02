@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bt5.codon.tables import FileTableProvider
 from bt5.core.context import (
     BiosecurityVerdict,
     ContextSlot,
@@ -53,6 +54,10 @@ HEK_TABLE = 1
 #: GCCRCCATGG target with the +5 = C instruction applied.
 STRONG_LEADER = "GCCACC"
 STRONG_CDS = "ATGGCTGAAGGTATCAAATAA"
+
+#: Ends in CAT, so the MINUS-strand transcript begins ATG. 18 nt, placed at
+#: [6, 24) by `kozak_construct` with the default 6 nt leader.
+REVERSE_START_CDS = "ATGGCTGAAGGTATCCAT"
 
 
 # -- local helpers ------------------------------------------------------------
@@ -98,10 +103,12 @@ def kozak_construct(
 
 
 def services() -> Services:
+    # A real provider: B8 asks the INJECTED table whether +1..+3 initiates, so a
+    # None here would only ever exercise the error path.
     return Services(
         fold=None,
         kmer=ConstructKmerIndex,
-        tables=None,  # type: ignore[arg-type]
+        tables=FileTableProvider(),  # type: ignore[arg-type]
         rng=np.random.default_rng(42),
     )
 
@@ -358,17 +365,48 @@ class TestStrand:
         assert is_unavailable(ev)
         assert "no annotated 5'UTR" in ev.breaches[0].message
 
-    def test_annotating_the_high_end_makes_the_reverse_strand_readable(self) -> None:
-        """The proof the rule reads the tail, not that it merely fails somewhere.
+    def test_the_reverse_strand_reads_a_real_start_codon_on_its_own_strand(self) -> None:
+        """The proof the rule reads the TAIL, with a falsifiable value.
 
-        The CDS is [6, 27) and the window is [22, 33), so a minus-strand leader is
-        [27, 33) -- inside the trailer, exactly where a minus-strand transcript's
-        5' end sits.
+        This used to assert only `raw_score in (WEAK, ADEQUATE, STRONG)`, which
+        `_tier` cannot violate -- it proved the call did not fail, not that the
+        right bases were read. Worse, its construct put the minus-strand "start"
+        on TTA, so it was asserting a Kozak tier for a start codon that is not
+        one; the rule now refuses that outright.
+
+        Here the CDS ENDS in CAT, so the minus-strand transcript begins ATG. The
+        CDS is [6, 24), the window is [19, 30) and the minus-strand leader is
+        [24, 30) -- inside the trailer, which is where a minus-strand
+        transcript's 5' end sits. The context reads AAAAAAATGGA: -3 is A (purine)
+        and +4 is G, so STRONG, and nothing but reading the correct tail in the
+        correct direction produces it.
         """
-        c = self._flanked(extra_utr=Interval(27, 33))
+        c = kozak_construct(
+            cds=REVERSE_START_CDS,
+            trailer="T" * 10,
+            circular=False,
+            extra_utr=Interval(24, 30),
+        )
         ev = evaluate(c, context(slot(), orientation=-1))
         assert not is_unavailable(ev)
-        assert ev.raw_score in (WEAK, ADEQUATE, STRONG)
+        assert ev.raw_score == STRONG
+        assert ev.breaches == ()
+
+    def test_a_window_whose_start_is_not_a_start_codon_is_unavailable(self) -> None:
+        """A Kozak tier is a claim about initiation, so there must be an initiator.
+
+        Without this the rule scores the context around any triplet -- the old
+        reverse-strand fixture landed on TTA -- and reports a confident tier for
+        a start that is not there.
+        """
+        # Leader annotated at the HIGH end, so the annotation path is satisfied
+        # and only the initiator is wrong: the default CDS ends TAA, whose
+        # minus-strand read is TTA. This is the exact fixture the old
+        # tautological test scored as "adequate".
+        c = kozak_construct(trailer="T" * 10, circular=False, extra_utr=Interval(27, 33))
+        ev = evaluate(c, context(slot(), orientation=-1))
+        assert is_unavailable(ev)
+        assert "not a start codon" in ev.breaches[0].message
 
     def test_the_cassette_orientation_composes_with_the_slot(self) -> None:
         """`strand_for` multiplies the two; two negatives are a forward read."""

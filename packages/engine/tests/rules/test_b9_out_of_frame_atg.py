@@ -67,6 +67,12 @@ FAR_STRONG = "ATG" + FILLER * 16 + "GAT" + "AAT" + "GGT" + "TAA"
 #: The same offset 55, but s[52] == "C" and s[58] == "C": weak context.
 FAR_WEAK = "ATG" + FILLER * 17 + "AAT" + FILLER + "TAA"
 
+#: Findings on BOTH strands: plus-strand out-of-frame ATGs at offsets 4 and 16
+#: (from AAT|GCT and CAT|GCT), and on the minus strand an additional ATG at
+#: offset 48. Needed because the per-slot junction flag can only be observed
+#: when two slots of opposite strand both report.
+BOTH_STRANDS = "ATG" + "AAT" + FILLER * 3 + "CAT" + FILLER * 15 + "TAA"
+
 
 # -- local helpers ------------------------------------------------------------
 # Defined here, not in conftest: that file is shared with the other rules session
@@ -266,8 +272,11 @@ class TestStrongContextBeyondTheWindow:
 
 
 class TestTheJunctionClause:
-    #: A leader whose last three bases are ATG, ending exactly at the junction.
-    LEADER = "GCCATG"
+    #: An upstream ATG at transcript index 2, i.e. CDS offset -4, which is OUT
+    #: of frame (-4 % 3 == 2). The obvious "GCCATG" puts it at offset -3, which
+    #: is IN frame with the CDS and therefore an N-terminal EXTENSION -- a real
+    #: concern, but not the one brief.md:69's third clause is about.
+    LEADER = "GCATGC"
 
     def test_an_upstream_atg_is_seen_when_the_leader_is_annotated(self) -> None:
         """brief.md:69's third clause. Rules take a Construct precisely so a
@@ -276,7 +285,7 @@ class TestTheJunctionClause:
         ev = evaluate(c, rule=OutOfFrameAtg(strong_context_only=False))
         upstream = [b for b in ev.breaches if b.detail["upstream_of_cds"] == "True"]
         assert len(upstream) == 1
-        assert upstream[0].detail["cds_offset"] == -3.0
+        assert upstream[0].detail["cds_offset"] == -4.0
 
     def test_the_cds_start_codon_is_still_not_a_finding(self) -> None:
         c = atg_construct(CLEAN, leader=self.LEADER)
@@ -301,6 +310,39 @@ class TestTheJunctionClause:
         ev = evaluate(c)
         assert not ev.passes
         assert not is_unavailable(ev)
+
+    def test_an_upstream_in_frame_atg_is_out_of_scope(self) -> None:
+        """brief.md:69's third clause says out-of-frame; in-frame is an N-terminal
+        EXTENSION, not a truncation, so reporting it under that message would
+        describe it wrongly. Regression for the `offset >= 0` frame bug, which
+        labelled every upstream AUG out-of-frame while detail["frame"] said 0."""
+        c = atg_construct(CLEAN, leader="GCCATG")  # ATG at offset -3, in frame
+        ev = evaluate(c, rule=OutOfFrameAtg(strong_context_only=False))
+        assert all(b.detail["upstream_of_cds"] == "False" for b in ev.breaches)
+
+    def test_the_junction_flag_does_not_leak_between_slots(self) -> None:
+        """Per-slot, not a running OR across the loop.
+
+        The plus-strand slot has an annotated leader and the minus-strand slot's
+        leader is the unannotated far end, so under the old running OR the
+        minus-strand findings claimed their junction had been scanned when it had
+        not. BOTH_STRANDS carries out-of-frame ATGs at plus offsets 4 and 16 and
+        an additional ATG at minus offset 48, so both slots genuinely report and
+        the two sets survive deduplication with distinct intervals.
+        """
+        c = atg_construct(BOTH_STRANDS, leader=self.LEADER, circular=False)
+        ev = evaluate(
+            c,
+            context(
+                slot(role="producer", strand_of_interest=1),
+                slot(role="target", strand_of_interest=-1),
+            ),
+        )
+        by_flag = {b.detail["junction_checked"] for b in ev.breaches}
+        assert by_flag == {"True", "False"}
+        for b in ev.breaches:
+            scanned = b.detail["junction_checked"] == "True"
+            assert ("junction was not scanned" in b.message) is not scanned
 
     def test_the_leader_width_matches_b8s_context(self) -> None:
         assert JUNCTION_UPSTREAM == 6
@@ -350,6 +392,22 @@ class TestStrand:
         assert reverse.raw_score == 0.0
         assert reverse.passes
 
+    def test_a_minus_strand_finding_carries_the_minus_strand(self) -> None:
+        """An interval defaulting to strand 1 points at bases that read CAT.
+
+        `Interval.contains`/`overlaps` ignore strand and tell callers to compare
+        `.strand` themselves, so a caller that does got the wrong answer.
+        """
+        # Plus strand CAT at an offset whose reverse-strand read is an ATG.
+        cds = "ATG" + "GCT" * 6 + "CAT" + "GCT" * 12 + "TAA"
+        ev = evaluate(
+            atg_construct(cds),
+            context(slot(), orientation=-1),
+            rule=OutOfFrameAtg(strong_context_only=False),
+        )
+        if ev.breaches:
+            assert all(b.interval.strand == -1 for b in ev.breaches)
+
     def test_two_negatives_compose_to_a_forward_read(self) -> None:
         both = context(slot(strand_of_interest=-1), orientation=-1)
         forward = evaluate(atg_construct(NEAR_OUT_OF_FRAME), context(slot()))
@@ -357,6 +415,24 @@ class TestStrand:
 
 
 # -- metadata -----------------------------------------------------------------
+
+
+class TestMultiSlot:
+    def test_one_atg_is_one_finding_however_many_slots_read_it(self) -> None:
+        """producer HEK293 + target CHO is a routine lentiviral job; both resolve
+        to the same strand and scan identical sequence. Unioning would put the
+        same interval in the conflict panel twice and double a raw_score whose
+        declared unit is a COUNT."""
+        one = evaluate(atg_construct(NEAR_OUT_OF_FRAME), context(slot(role="producer")))
+        two = evaluate(
+            atg_construct(NEAR_OUT_OF_FRAME),
+            context(
+                slot(role="producer", host=HostId.HEK293),
+                slot(role="target", host=HostId.CHO, table=HEK_TABLE),
+            ),
+        )
+        assert one.raw_score == two.raw_score == 1.0
+        assert len({(b.interval.start, b.interval.end) for b in two.breaches}) == 1
 
 
 class TestSpecMetadata:

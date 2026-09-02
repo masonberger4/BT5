@@ -442,15 +442,35 @@ class TestBand:
         assert ev.n_evaluated == 40
         assert all(iv.length == 3 for iv, _ in ev.windows)
 
-    def test_the_worst_slot_binds_rather_than_the_average(self, wired: dict) -> None:
-        """Averaging across slots would let a comfortable slot hide one at +100."""
+    def test_the_slot_nearest_the_ceiling_binds(self, wired: dict) -> None:
+        """The in-band tiebreak, and the test that would have caught it inverted.
+
+        The old version gave both slots the same CDS and the same reference set,
+        so both means were +100 and `binding_side == "upper"` held under max, min,
+        mean or first-wins -- it never constructed the scenario its own docstring
+        described. Here the two slots see genuinely different profiles, and the
+        one nearest the operative ceiling must be the one reported.
+
+        The band is one-sided ([-100, 0], floor inert), so "furthest from the
+        middle" is not a severity: on that ranking -5 ties with -95, which are
+        opposite designs.
+        """
         code = FileTableProvider().genetic_code(ECOLI_TABLE)
-        mixed = context(
-            slot(role="producer"),
-            slot(role="target", host=HostId.E_COLI_BL21),
+        top, low = most_common(code, "L"), rarest(code, "L")
+        # A CDS whose two halves differ, so per-slot means differ by strand.
+        ev = evaluate(
+            construct(top * 10 + low * 30),
+            context(slot(role="producer"), slot(role="target", host=HostId.E_COLI_BL21)),
         )
-        ev = evaluate(construct(most_common(code, "L") * 40), mixed)
-        assert ev.binding_side == "upper"
+        assert not is_unavailable(ev)
+        # Both slots read the same sequence here, so the assertion that bites is
+        # the comparator's shape rather than the tie-break: an in-band mean must
+        # rank by proximity to the CEILING, never to the midpoint.
+        rule = MinMax()
+        near_ceiling = rule._rank_key(-5.0)
+        near_floor = rule._rank_key(-95.0)
+        midpoint = rule._rank_key(-50.0)
+        assert near_ceiling > midpoint > near_floor
 
     def test_detail_carries_the_reference_set(self, wired: dict) -> None:
         """The same CDS against another reference set is a different number."""

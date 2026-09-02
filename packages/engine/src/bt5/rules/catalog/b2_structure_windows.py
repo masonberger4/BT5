@@ -305,6 +305,11 @@ class StructureWindows:
         start = (
             cds.start + DISTAL_START if cds.strand == 1 else cds.end - DISTAL_START - DISTAL_LENGTH
         )
+        # Same origin-spanning hazard as `_window`; same reason it is invisible.
+        if start >= c.length or start < 0:
+            if not c.is_circular:
+                return None
+            start %= c.length
         return Interval(start, start + DISTAL_LENGTH, cds.strand)
 
     def _window(
@@ -323,6 +328,16 @@ class StructureWindows:
             if not c.is_circular:
                 return None
             start += c.length
+        elif start >= c.length:
+            # A CDS spanning the origin has `cds.end > c.length`, so on the minus
+            # strand the window can START past the end. `Construct.slice` handles
+            # an end beyond the sequence but not a start beyond it -- `seq[start:]`
+            # is silently "" and the window returns a DIFFERENT LENGTH, folded on
+            # different bases, with a plausible dG and passes=True. Normalising is
+            # what keeps that from being a wrong answer nobody can see.
+            if not c.is_circular:
+                return None
+            start %= c.length
         if not c.is_circular and start + span > c.length:
             return None
         return Interval(start, start + span, cds.strand)

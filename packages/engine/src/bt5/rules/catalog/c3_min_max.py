@@ -475,16 +475,20 @@ class MinMax:
             mean = sum(profile) / len(profile)
             per_slot.append((slot, reference_set, mean, profile, informative))
 
-        # The slot furthest OUTSIDE the band binds, and among in-band slots the one
-        # furthest from the band's middle. Averaging across slots would let a
-        # comfortable slot hide one at +80, and +80 is the finding that matters.
-        # The -1.0 offset keeps every in-band slot strictly below every breaching
-        # one, so a breach always outranks an in-band slot however central it is.
-        mid = (self.min_max_min + self.min_max_max) / 2
+        # The slot furthest OUTSIDE the band binds; among in-band slots, the one
+        # CLOSEST TO THE CEILING. Averaging across slots would let a comfortable
+        # slot hide one at -5, and -5 is the finding that matters.
+        #
+        # Not "furthest from the middle", which this comment used to claim and the
+        # expression used to contradict: the band is one-sided by construction
+        # (the floor at -100 can never bind), so its midpoint is not a target and
+        # distance from it is not a severity. On a band of [-100, 0] that ranking
+        # also ties -5 with -95, which are opposite designs. The -1.0 offset keeps
+        # every in-band slot strictly below every breaching one, so a breach always
+        # outranks an in-band slot however close to the ceiling it sits.
 
         def rank(row: tuple[ContextSlot, str, float, list[float], int]) -> float:
-            dev = self._deviation(row[2])
-            return dev if dev > 0.0 else -abs(row[2] - mid) - 1.0
+            return self._rank_key(row[2])
 
         bound, reference_set, mean, profile, informative = max(per_slot, key=rank)
 
@@ -556,6 +560,18 @@ class MinMax:
         )
 
     # -- internals ----------------------------------------------------------
+
+    def _rank_key(self, mean: float) -> float:
+        """How strongly this slot's mean binds. Higher binds harder.
+
+        Out of band: the distance outside it. In band: proximity to the CEILING,
+        offset by -1.0 so every in-band slot ranks strictly below every breaching
+        one. Not proximity to the band's MIDDLE -- the band is one-sided by
+        construction, so its midpoint is not a target and distance from it would
+        tie -5 with -95.
+        """
+        dev = self._deviation(mean)
+        return dev if dev > 0.0 else mean - self.min_max_max - 1.0
 
     def _side(self, mean: float) -> str | None:
         if mean < self.min_max_min:
