@@ -484,9 +484,10 @@ class CodonAdaptationIndex:
         # `_band_for` composes the effective pair; None here means "this side is
         # the host's", and an instance built with no arguments must not report
         # `cai_min == 0.70` for a HEK293 job -- that is the exact confusion the
-        # sentinel was introduced to remove.
-        self._lo_override = cai_min is not None
-        self._hi_override = cai_max is not None
+        # sentinel was introduced to remove. There are deliberately no
+        # `_lo_override`/`_hi_override` flags beside these: a second encoding of
+        # the same fact is a second thing to keep in step, and `is None` already
+        # says it at every read.
         self.cai_min: float | None = cai_min
         self.cai_max: float | None = cai_max
 
@@ -546,8 +547,9 @@ class CodonAdaptationIndex:
         # is a contradictory parameter whichever slot is examined first.
         bands = [self._band_for(s.host) for s in slots]
 
-        # Each slot carries its OWN band: the hosts do not share one.
-        per_slot: list[tuple[ContextSlot, str, float, int, tuple[float, float]]] = []
+        # Each slot carries its OWN band and its OWN chance baseline: the hosts
+        # share neither.
+        per_slot: list[tuple[ContextSlot, str, float, int, tuple[float, float], float]] = []
         for slot, band in zip(slots, bands, strict=True):
             reference_set = CAI_REFERENCE_SET.get(slot.host)
             if reference_set is None:
@@ -608,6 +610,12 @@ class CodonAdaptationIndex:
                     math.exp(sum(logs) / len(logs)),
                     len(logs),
                     band,
+                    # The tiebreak coordinate, and only computed when there IS a
+                    # tiebreak. `chance_cai` walks the table once, which is cheap
+                    # beside the CAI itself, but `evaluate` runs per candidate in
+                    # the repair loop (solver/catalog.py:192) and the single-slot
+                    # case -- every shipped preset today -- must not pay for it.
+                    chance_cai(w, code) if len(slots) > 1 else float("nan"),
                 )
             )
 
@@ -621,41 +629,73 @@ class CodonAdaptationIndex:
         # [0, 1]), so a breach always outranks an in-band slot whichever band it
         # breached.
         #
-        # Distance to the nearest BINDING EDGE, as a fraction of the band's width,
-        # and that normalization is load-bearing rather than cosmetic. Two earlier
-        # spellings both fail:
+        # Distance to the nearest BINDING EDGE, measured in CHANCE-TO-1.0 HEADROOM
+        # -- (x - chance) / (1 - chance) -- which is the one scale on which the
+        # hosts' bands are commensurable. Three earlier spellings all fail, and the
+        # third failed in a way worth recording because it looked like a fix:
         #
         # - Distance to the band's MIDDLE. With an inert 0.0 floor the middle is
         #   0.477, below where any real mammalian CDS ever sits, so every mammalian
         #   slot ranks as maximally uninteresting and the report always goes to the
         #   E. coli slot -- discarding the CAI the job is actually about.
-        # - RAW distance to an edge. E. coli's band is 0.20 wide, so an in-band
-        #   E. coli slot is always within 0.10 of an edge, while a mammalian band is
-        #   ~0.955 wide. A HEK293 CDS 0.028 below its max-CAI ceiling still loses to
-        #   an E. coli slot merely near its floor -- the same pathology, narrower.
+        # - RAW distance to an edge. E. coli's band is 0.20 wide against the
+        #   mammalian ~0.955, so an in-band E. coli slot is always within 0.10 of an
+        #   edge. A HEK293 CDS 0.028 below its max-CAI ceiling still lost. Same
+        #   pathology, narrower.
+        # - Distance as a fraction of BAND WIDTH. This mirrors the bug rather than
+        #   fixing it, and structurally: an in-band E. coli slot scores at most 0.5
+        #   (its exact midpoint), while a mammalian slot scores (hi-cai)/hi < 0.5 for
+        #   any cai > hi/2 = 0.477 -- below chance, 0.656 -- so the mammalian slot
+        #   wins UNCONDITIONALLY against every in-band E. coli slot. Measured: a
+        #   HEK293 slot 0.0237 below a ceiling it will not breach took the report
+        #   from an E. coli slot 0.0051 from a live floor breach. The deeper defect
+        #   is that band width is not a measurement here -- HEK293's 0.9548 is that
+        #   wide only because the inert floor is WRITTEN as 0.0, and writing the same
+        #   inert floor as chance (0.656) flips the answer back. A comparator whose
+        #   output turns on the encoding of a value declared inert is measuring
+        #   bookkeeping, not the design.
         #
-        # An INERT edge is excluded outright: `lo <= 0.0` can never bind (CAI is a
-        # geometric mean of positive weights, so it is strictly positive), and
+        # Headroom is not an arbitrary third choice: it is the scale `CAI_BAND` was
+        # BUILT on. Every host's ceiling sits at coordinate CEILING_FRACTION_OF_HEADROOM
+        # = 0.8687 by construction, so a ceiling-to-ceiling comparison is exact rather
+        # than approximate, and E. coli's floor sits at a real 0.6062 rather than
+        # being scaled against a floor that cannot fire. This makes the tiebreak
+        # consistent with the band construction instead of orthogonal to it.
+        #
+        # An INERT edge is still excluded outright: `lo <= 0.0` can never bind (CAI is
+        # a geometric mean of positive weights, so it is strictly positive), and
         # "0.2 above a floor that cannot fire" is not a distance to anything.
         #
         # Deviations ARE compared across hosts here, and they are in raw CAI units,
-        # unnormalized. Human's chance-to-1.0 headroom is 0.344 against E. coli's
-        # 0.762, so a full max-CAI collapse yields |1 - hi| = 0.045 on HEK293 against
-        # 0.100 on E. coli -- a factor of 2.2, which is exactly that headroom ratio.
-        # A headroom-normalized magnitude would be more comparable within C1, but
-        # `Breach.magnitude` is unnormalized repo-wide and one rule normalizing
-        # unilaterally would misrank against the others in `score/conflicts.py`.
-        # Recorded so the ordering is not read as calibrated.
+        # unnormalized -- unlike the tiebreak below. Human's chance-to-1.0 headroom is
+        # 0.344 against E. coli's 0.762, so a full max-CAI collapse yields |1 - hi| =
+        # 0.045 on HEK293 against 0.100 on E. coli, a factor of 2.2 which is exactly
+        # that headroom ratio. A headroom-normalized magnitude would be more
+        # comparable within C1, but `Breach.magnitude` is unnormalized repo-wide and
+        # one rule normalizing unilaterally would misrank against the others in
+        # `score/conflicts.py`. Recorded so the ordering is not read as calibrated.
 
-        def rank(row: tuple[ContextSlot, str, float, int, tuple[float, float]]) -> float:
+        def rank(row: tuple[ContextSlot, str, float, int, tuple[float, float], float]) -> float:
             lo, hi = row[4]
-            dev = self._deviation(row[2], row[4])
+            cai, chance = row[2], row[5]
+            dev = self._deviation(cai, row[4])
             if dev > 0.0:
                 return dev
-            edges = [hi - row[2]] if lo <= 0.0 else [row[2] - lo, hi - row[2]]
-            return -min(edges) / (hi - lo) - 1.0
+            edges = [hi - cai] if lo <= 0.0 else [cai - lo, hi - cai]
+            # A degenerate table (every w equal, so chance is 1.0) leaves no headroom
+            # to divide by, and a single-slot evaluation never computed one. Fall back
+            # to the raw distance rather than dividing by zero: with one slot the
+            # comparison has nothing to be commensurable WITH.
+            span = 1.0 - chance
+            nearest = min(edges) / span if span > 0.0 else min(edges)
+            # Any in-band rank is <= -1.0 and every breach is > 0, so a breach
+            # outranks an in-band slot whichever band it breached. The distance is
+            # unbounded above (a mammalian CDS far below its ceiling ranks very low,
+            # which is correct -- it is the least interesting slot), and that is fine:
+            # separation needs the SIGN, not a bound.
+            return -nearest - 1.0
 
-        bound, reference_set, cai, n, band = max(per_slot, key=rank)
+        bound, reference_set, cai, n, band, _chance = max(per_slot, key=rank)
         cai_min, cai_max = band
 
         side = self._side(cai, band)

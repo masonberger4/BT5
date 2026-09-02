@@ -646,31 +646,76 @@ class TestBandCalibration:
         assert rule._band_for(HostId.HEK293) == (0.50, CAI_BAND[HostId.HEK293][1])
         assert rule._band_for(HostId.E_COLI_K12) == (0.50, BAND_HI)
 
-    def test_the_report_goes_to_the_slot_nearest_a_binding_edge_of_its_own_band(
-        self,
-    ) -> None:
-        """The multi-slot tiebreak, which is the one place the per-host band changes
-        WHICH number gets reported rather than whether it breaches.
+    def _decoupled(self, human_cai: float, ecoli_cai: float, total: int = 3000) -> str:
+        """One CDS landing EACH host on a CAI I choose, independently of the other.
 
-        A lentiviral job makes its protein in HEK293 and carries an E. coli slot too.
-        Ranking in-band slots by distance to the band's MIDDLE handed the report to
-        E. coli always -- the middle of (0.0, 0.9548) is 0.477, below where any real
-        mammalian CDS sits. Ranking by RAW distance to an edge only narrowed it:
-        E. coli's band is 0.20 wide against ~0.955, so an E. coli slot is always
-        within 0.10 of an edge and still won at b=30 below. Normalizing by band width
-        is what makes the comparison mean the same thing on both bands.
+        `_cds_near` cannot do this: it scores a single sequence against both
+        tables, so the two CAIs move together and the E. coli slot can never be
+        parked near an edge while the HEK293 slot sits somewhere else. That is
+        why the first version of this test could not express the case that broke
+        it. The trick is a pair of codons extreme in one table and NEUTRAL in the
+        other, so each host's count solves independently -- ln w = 0 contributes
+        nothing to the other host's geometric mean.
         """
-        both = context(
-            slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1),
-            slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11),
+        provider = FileTableProvider()
+        hw, ew = (
+            provider.weights("human_highly_expressed_refseq_w", "cai"),
+            provider.weights("sharp_li_1987_ecoli_w", "cai"),
         )
-        for target in (0.93, 0.9266):
-            cds, cai = self._cds_near(target, "human_highly_expressed_refseq_w")
-            c = construct(cds)
-            assert evaluate(c, both).passes, "both slots must be in band for a tiebreak"
-            assert evaluate(c, both).raw_score == pytest.approx(cai, abs=1e-6), (
-                "the HEK293 producer holds the CAI this job is about"
-            )
+        # Read from the tables, and asserted rather than assumed: if a regenerated
+        # table moves any of these the construction stops being orthogonal and the
+        # test must be rebuilt, not silently believed.
+        assert hw["CCC"] == 1.0, "CCC must be neutral for human"
+        assert ew["CGT"] == 1.0, "CGT must be neutral for E. coli"
+        assert hw["CTG"] == 1.0, "the filler must be neutral for human"
+        assert ew["CTG"] == 1.0, "the filler must be neutral for E. coli"
+        n_cgt = round(total * math.log(human_cai) / math.log(hw["CGT"]))
+        n_ccc = round(total * math.log(ecoli_cai) / math.log(ew["CCC"]))
+        assert 0 <= n_cgt + n_ccc <= total, "targets are outside the reachable range"
+        body = "CGT" * n_cgt + "CCC" * n_ccc + "CTG" * (total - n_cgt - n_ccc)
+        return "ATG" + body + "TAA"
+
+    @pytest.mark.parametrize(
+        ("human_cai", "ecoli_cai", "winner", "why"),
+        [
+            (0.9268, 0.7051, "ecoli", "E. coli 0.0051 from a live FLOOR breach"),
+            (0.9311, 0.7051, "ecoli", "the width-normalized crossover, now correct"),
+            (0.9268, 0.8953, "ecoli", "E. coli 0.0047 from max-CAI collapse"),
+            (0.9400, 0.8953, "ecoli", "ceiling vs ceiling, E. coli far nearer"),
+            (0.9501, 0.8004, "hek", "E. coli mid-band, HEK293 0.005 from its own"),
+        ],
+    )
+    def test_the_tiebreak_measures_headroom_not_band_width(
+        self, human_cai: float, ecoli_cai: float, winner: str, why: str
+    ) -> None:
+        """Which in-band slot's CAI gets reported -- and it must not be a fixed
+        preference for either host.
+
+        Two earlier comparators were exactly that. Distance to the band's MIDDLE
+        always chose E. coli, because the middle of (0.0, 0.9548) is 0.477 and no
+        real mammalian CDS is near it. Distance as a fraction of BAND WIDTH always
+        chose the mammal: an in-band E. coli slot scores at most 0.5 (its exact
+        midpoint) while a mammalian slot scores (hi-cai)/hi < 0.5 for any cai above
+        0.477 -- which chance alone (0.656) already clears. Both looked like
+        tiebreaks and were preferences.
+
+        Headroom -- (x - chance)/(1 - chance) -- is the scale `CAI_BAND` was built
+        on, so every host's ceiling sits at 0.8687 by construction. The last case
+        is the one that stops this becoming a fixed preference for E. coli.
+        """
+        cds = self._decoupled(human_cai, ecoli_cai)
+        c = construct(cds)
+        hek = slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)
+        eco = slot("target", HostId.E_COLI_K12, Modality.BACTERIAL_EXPRESSION, 11)
+        alone = {
+            "hek": evaluate(c, context(hek)).raw_score,
+            "ecoli": evaluate(c, context(eco)).raw_score,
+        }
+        assert alone["hek"] == pytest.approx(human_cai, abs=5e-4)
+        assert alone["ecoli"] == pytest.approx(ecoli_cai, abs=5e-4)
+        both = evaluate(c, context(hek, eco))
+        assert both.passes, "a tiebreak only arises when every slot is in band"
+        assert both.raw_score == pytest.approx(alone[winner], abs=1e-9), why
 
     def test_a_host_with_a_table_but_no_band_is_unavailable_not_guessed(
         self, monkeypatch: pytest.MonkeyPatch

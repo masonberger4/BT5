@@ -186,15 +186,39 @@ the rule ranked by distance from the band's *midpoint*, which for `(0.0, 0.9548)
 0.477 — below where any real mammalian CDS sits. The mammalian slot was therefore
 always the "least interesting" one and a two-slot report handed itself to the E. coli
 slot, discarding the CAI the job is actually about. Now ranked by distance to the
-nearest **binding edge as a fraction of the band's width**, with an inert `lo <= 0.0`
-edge excluded from the comparison outright — a floor that can never fire is not
-something a slot can be "near". Raw distance to an edge was tried first and only
-narrowed the pathology rather than removing it: E. coli's band is 0.20 wide against
-the mammalian ~0.955, so an in-band E. coli slot is always within 0.10 of an edge, and
-a HEK293 CDS sitting 0.028 below its max-CAI ceiling still lost the report. Measured
-on a producer-HEK293 + target-E. coli context, at both the 0.929 and 0.927 fixtures
-the review used to break the raw version, the HEK293 slot now binds. A test pins it;
-nothing pinned the tiebreak before.
+nearest **binding edge measured in chance-to-1.0 headroom**, `(x - chance)/(1 - chance)`,
+with an inert `lo <= 0.0` edge excluded outright — a floor that can never fire is not
+something a slot can be "near".
+
+Two further spellings were tried and rejected first, and the second is worth recording
+because it looked like a fix and was reviewed as one. **Raw distance to an edge** only
+narrowed the pathology: E. coli's band is 0.20 wide against the mammalian ~0.955, so an
+in-band E. coli slot is always within 0.10 of an edge, and a HEK293 CDS 0.028 below its
+max-CAI ceiling still lost the report. **Distance as a fraction of band width** then
+mirrored the bug instead of fixing it — structurally, not marginally: an in-band E. coli
+slot scores at most 0.5 (its exact midpoint) while a mammalian slot scores `(hi-cai)/hi`
+< 0.5 for any CAI above `hi/2` = 0.477, which chance alone (0.656) already clears, so the
+mammalian slot won unconditionally against every in-band E. coli slot. Measured: a HEK293
+slot 0.0237 below a ceiling it would not breach took the report from an E. coli slot
+0.0051 from a live floor breach, and the near-breach was invisible in `raw_score`,
+`binding_side` and `breaches`. The deeper objection is that **band width is not a
+measurement here**: HEK293's 0.9548 is that wide only because the inert floor is written
+as `0.0`, and writing the same inert floor as chance (0.656) flips the answer back. A
+comparator whose output turns on the encoding of a value declared inert measures
+bookkeeping, not the design.
+
+Headroom is not an arbitrary third try — it is the scale `CAI_BAND` was built on, so
+every host's ceiling sits at `CEILING_FRACTION_OF_HEADROOM` = 0.8687 by construction and
+a ceiling-to-ceiling comparison is exact rather than approximate, while E. coli's floor
+sits at a real 0.6062 instead of being scaled against a floor that cannot fire. It makes
+the tiebreak consistent with the band construction instead of orthogonal to it. All four
+counter-examples the review used to break the width version now resolve to E. coli, and a
+fifth case (E. coli mid-band at 0.800, HEK293 0.005 from its own ceiling) resolves to
+HEK293 — which is what stops this becoming a fixed preference in the other direction. All
+five are parametrized tests built on a decoupled construction (`CGT`/`CCC` are extreme in
+one table and neutral in the other, so each host's CAI is placed independently); the
+previous test could only move both slots together, which is why it could not express the
+case that broke it.
 
 **Recorded, not fixed:** `Breach.magnitude` is a raw CAI deviation and is not
 comparable across hosts — human's chance-to-1.0 headroom is 0.344 against E. coli's
