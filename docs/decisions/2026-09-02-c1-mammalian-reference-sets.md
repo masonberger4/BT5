@@ -94,6 +94,19 @@ out of scope; this is its own change, in the same file, under one review.
 - *Rescaling the floor to preserve E. coli's headroom.* Measured at 0.864 for human —
   above native sequence — so it would manufacture the exact pressure the evidence
   says not to apply. Rejected on the number, not on principle.
+- *brief.md:77's own second formulation, "±0.1 of host median".* The brief offers two
+  band constructions and this one is already per-host, so it deserved measuring rather
+  than being passed over. Two things sink it. First, the input is not on disk: a "host
+  median" means the median CAI of that host's own native genes, and `data/codon_usage/`
+  ships w-indices only, so the quantity the brief names cannot be computed here without
+  inventing it. Second, the shape of the answer is wrong wherever that median lands in
+  the plausible range. The nearest computable stand-in — the expected CAI of a random
+  synonymous encoding — is 0.656 on the human table, and ±0.1 around a value in that
+  neighbourhood puts the **ceiling near 0.756**: about 0.10 above the score a random
+  encoding gets for free, and 0.20 below the 0.9548 at which max-CAI collapse actually
+  begins. A ceiling that close to chance cannot separate the mechanical failure it
+  exists to catch from ordinary sequence — it would breach on the ordinary case and
+  bury the real one. Rejected on both counts.
 - *Leaving the E. coli band on the mammalian hosts and documenting the caveat.*
   A disclosed wrong threshold is still a live 0.2-weighted objective pushing on
   native sequence; a comment does not stop a solver.
@@ -118,3 +131,68 @@ which is MAJOR under CLAUDE.md §2a and belongs to an RFC, not to this branch. T
 the half that was expressible here; the weight is not.
 
 **Where:** branch `claude/s3-c1-mammalian-hosts`.
+
+## Follow-up in the same PR: the override sentinel, and three surfaces the per-host band made stale
+
+A delta review of the band change found one blocking defect and a set of surfaces that
+still described a single band. All are fixed in this PR rather than deferred, because
+each is a statement about what the rule refuses.
+
+**Blocking — `cai_min`/`cai_max` used value-equality as their "unset" sentinel.**
+`_lo_override = cai_min != BAND_LO` cannot tell "omitted" from "explicitly set to
+0.70". On the floor that was a silent no-op; on the ceiling it **loosened** the limit
+the caller asked for. `CodonAdaptationIndex(cai_max=0.90)` on a HEK293 job is a caller
+deliberately pinning the tighter published anti-max-CAI ceiling, and it resolved to
+0.9548 — so a HEK293 CDS at CAI 0.95 passed a rule explicitly configured to refuse it,
+and the only way to obtain 0.90 was to perturb the value to 0.8999999. That is the
+"silently permitted higher CAI" failure this rule exists to prevent, reached through
+the rule's own parameter. Fixed with a real `None` sentinel, which is what
+`e2_gc_band.py:189-190` already does per vendor and what C1's own comment claimed to
+be copying. Two consequences handled with it: the range guards now run only over
+supplied values, and `_band_for` validates `lo < hi` on the **composed** pair, because
+once one side can be supplied alone the old accidental protection against an inverted
+band is gone (`cai_min=0.93` against E. coli's 0.90 ceiling would otherwise have
+reported a max-CAI sequence as "rare codons").
+
+**No fallback band for an unmapped host.** `_band_for` returned `(BAND_LO, BAND_HI)`
+for a host absent from `CAI_BAND`, which would reinstate this whole bug one host at a
+time: the next host to gain a reference set would be scored against E. coli's band
+with no error and no test failure. It now returns `None` and the caller reports the
+objective unavailable, and a test pins `CAI_BAND.keys() == CAI_REFERENCE_SET.keys()`.
+The one exception is a caller who supplied *both* bounds — then the band is theirs and
+needs no host calibration.
+
+**The `band` ClassVar is the loosest envelope, computed.** It still read
+`(0.70, 0.90)` while four of the six scoring hosts use something else. It is now
+`(min lo, max hi)` over `CAI_BAND` = `(0.0, 0.9553)`, computed rather than transcribed
+so adding a host cannot make it a lie, and `weight_provenance` says it is an envelope
+and not the gate — `e2_gc_band`'s convention, which `solver/catalog.py:272` states
+outright ("Read off the INSTANCE, never `Spec.band`").
+
+**`param_schema` advertised defaults it cannot honour.** `"default": 0.70` / `0.90`
+are E. coli's. A form materializing them showed a HEK293 job the wrong band and, if it
+posted its own displayed values back, silently became an override. Both `default` keys
+are dropped and the descriptions now name `CAI_BAND` — again e2's answer to the
+identical problem one axis over.
+
+**The multi-slot tiebreak was degenerate under an inert floor.** Among in-band slots
+the rule ranked by distance from the band's *midpoint*, which for `(0.0, 0.9548)` is
+0.477 — below where any real mammalian CDS sits. The mammalian slot was therefore
+always the "least interesting" one and a two-slot report handed itself to the E. coli
+slot, discarding the CAI the job is actually about. Now ranked by distance to the
+nearest **binding edge**, which means the same thing on every band, inert floor
+included. Measured on a producer-HEK293 + target-E. coli context: a HEK293 CDS near
+its own ceiling now binds (0.929) where it previously reported the E. coli slot.
+
+**Recorded, not fixed:** `Breach.magnitude` is a raw CAI deviation and is not
+comparable across hosts — human's chance-to-1.0 headroom is 0.344 against E. coli's
+0.762, so the same mechanical collapse yields a ~12x smaller magnitude on HEK293.
+Normalizing by headroom would be more honest within C1 but would misrank C1 against
+every other rule in `score/conflicts.py`, which compares unnormalized magnitudes
+repo-wide. The non-comparability is now stated where `rank` is defined rather than
+left to be inferred.
+
+**Out of lane:** `d3_splicing.py:584` cross-references `c1_cai.py:490-525` for the
+`_unavailable` pattern; that method has moved and the line range now points at
+unrelated code. `d*` belongs to another session, so the fix is flagged rather than
+made — it should cite `CodonAdaptationIndex._unavailable` by name, not by line range.

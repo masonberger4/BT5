@@ -38,6 +38,7 @@ from bt5.rules.catalog.c1_cai import (
     CAI_REFERENCE_SET,
     CEILING_FRACTION_OF_HEADROOM,
     CodonAdaptationIndex,
+    chance_cai,
 )
 from bt5.vector.kmers import ConstructKmerIndex
 from conftest import construct, wrapping_construct
@@ -123,7 +124,18 @@ class TestSpecMetadata:
         maximized)'. Enforcement and Direction are that sentence, in code."""
         assert CodonAdaptationIndex.enforcement is Enforcement.SOFT
         assert CodonAdaptationIndex.direction is Direction.BAND
-        assert CodonAdaptationIndex.band == (0.70, 0.90)
+
+    def test_the_band_classvar_is_the_loosest_envelope_and_not_the_gate(self) -> None:
+        """e2_gc_band's convention, and `solver/catalog.py:272` states it: "Read off
+        the INSTANCE, never `Spec.band`." The bands are per host, so a single
+        ClassVar can only be an envelope -- and it must be computed from `CAI_BAND`
+        rather than transcribed, or adding a host silently makes it a lie."""
+        assert CodonAdaptationIndex.band == (
+            min(lo for lo, _ in CAI_BAND.values()),
+            max(hi for _, hi in CAI_BAND.values()),
+        )
+        assert CodonAdaptationIndex.band == (0.0, 0.9553)
+        assert "LOOSEST envelope" in CodonAdaptationIndex.weight_provenance
 
     def test_the_default_weight_matches_what_every_preset_already_assigns(self) -> None:
         """All three shipped presets weight 2.C1 at 0.2. A rule whose own default
@@ -161,6 +173,18 @@ class TestSpecMetadata:
         max-CAI sequence manufactures perfect repeats."""
         assert "e5_synthesis_repeats" in CodonAdaptationIndex.conflicts_with
         assert "f1_direct_repeats" in CodonAdaptationIndex.conflicts_with
+
+
+class TestParamSchema:
+    def test_neither_bound_advertises_a_default_it_cannot_honour(self) -> None:
+        """e2_gc_band's reasoning, per host instead of per vendor: the gate is the
+        slot host's own band, so a form materializing `default: 0.70` would show a
+        HEK293 job E. coli's floor and then post it back as an explicit override."""
+        props = CodonAdaptationIndex.param_schema["properties"]
+        assert isinstance(props, dict)
+        for name in ("cai_min", "cai_max"):
+            assert "default" not in props[name], f"{name} must not advertise a default"
+            assert "CAI_BAND" in props[name]["description"]
 
 
 class TestNeverMaximized:
@@ -415,23 +439,34 @@ class TestBandCalibration:
     the shipped tables so it cannot drift away from the data it came from.
     """
 
-    AAS = "ACDEFGHIKLMNPQRSTVWY"
-
     def _chance(self, key: str, table_id: int) -> float:
-        """CAI of a random synonymous encoding, composition-neutral and exact.
+        """The rule's own baseline, reached through its public helper.
 
-        No RNG: per informative family the expectation of log w is the mean of
-        log w over the family, so the geometric mean of family geometric means
-        is the expected CAI outright.
+        Deliberately NOT reimplemented here. The baseline the ceilings are scaled
+        against has to use the same informative-family predicate as the metric being
+        scored -- family size from the table first, positive weight second -- and a
+        second copy in the test file is exactly how those two silently diverge, so
+        that the number calibrating the ceiling stops describing the number the
+        ceiling is applied to.
         """
         provider = FileTableProvider()
-        w, code = provider.weights(key, "cai"), provider.genetic_code(table_id)
-        logs = []
-        for aa in self.AAS:
-            fam = [w[c] for c in code.synonymous_codons(aa) if c in w and w[c] > 0]
-            if len(fam) > 1:
-                logs.append(sum(math.log(x) for x in fam) / len(fam))
-        return math.exp(sum(logs) / len(logs))
+        return chance_cai(provider.weights(key, "cai"), provider.genetic_code(table_id))
+
+    def _cds_near(self, target: float, key: str) -> tuple[str, float]:
+        """A Leu-run CDS landing as near `target` as the family allows, plus its CAI.
+
+        Built from the table rather than transcribed, so it cannot rot if the table
+        is regenerated: a run of Leu codons split between the family's best and
+        second-best, with the split solved for the target. Every codon is Leu, which
+        has six codons under table 1, so all 300 are informative.
+        """
+        provider = FileTableProvider()
+        w, code = provider.weights(key, "cai"), provider.genetic_code(1)
+        best, alt = sorted(code.synonymous_codons("L"), key=lambda c: w[c])[:-3:-1]
+        n = 300
+        top, second = math.log(w[best]), math.log(w[alt])
+        b = round(n * (math.log(target) - top) / (second - top))
+        return "ATG" + alt * b + best * (n - b) + "TAA", math.exp((b * second + (n - b) * top) / n)
 
     def test_the_floor_barely_clears_chance_on_the_mammalian_tables(self) -> None:
         """The measurement the band change rests on. If this ever stops holding,
@@ -476,6 +511,37 @@ class TestBandCalibration:
         for host in (HostId.E_COLI_K12, HostId.E_COLI_BL21):
             assert CAI_BAND[host] == (BAND_LO, BAND_HI) == (0.70, 0.90)
 
+    def test_the_rejected_rescaled_floor_is_re_derived_too(self) -> None:
+        """The alternative the decision record turns down, pinned so it cannot drift
+        while the accepted one stays fresh.
+
+        Keeping E. coli's floor at the same share of headroom (0.6062) puts human's
+        floor at ~0.864 -- above where a native human CDS sits -- so C1 would flag
+        native sequence as "rare codons across the ORF" and hand the optimizer
+        pressure to raise its CAI, which is what brief.md:13's Expi293F benchmark and
+        brief.md:206 forbid. The shipped floor is inert instead, and the two must
+        stay visibly different numbers.
+        """
+        ecoli = self._chance("sharp_li_1987_ecoli_w", 11)
+        fraction = (BAND_LO - ecoli) / (1.0 - ecoli)
+        human = self._chance("human_highly_expressed_refseq_w", 1)
+        rescaled = human + fraction * (1.0 - human)
+        assert rescaled == pytest.approx(0.864, abs=5e-4)
+        assert CAI_BAND[HostId.HUMAN][0] == 0.0 < rescaled
+
+    def test_the_two_host_maps_stay_in_step(self) -> None:
+        """A host with a reference set but no calibrated band would otherwise be the
+        next silent regression: added to one map, scored against whatever the other
+        fell back to. `_band_for` refuses to guess, and this pins the pair so the
+        refusal shows up here rather than as an unexplained `unavailable` in a run.
+        """
+        assert CAI_BAND.keys() == CAI_REFERENCE_SET.keys()
+
+    def test_an_unmapped_host_gets_no_band_rather_than_e_colis(self) -> None:
+        """The fallback that used to be there is the bug this map exists to fix."""
+        assert CodonAdaptationIndex()._band_for(HostId.SF9) is None
+        assert CodonAdaptationIndex()._band_for(HostId.S_CEREVISIAE) is None
+
     def test_the_mammalian_floor_is_inert_and_a_rare_cds_is_not_a_finding(self) -> None:
         """The behaviour the whole change exists for.
 
@@ -516,12 +582,72 @@ class TestBandCalibration:
         assert ev.binding_side == "upper"
         assert ev.breaches[0].detail["band_hi"] == CAI_BAND[HostId.HEK293][1]
 
-    def test_an_explicit_bound_still_overrides_the_host_band(self) -> None:
+    def test_the_widened_ceiling_is_what_actually_changed_for_hek293(self) -> None:
+        """The one behavioural difference this change makes, in both directions.
+
+        A max-CAI sequence breached before and breaches now, so it cannot tell the
+        old band from the new one. The band moved for sequences BETWEEN the two
+        ceilings: at CAI ~0.93 a HEK293 CDS breached E. coli's 0.90 and passes its
+        own 0.9548, and just above 0.9548 it breaches again. Nothing else in the
+        file pins where the ceiling sits.
+        """
+        hek = context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        ceiling = CAI_BAND[HostId.HEK293][1]
+
+        between, cai = self._cds_near(0.93, "human_highly_expressed_refseq_w")
+        assert BAND_HI < cai < ceiling, f"fixture must sit between the ceilings: {cai}"
+        assert evaluate(construct(between), hek).passes
+
+        above, cai = self._cds_near(0.97, "human_highly_expressed_refseq_w")
+        assert cai > ceiling, f"fixture must exceed the host ceiling: {cai}"
+        ev = evaluate(construct(above), hek)
+        assert not ev.passes
+        assert ev.binding_side == "upper"
+
+    def test_an_explicit_ceiling_equal_to_the_published_one_is_honoured(self) -> None:
+        """A value-equality sentinel silently discarded this, and on the ceiling
+        side it LOOSENED the limit: `cai_max=0.90` on a HEK293 job is a caller
+        asking for the tighter published anti-max-CAI ceiling, and reading it as
+        "unset" handed them 0.9548 instead -- permitting exactly the higher CAI the
+        rule exists to refuse, through the rule's own parameter. The only way to get
+        0.90 was to perturb the value.
+        """
+        between, cai = self._cds_near(0.93, "human_highly_expressed_refseq_w")
+        c, hek = (
+            construct(between),
+            context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1)),
+        )
+        assert evaluate(c, hek).passes
+        ev = evaluate(c, hek, rule=CodonAdaptationIndex(cai_max=BAND_HI))
+        assert not ev.passes
+        assert ev.binding_side == "upper"
+        assert ev.breaches[0].detail["band_hi"] == BAND_HI
+
+    def test_an_explicit_floor_equal_to_the_published_one_is_honoured(self) -> None:
+        """The same defect on the side where it was merely a silent no-op. Asserted
+        through `evaluate`, not `_band_for`: a band composed correctly and then not
+        used would pass the implementation-level check."""
+        hek = context(slot("producer", HostId.HEK293, Modality.LENTIVIRAL, 1))
+        assert evaluate(construct(RARE), hek).passes
+        ev = evaluate(construct(RARE), hek, rule=CodonAdaptationIndex(cai_min=BAND_LO))
+        assert not ev.passes
+        assert ev.binding_side == "lower"
+        assert ev.breaches[0].detail["band_lo"] == BAND_LO
+
+    def test_an_explicit_bound_overrides_only_its_own_side(self) -> None:
         """The user's own number wins, per side, so setting one does not discard
         the other -- e2_gc_band's discipline."""
         rule = CodonAdaptationIndex(cai_min=0.50)
         assert rule._band_for(HostId.HEK293) == (0.50, CAI_BAND[HostId.HEK293][1])
         assert rule._band_for(HostId.E_COLI_K12) == (0.50, BAND_HI)
+
+    def test_a_band_that_only_inverts_once_composed_is_refused(self) -> None:
+        """`__init__` cannot catch this -- the host is not known until evaluation --
+        and a silently inverted band reports a max-CAI sequence as "rare codons"."""
+        rule = CodonAdaptationIndex(cai_min=0.93)
+        assert rule._band_for(HostId.HEK293) == (0.93, CAI_BAND[HostId.HEK293][1])
+        with pytest.raises(ValueError, match="inverts"):
+            rule._band_for(HostId.E_COLI_K12)
 
 
 class TestGating:

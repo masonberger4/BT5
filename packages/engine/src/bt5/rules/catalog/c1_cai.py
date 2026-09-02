@@ -5,7 +5,19 @@ The brief's row is `2.C1`, under a section header that is itself the specificati
 row asks for Sharp & Li's index -- `w_i = count_i / max_synonymous_count` over a
 HIGHLY-EXPRESSED reference set, pseudocount 0.5 before the family max, and
 `CAI = exp(mean ln w)` excluding stops and single-codon families -- scored against
-a **band** (0.70-0.90), with the instruction "Never 1.0" (brief.md:77).
+a **band**, with the instruction "Never 1.0" (brief.md:77).
+
+**The band is per host, and (0.70-0.90) is E. coli's.** brief.md:77 offers those
+numbers as an example -- "e.g. 0.70-0.90, or +/-0.1 of host median" -- and they were
+calibrated on a strong-bias organism. Measured against a composition-neutral random
+synonymous encoding, E. coli's chance CAI is 0.238, so the 0.70 floor sits 0.46 above
+chance; on the three mammalian w-tables chance is 0.656/0.633/0.660 and the same floor
+sits 0.04-0.07 above chance, where it no longer discriminates. `CAI_BAND` therefore
+carries one band per host: E. coli's pair unchanged, and for the weak-bias hosts an
+inert 0.0 floor plus a ceiling scaled to that host's own chance-to-1.0 headroom. The
+full argument -- including the rescaled floor that was rejected because it would flag
+NATIVE human sequence as a finding -- is on `CAI_BAND` below, and the `band` ClassVar
+is only the loosest envelope over it.
 
 **Why a band, and why the direction is not HIGHER_IS_BETTER.** `Direction`'s own
 docstring names this rule as the reason BAND exists: "a monotone weighted sum over a
@@ -14,8 +26,9 @@ refutes (max-CAI collapses to one codon per amino acid and produces perfect nucl
 repeats)". That is not a hypothetical. In Kudla 2009's 154-variant GFP series CAI
 gave r = 0.14, not significant, against the 5' folding window's r = 0.66; Welch 2009
 states outright that CAI "has no value in predicting gene expression" and their
-deliberately high-CAI control expressed at ~15% of the best variant. A ceiling at
-0.90 is the operative half of this rule -- it is what stops the optimizer buying an
+deliberately high-CAI control expressed at ~15% of the best variant. The ceiling --
+0.90 on E. coli, and its own on every other host -- is the operative half of this
+rule, and the half that transfers: it is what stops the optimizer buying an
 unmeasurable codon gain with a measurable repeat problem in E5/E6/F1.
 
 **The evidence badge is CONTESTED, and the brief agrees in an unusual way.** The row's
@@ -86,44 +99,15 @@ from bt5.core.types import Construct, Interval, Strand
 
 #: brief.md:77 -- "Target a **band** (e.g. 0.70-0.90, or +/-0.1 of host median).
 #: Never 1.0." The ceiling is the operative half; see the module docstring.
+#:
+#: These are **E. coli's** bounds, not universal ones, and they are not the
+#: constructor's defaults either -- `cai_min`/`cai_max` default to None so that a
+#: caller passing 0.90 explicitly is distinguishable from one who passed nothing
+#: (see `__init__`). They are the base `CAI_BAND` is derived from and the pair
+#: E. coli keeps exactly.
 BAND_LO = 0.70
 BAND_HI = 0.90
 
-#: HostId -> the reference-set key `TableProvider.weights` is looked up under.
-#:
-#: The provider keys on the REFERENCE SET, not on the host: every caller in the
-#: tree passes `"sharp_li_1987_ecoli_w"`, which is the stem of the one file in
-#: `data/codon_usage/`. A host absent from this map has no CAI reference set in
-#: this build and C1 reports its objective unavailable rather than borrowing one.
-#:
-#: THREE entries are approximations, and all three are stated rather than
-#: hidden: the reference set used travels in every breach's
-#: `detail["reference_set"]`, so a report can always name what it scored against.
-#:
-#: - BL21 shares K-12's entry. Sharp & Li's w-index was computed from
-#:   highly-expressed E. coli K-12 genes; applying it to the B-strain is
-#:   universal practice for the standard T7 expression host.
-#: - CHO maps to a whole-organism *Cricetulus griseus* table, and this is the
-#:   WEAKEST of the three: CHO is an aneuploid, heavily rearranged line, and
-#:   78% of that table's contributing transcripts (71 of 91) are RefSeq
-#:   PREDICTED `XM_` models rather than curated `NM_` ones, because C. griseus
-#:   RefSeq is largely gene-prediction based. A predicted CDS can carry
-#:   model-derived frame or boundary error, and codon counts are exactly what
-#:   that corrupts. Disclosed by S6 in its own `_provenance`; repeated here
-#:   because `TableProvider.weights()` returns only the bare `w` map, so a
-#:   reader of a CHO breach never sees the provenance otherwise.
-#: - HEK293 shares HUMAN's entry. HEK293 is a Homo sapiens cell line, so this is
-#:   the same move one taxon down, and it is the mapping the data lane shipped
-#:   the human set FOR: `docs/decisions/2026-09-02-s6-host-data-and-real-backbone.md`
-#:   records "HEK293 -> human is the load-bearing one: both shipped mammalian
-#:   presets (lentiviral_hek293, aav_hek293) key on HEK293". Codon usage is a
-#:   property of the organism's translational machinery, not of the cell line.
-#:
-#: S_CEREVISIAE, P_PASTORIS and SF9 remain absent and therefore still report
-#: unavailable -- S6 deferred them deliberately (no shipped preset consumes them,
-#: and their RefSeq coverage is materially messier). That is the correct state,
-#: not an oversight: a host absent from this map has no reference set in this
-#: build, and C1 says so rather than borrowing one.
 #: HostId -> the band C1 actually scores against, because (0.70, 0.90) does not
 #: mean the same thing on every host.
 #:
@@ -161,8 +145,18 @@ BAND_HI = 0.90
 #: 0.8687 of that headroom, and every ceiling below is that same fraction of its
 #: own host's. E. coli's pair is therefore unchanged at exactly (0.70, 0.90).
 #:
-#: `TestBandCalibration` re-derives every number here from the shipped tables, so
-#: these constants cannot drift away from the data they came from.
+#: The ceilings are transcribed rather than computed at import: `chance_cai` needs a
+#: w-table and a genetic code, and those arrive through `Services`, never by importing
+#: M5 at module scope. `TestBandCalibration` re-derives each of them -- and the
+#: rejected rescaled floor -- from the shipped tables through that same helper, so a
+#: transcription that drifts from the data fails a test rather than shipping.
+#:
+#: Keyed on `HostId` alone, and the constants assume each host's default genetic code
+#: (11 for E. coli, 1 for the mammals): the chance baseline is a function of the
+#: (w-table, code) pair, so a slot pairing one of these hosts with a non-standard
+#: `table_id` gets a ceiling calibrated for the standard one. The keys must stay in
+#: step with `CAI_REFERENCE_SET` -- a host with a table but no band has no scoreable
+#: band, and `_band_for` reports it unavailable rather than falling back to E. coli's.
 CAI_BAND: Mapping[HostId, tuple[float, float]] = {
     HostId.E_COLI_K12: (BAND_LO, BAND_HI),
     HostId.E_COLI_BL21: (BAND_LO, BAND_HI),
@@ -177,6 +171,41 @@ CAI_BAND: Mapping[HostId, tuple[float, float]] = {
 #: derived from; the test re-derives it too.
 CEILING_FRACTION_OF_HEADROOM = 0.8687
 
+#: HostId -> the reference-set key `TableProvider.weights` is looked up under.
+#:
+#: The provider keys on the REFERENCE SET, not on the host, so this map is what
+#: turns a slot's host into a lookup key; each value is the stem of a file in
+#: `data/codon_usage/`. A host absent from this map has no CAI reference set in
+#: this build and C1 reports its objective unavailable rather than borrowing one.
+#:
+#: THREE entries are approximations, and all three are stated rather than
+#: hidden: the reference set used travels in every breach's
+#: `detail["reference_set"]`, so a report can always name what it scored against.
+#:
+#: - BL21 shares K-12's entry. Sharp & Li's w-index was computed from
+#:   highly-expressed E. coli K-12 genes; applying it to the B-strain is
+#:   universal practice for the standard T7 expression host.
+#: - CHO maps to a whole-organism *Cricetulus griseus* table, and this is the
+#:   WEAKEST of the three: CHO is an aneuploid, heavily rearranged line, and
+#:   78% of that table's contributing transcripts (71 of 91) are RefSeq
+#:   PREDICTED `XM_` models rather than curated `NM_` ones, because C. griseus
+#:   RefSeq is largely gene-prediction based. A predicted CDS can carry
+#:   model-derived frame or boundary error, and codon counts are exactly what
+#:   that corrupts. Disclosed by S6 in its own `_provenance`; repeated here
+#:   because `TableProvider.weights()` returns only the bare `w` map, so a
+#:   reader of a CHO breach never sees the provenance otherwise.
+#: - HEK293 shares HUMAN's entry. HEK293 is a Homo sapiens cell line, so this is
+#:   the same move one taxon down, and it is the mapping the data lane shipped
+#:   the human set FOR: `docs/decisions/2026-09-02-s6-host-data-and-real-backbone.md`
+#:   records "HEK293 -> human is the load-bearing one: both shipped mammalian
+#:   presets (lentiviral_hek293, aav_hek293) key on HEK293". Codon usage is a
+#:   property of the organism's translational machinery, not of the cell line.
+#:
+#: S_CEREVISIAE, P_PASTORIS and SF9 remain absent and therefore still report
+#: unavailable -- S6 deferred them deliberately (no shipped preset consumes them,
+#: and their RefSeq coverage is materially messier). That is the correct state,
+#: not an oversight: a host absent from this map has no reference set in this
+#: build, and C1 says so rather than borrowing one.
 CAI_REFERENCE_SET: Mapping[HostId, str] = {
     HostId.E_COLI_K12: "sharp_li_1987_ecoli_w",
     HostId.E_COLI_BL21: "sharp_li_1987_ecoli_w",
@@ -185,6 +214,46 @@ CAI_REFERENCE_SET: Mapping[HostId, str] = {
     HostId.MOUSE: "mouse_highly_expressed_refseq_w",
     HostId.CHO: "cho_highly_expressed_refseq_w",
 }
+
+
+def chance_cai(w: Mapping[str, float], code: GeneticCode) -> float:
+    """Expected CAI of a random synonymous encoding of any protein. Exact, no RNG.
+
+    The composition-neutral baseline the per-host ceilings are scaled against: what
+    CAI a sequence scores for no reason other than the table's shape. Per informative
+    family the expectation of ln w is the family mean of ln w, and CAI is the
+    geometric mean over families, so the expected CAI is the geometric mean of the
+    per-family geometric means outright -- no sampling, and no dependence on which
+    protein is being encoded.
+
+    Shares `_informative`'s family predicate deliberately: family size from the TABLE
+    first, positive weight second. A baseline that admitted families the metric drops
+    (or dropped families the metric admits) would calibrate a ceiling for a slightly
+    different index than the one being scored, and nothing would say so.
+    """
+    logs: list[float] = []
+    seen: set[str] = set()
+    for codon in sorted(w):
+        if code.is_stop(codon):
+            continue
+        aa = code.translate(codon)
+        if not aa or aa == "*" or aa in seen:
+            continue
+        seen.add(aa)
+        try:
+            family = code.synonymous_codons(aa)
+        except (ValueError, KeyError):
+            continue
+        if len(family) < 2:
+            continue
+        weights = [w[c] for c in family if w.get(c, 0.0) > 0.0]
+        if not weights:
+            continue
+        logs.append(sum(math.log(x) for x in weights) / len(weights))
+    if not logs:
+        return float("nan")
+    return math.exp(sum(logs) / len(logs))
+
 
 #: What `TableProvider` implementations raise when a host's table is absent.
 #: `FileTableProvider` raises `FileNotFoundError` (an `OSError`); `NotImplementedError`
@@ -204,7 +273,14 @@ class CodonAdaptationIndex:
     evidence: ClassVar[Evidence] = Evidence.CONTESTED
     direction: ClassVar[Direction] = Direction.BAND
     unit: ClassVar[str] = "CAI (geometric mean of relative adaptiveness)"
-    band: ClassVar[tuple[float, float] | None] = (BAND_LO, BAND_HI)
+    #: The LOOSEST envelope over `CAI_BAND`, not the gate -- e2_gc_band's
+    #: convention, and `solver/catalog.py:272` states it: "Read off the INSTANCE,
+    #: never `Spec.band`." Computed rather than transcribed so it cannot drift when
+    #: a host is added. The band actually scored against is `_band_for(slot.host)`.
+    band: ClassVar[tuple[float, float] | None] = (
+        min(lo for lo, _ in CAI_BAND.values()),
+        max(hi for _, hi in CAI_BAND.values()),
+    )
     citations: ClassVar[tuple[Citation, ...]] = (
         Citation(
             "Sharp & Li 1987, the index itself: w_i = count_i / max synonymous count "
@@ -300,7 +376,11 @@ class CodonAdaptationIndex:
         "readout, and BT5 cannot adjudicate that disagreement; a weight of zero would "
         "settle it by omission. steering_weight is 0.0 and must stay there: a Lagrangian "
         "term on codon weights would steer the Tier-A DP toward MAXIMUM CAI, which is "
-        "the one thing this rule's own band exists to forbid."
+        "the one thing this rule's own band exists to forbid. The `band` ClassVar is "
+        "not a weight and not the gate: it is the LOOSEST envelope over `CAI_BAND`, "
+        "whose bounds are per host because (0.70, 0.90) was calibrated on E. coli and "
+        "sits 0.46 above that organism's chance CAI while the same floor sits 0.04 "
+        "above chance on the mammalian tables. The gate is the slot host's own pair."
     )
     default_enabled: ClassVar[bool] = True
     default_weight: ClassVar[float] = 0.2
@@ -329,21 +409,28 @@ class CodonAdaptationIndex:
     engine_calibration: ClassVar[str | None] = None
     param_schema: ClassVar[Mapping[str, object]] = {
         "type": "object",
+        # No numeric defaults, e2_gc_band's reasoning applied per host instead of
+        # per vendor: the gate is the slot host's own band, so a single advertised
+        # number would lie -- a form showing 0.70/0.90 for a HEK293 job would be
+        # describing E. coli's band. A value here overrides that side of it.
         "properties": {
             "cai_min": {
                 "type": "number",
-                "default": BAND_LO,
-                "minimum": 0.0,
-                "maximum": 1.0,
-                "description": "Floor of the target band. Below it the CDS uses rare codons.",
-            },
-            "cai_max": {
-                "type": "number",
-                "default": BAND_HI,
                 "minimum": 0.0,
                 "maximum": 1.0,
                 "description": (
-                    "Ceiling of the target band. The operative half: it is what stops "
+                    "Overrides the floor of the host's band (CAI_BAND); omitted, the "
+                    "host's own floor applies -- 0.70 for E. coli, inert 0.0 for the "
+                    "weak-bias mammalian hosts. Below the floor the CDS uses rare codons."
+                ),
+            },
+            "cai_max": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "description": (
+                    "Overrides the ceiling of the host's band (CAI_BAND); omitted, the "
+                    "host's own ceiling applies. The operative half: it is what stops "
                     "the optimizer chasing CAI toward 1.0, which collapses each amino "
                     "acid to one codon and manufactures perfect repeats."
                 ),
@@ -351,12 +438,20 @@ class CodonAdaptationIndex:
         },
     }
 
-    def __init__(self, cai_min: float = BAND_LO, cai_max: float = BAND_HI) -> None:
-        if not 0.0 <= cai_min < cai_max <= 1.0:
-            raise ValueError(
-                f"CAI band must satisfy 0 <= cai_min {cai_min} < cai_max {cai_max} <= 1"
-            )
-        if cai_max >= 1.0:
+    def __init__(self, cai_min: float | None = None, cai_max: float | None = None) -> None:
+        """`None` means "unset", and it has to be a real sentinel.
+
+        Not `cai_min=BAND_LO` compared by value: BAND_LO/BAND_HI are E. coli's
+        bounds, so `cai_max=0.90` on a HEK293 job is a caller asking for the
+        TIGHTER published ceiling, and reading that as "unset" would hand them the
+        host's looser 0.9548 instead -- silently permitting the higher CAI this
+        rule exists to refuse, through the rule's own parameter. `e2_gc_band.py`
+        uses the same sentinel per vendor for the same reason.
+        """
+        for name, value in (("cai_min", cai_min), ("cai_max", cai_max)):
+            if value is not None and not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must lie in [0, 1], got {value}")
+        if cai_max is not None and cai_max >= 1.0:
             # "Never 1.0" (brief.md:77). A ceiling AT 1.0 is not a band -- it
             # permits the single-codon-per-amino-acid collapse this rule exists
             # to refuse, while still looking like a two-sided constraint.
@@ -365,13 +460,17 @@ class CodonAdaptationIndex:
                 "collapse to one codon per amino acid, which is the failure mode "
                 "the band exists to forbid"
             )
-        self.cai_min = cai_min
-        self.cai_max = cai_max
+        if cai_min is not None and cai_max is not None and cai_min >= cai_max:
+            raise ValueError(f"CAI band must satisfy cai_min {cai_min} < cai_max {cai_max}")
         # An explicit bound is the user's own number and wins over the per-host
         # band; tracked per side so a cai_min override does not silence the
-        # host's ceiling, the discipline e2_gc_band applies per vendor.
-        self._lo_override = cai_min != BAND_LO
-        self._hi_override = cai_max != BAND_HI
+        # host's ceiling, the discipline e2_gc_band applies per vendor. The
+        # attributes below are only meaningful on the side whose flag is set --
+        # `_band_for` reads them through the flags, never directly.
+        self._lo_override = cai_min is not None
+        self._hi_override = cai_max is not None
+        self.cai_min = BAND_LO if cai_min is None else cai_min
+        self.cai_max = BAND_HI if cai_max is None else cai_max
 
     def gate(self, slot: ContextSlot) -> bool:
         """Every slot whose protein is actually translated.
@@ -434,6 +533,17 @@ class CodonAdaptationIndex:
                     f"against another organism's weights would produce a "
                     f"plausible-looking number measuring nothing",
                 )
+            band = self._band_for(slot.host)
+            if band is None:
+                return self._unavailable(
+                    c,
+                    f"no calibrated CAI band for host {slot.host}. A band is a "
+                    f"statement about that host's own codon bias -- (0.70, 0.90) is "
+                    f"E. coli's and sits 0.46 above its chance CAI, where the same "
+                    f"floor sits 0.04 above chance on a weak-bias host -- so scoring "
+                    f"{slot.host} against another organism's band would report a "
+                    f"threshold nobody calibrated for it",
+                )
             try:
                 w = svc.tables.weights(reference_set, "cai")
                 code = svc.tables.genetic_code(slot.table_id)
@@ -472,22 +582,38 @@ class CodonAdaptationIndex:
                     reference_set,
                     math.exp(sum(logs) / len(logs)),
                     len(logs),
-                    self._band_for(slot.host),
+                    band,
                 )
             )
 
         # The slot furthest OUTSIDE ITS OWN band binds, and among in-band slots the
-        # one furthest from its band's middle. Averaging CAI across slots would let
-        # a comfortable slot hide one at 0.97, and 0.97 is the finding that matters.
+        # one CLOSEST to a binding edge. Averaging CAI across slots would let a
+        # comfortable slot hide one at 0.97, and 0.97 is the finding that matters.
         # Comparing raw CAI across slots would be worse still now that the bands
         # differ per host: 0.85 is comfortably in band for human and a breach for
         # E. coli. The -1.0 offset keeps every in-band slot strictly below every
-        # breaching one, so a breach always outranks an in-band slot.
+        # breaching one (deviations are >= 0 and distances-to-edge are <= 0.5), so a
+        # breach always outranks an in-band slot whichever band it breached.
+        #
+        # Distance to the nearest EDGE, not to the band's middle: with an inert 0.0
+        # floor the middle is 0.477, below where any real mammalian CDS ever sits, so
+        # a midpoint tiebreak would rank every mammalian slot as maximally
+        # uninteresting and systematically hand the report to the E. coli slot --
+        # discarding the CAI the job is actually about. Distance to an edge means the
+        # same thing on every band, inert floor included.
+        #
+        # Deviations ARE compared across hosts here, and they are in raw CAI units:
+        # human's chance-to-1.0 headroom is 0.344 against E. coli's 0.762, so the
+        # same mechanical max-CAI collapse yields a ~12x smaller magnitude on HEK293.
+        # A headroom-normalized magnitude would be more comparable; it is not done
+        # here because `Breach.magnitude` is unnormalized repo-wide and one rule
+        # normalizing unilaterally would misrank against the others in
+        # `score/conflicts.py`. Recorded so the ordering is not read as calibrated.
 
         def rank(row: tuple[ContextSlot, str, float, int, tuple[float, float]]) -> float:
             lo, hi = row[4]
             dev = self._deviation(row[2], row[4])
-            return dev if dev > 0.0 else -abs(row[2] - (lo + hi) / 2) - 1.0
+            return dev if dev > 0.0 else -min(row[2] - lo, hi - row[2]) - 1.0
 
         bound, reference_set, cai, n, band = max(per_slot, key=rank)
         cai_min, cai_max = band
@@ -512,9 +638,9 @@ class CodonAdaptationIndex:
                     message=(
                         f"CAI {cai:.3f} for the {bound.role} slot ({bound.host}, "
                         f"{reference_set}) is outside the target band "
-                        f"[{cai_min:.2f}, {cai_max:.2f}] ({side} bound "
+                        f"[{cai_min:.3f}, {cai_max:.3f}] ({side} bound "
                         f"binding, {'under' if side == 'lower' else 'over'} "
-                        f"{edge:.2f}), indicating {why}. CAI is a soft band and a "
+                        f"{edge:.3f}), indicating {why}. CAI is a soft band and a "
                         f"descriptive statistic: r = 0.14 (not significant) against "
                         f"expression in Kudla 2009, so this is a finding to weigh, "
                         f"never a target to maximize"
@@ -554,18 +680,37 @@ class CodonAdaptationIndex:
 
     # -- internals ----------------------------------------------------------
 
-    def _band_for(self, host: HostId) -> tuple[float, float]:
-        """The band this host is actually scored against.
+    def _band_for(self, host: HostId) -> tuple[float, float] | None:
+        """The band this host is actually scored against, or None if it has none.
 
-        `CAI_BAND` first, the ClassVar envelope for a host not in it, and an
-        explicit constructor bound over either -- per side, so setting one does
-        not discard the other.
+        `CAI_BAND` supplies each side, and an explicit constructor bound overrides
+        it -- per side, so setting one does not discard the other.
+
+        **No fallback to (BAND_LO, BAND_HI) for an unmapped host.** That would
+        reinstate the exact bug this map exists to fix, silently and one host at a
+        time: the next host to gain a reference set would be scored against
+        E. coli's band with no error and no test failure. A host with a w-table but
+        no calibrated band has no band, and the caller reports it unavailable.
+        Both bounds supplied explicitly is the one exception -- then the band is
+        the caller's own and needs no host calibration.
         """
-        lo, hi = CAI_BAND.get(host, (BAND_LO, BAND_HI))
-        return (
-            self.cai_min if self._lo_override else lo,
-            self.cai_max if self._hi_override else hi,
-        )
+        base = CAI_BAND.get(host)
+        if base is None:
+            if not (self._lo_override and self._hi_override):
+                return None
+            base = (BAND_LO, BAND_HI)  # both sides are about to be overridden
+        lo = self.cai_min if self._lo_override else base[0]
+        hi = self.cai_max if self._hi_override else base[1]
+        if lo >= hi:
+            # Reachable only by composition: one explicit bound against a host
+            # bound, e.g. cai_min=0.93 on E. coli's 0.90 ceiling. `__init__` cannot
+            # catch it because the host is not known until evaluation, and a band
+            # that is silently inverted reports a max-CAI sequence as "rare codons".
+            raise ValueError(
+                f"cai_min {lo} is not below cai_max {hi} for host {host}: an "
+                f"explicit bound composed against that host's band inverts it"
+            )
+        return (lo, hi)
 
     def _side(self, cai: float, band: tuple[float, float]) -> str | None:
         lo, hi = band
