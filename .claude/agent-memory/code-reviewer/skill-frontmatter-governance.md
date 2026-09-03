@@ -25,7 +25,7 @@ nominally about". Two of its supports did not hold:
   non-negotiable *correctness* rules — genetic code tables, stop codons, `Construct`,
   reverse-complement closure, hard-constraint enforcement, splice fixed-point, RNG
   seeding. It says nothing about either command. The split is argued at
-  `.github/workflows/pre-pr-attest.yml:29-31`.
+  `.github/workflows/pre-pr-attest.yml:32-34`.
 - It read the workflow header's "It does NOT prove the review was done honestly — Claude
   posts the comment" as conditioned on a human having typed the command first. The header
   does not say that; the qualifier was inference presented as quotation.

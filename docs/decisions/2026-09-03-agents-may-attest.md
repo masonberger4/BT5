@@ -48,7 +48,7 @@ its own `timeout-minutes: 5`) and re-runs only if the run landed non-green.
   could attest off an ambiguous instruction. Recorded because it is the real cost of this
   decision. Two of its supports do not hold: it cited "CLAUDE.md §3" for the
   `/pre-pr` vs `/pre-pr-bypass` split (§3 is the non-negotiable correctness rules; the
-  split is argued at `pre-pr-attest.yml:29-31`), and it read the header's "Claude posts the
+  split is argued at `pre-pr-attest.yml:32-34`), and it read the header's "Claude posts the
   comment" as conditioned on a human having typed the command first, which the header does
   not say.
 - `security-reviewer` could not complete: three attempts, two on opus and one on sonnet,

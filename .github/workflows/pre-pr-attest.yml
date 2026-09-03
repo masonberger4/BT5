@@ -276,10 +276,26 @@ jobs:
             CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r '.conclusion // empty')"
 
             if [ -z "$RUN" ]; then
-              # The head moved after the comment was posted, so the attestation
-              # is stale exactly as intended. Not a failure.
-              echo "::notice::No pull_request_target run for $HEAD_SHA; nothing to re-arm."
-              exit 0
+              # TWO causes, indistinguishable from here, so wait rather than
+              # guess. Either the head moved after the comment was posted -- in
+              # which case no run for this SHA will ever appear and the
+              # attestation is stale exactly as intended -- or the run simply
+              # has not propagated into the Actions run list yet.
+              #
+              # The second is the COMMON one for an unattended caller, which
+              # pushes and comments within a second or two. Exiting on the first
+              # empty read would leave the check red with nothing on the way to
+              # clear it: the same failure this job exists to prevent, reached
+              # from a different direction than the in-flight case above. Costs
+              # one bounded wait in the genuinely-stale case, which is rare and
+              # cheap next to a check that can never go green.
+              if [ "$SECONDS" -ge "$DEADLINE" ]; then
+                echo "::notice::No pull_request_target run for $HEAD_SHA after 180s; nothing to re-arm."
+                exit 0
+              fi
+              echo "no run for $HEAD_SHA yet; waiting for one to appear"
+              sleep 15
+              continue
             fi
 
             [ "$STATUS" = "completed" ] && break
