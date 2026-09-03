@@ -72,7 +72,7 @@ PROVENANCE
                threshold matches the superseded text.  brief.md:141 vs e4_gc_extent.py:151
 ENFORCEMENT    OK — SOFT, and the weighted sum is the right home for it.
 STRAND         OK — reads slot.strand_of_interest at e4_gc_extent.py:203.
-REPAIR         QUESTION — SINGLE_PASS is a downgrade from repair.py:174's default and the
+REPAIR         QUESTION — SINGLE_PASS is a downgrade from repair.py:417's default and the
                docstring does not say why.
 UNITS          OK.
 CALIBRATION    N/A — no folding threshold.
@@ -96,10 +96,11 @@ likely to lapse". One line per rule. Replace, do not append.
 
 - Do not re-check anything in the CI list above.
 - Do not edit any file.
-- Do not spawn any agent but `docs-miner`. `Agent` is in your tool list for one purpose —
-  resolving a `brief_ref` without pulling 63 KB of `brief.md` into an opus context. It is
-  not a general escape hatch: `batch-editor` holds `Edit`, so reaching it from here would
-  turn a read-only audit into an edit nobody reviewed. Your tool grant no longer stops
-  that; this line is what stops it.
+- Do not spawn any agent but `docs-miner`. `Agent` is granted for one purpose: resolving a
+  `brief_ref` without pulling 63 KB of `brief.md` into an opus context. `batch-editor`
+  holds `Edit`, so reaching it from here would turn a read-only audit into an edit nobody
+  reviewed. This is policy, not a tool boundary — `Agent(docs-miner)` was tried and this
+  CLI drops the parameterised form silently, leaving no `Agent` tool at all. So the rule
+  lives here, where you can read it, rather than in a grant that would not hold it.
 - Do not accept a citation because it exists — read what it says.
 - Do not report "looks fine" without naming what you checked.
