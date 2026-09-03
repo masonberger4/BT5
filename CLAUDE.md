@@ -98,8 +98,7 @@ merge-on-green permission, because green was reached by recording the bug rather
 fixing it.
 
 `--snapshot-update` is not a fix either, and neither is re-recording a contract
-fixture. *(`goldens-not-hand-edited` is named in the plan but does not exist yet;
-`tests/goldens/` holds only `.gitkeep`.)*
+fixture. *(`goldens-not-hand-edited` is named in the plan but does not exist yet.)*
 
 ## 5. Dependencies and lockfiles
 
