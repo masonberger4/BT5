@@ -44,54 +44,49 @@ owner-merge requirement. Treat its absence on a weight/ranking-affecting diff
 as a finding.
 
 ## A thin adapter's "reportable errors" tuple is an allowlist, not a catch-all
-`bt5/cli.py`'s `_REPORTABLE_ERRORS` (DesignError, InfeasibleConstraints,
-VerificationError, VectorError, OrderError, OSError) misses at least two real
-raise sites reachable from `bt5 design`: `FileTableProvider.genetic_code()`
-raises bare `ValueError` for an unknown `--table-id`, and Biopython's
-`SeqIO.read()` raises its own (non-`VectorError`) exceptions on a malformed
-GenBank file passed to `--backbone`. Both escape as raw tracebacks instead of
-a clean `bt5: ...` stderr line, though the process still exits nonzero so
-scripted callers aren't broken — non-blocking UX gap, not a CLAUDE.md rule
-violation, but worth naming every time a new CLI/adapter layer wraps engine
-calls in a curated exception tuple: check the tuple against what the actual
-callees (including one level of transitive dependency, e.g. the table
-provider and the GenBank parser, not just `design()`'s own docstring) can
-raise, not just what `design()`'s docstring documents.
+`bt5/cli.py`'s `_REPORTABLE_ERRORS` misses raise sites reachable from `bt5
+design` (e.g. `FileTableProvider.genetic_code()`'s bare `ValueError`,
+Biopython `SeqIO.read()` on a malformed `--backbone` file) — both escape as
+raw tracebacks, though exit code stays nonzero. Non-blocking UX gap, not a
+CLAUDE.md violation. Check the tuple against what callees one level of
+transitive dependency down actually raise, not just the caller's docstring.
 
 ## Reviewing prompt/doc diffs (docs/buildout/*.md session prompts)
 This repo's docs culture is precise — file:line citations, quoted strings,
 exported-symbol lists and SHAs have consistently checked out exactly against
-source across multiple buildout reviews. Spend verification budget on the
-gap classes that actually recur, not on re-confirming precision:
+source. Recurring gap classes worth the verification budget:
 - diff each prompt's "never touch" list against the others and against
-  `ls packages/engine/src/bt5/` (9 subdirs: cassette, codon, core, design,
-  rules, score, solver, structure, vector), not just against the README table;
-- check a shared fixture/support file one level up from a glob-partitioned
-  test split (e.g. a lane-shared `conftest.py`) is declared read-only by
-  every session whose glob doesn't cover it, not just some;
-- diff a decision doc's "Rejected"/plural-attribution sentences ("S2 and S4
-  do X") against each named prompt individually — a plural claim applied to
-  only one file is the recurring failure shape;
-- treat a commit-SHA-pinned "current main" claim as stale unless the doc says
-  the SHA is point-in-time (living docs should; `docs/decisions/` ADRs are
-  point-in-time by convention, don't flag those);
-- no GitHub API access here — cross-check issue/PR numbers only against
-  `git log --oneline` squash-merge `(#N)` trails, and say explicitly when a
-  citation has no such trail rather than silently skipping it.
+  `ls packages/engine/src/bt5/` (9 subdirs), not just the README table;
+- check a shared fixture one level up from a glob-partitioned test split is
+  declared read-only by every session whose glob doesn't cover it;
+- diff a decision doc's plural-attribution sentences ("S2 and S4 do X")
+  against each named prompt individually — a plural claim applying to only
+  one file is the recurring failure shape;
+- cross-check issue/PR numbers only against `git log --oneline` squash-merge
+  `(#N)` trails (no GitHub API here); say so when a citation has no trail.
 
 ## "read-only agent" is policy here, not mechanism — do not claim otherwise
-`rule-auditor` holds `Agent` (added Sep 2026, to resolve `brief_ref` via `docs-miner`),
-which also reaches `batch-editor` (holds `Edit`). Worth flagging — but do NOT write it
-up as "the only agent whose read-only-ness is not mechanical". That was asserted in a
-review and is false: `code-reviewer`, `debugger`, `docs-miner`, `gate-runner` and
-`security-reviewer` all hold `Bash`, and `sed -i` writes as well as `Edit`. Five of six
-no-edit agents were already policy-enforced; the `Agent` grant widens an existing
-surface, it does not create a new class.
-Two facts established by testing, not inference: `tools: Agent(docs-miner)` is NOT
-honoured by this CLI — the parameterised form is dropped silently, leaving the agent no
-`Agent` tool at all (fails closed, but it does not scope). And an agent holding `Bash`
-can reach the `claude` CLI on PATH regardless of its tool list.
-Generalise the method, not the verdict: before calling a control "mechanical", name the
-mechanism and check it holds. Separately — when a diff corrects a fact, grep the whole
-file for the old value; a stale `repair.py:174` survived in an example block after the
-same fact was fixed a few lines above.
+`rule-auditor` holds `Agent` (to resolve `brief_ref` via `docs-miner`), which
+also reaches `batch-editor` (holds `Edit`). Do NOT write this up as "the only
+agent whose read-only-ness is not mechanical" — `code-reviewer`, `debugger`,
+`docs-miner`, `gate-runner`, `security-reviewer` all hold `Bash`, which writes
+via `sed -i` too. The `Agent` grant widens an existing surface, it doesn't
+create a new class. `tools: Agent(docs-miner)` (parameterised) is dropped
+silently by this CLI, leaving no `Agent` tool at all (fails closed, doesn't
+scope). An agent holding `Bash` can reach the `claude` CLI on PATH regardless
+of its tool list. Before calling a control "mechanical", name the mechanism
+and check it holds. When a diff corrects a fact, grep the whole file for the
+old value — a stale citation can survive in an example block below the fix.
+
+## A "fabricated-looking" historical number in a skill/doc may be real — check `git log --all -p <file>`, not just the PR diff, before flagging
+A diff to `.claude/skills/verify-provenance/SKILL.md` (2026-09-03) added prose
+citing a past state ("this skill said 'audit all 15' while the catalog had 25
+rules"). The number looked invented — the file changed "25" -> glob in this
+diff, never touching "15". It was real: commit 574ea0e (the immediate parent,
+already in `origin/main`) had itself just patched "15" -> "25" as a stopgap
+before this diff replaced the hardcoded count entirely. Lesson: when a diff's
+own prose cites a specific historical number/string for "how long this bug
+existed", grep `git log --all -p -- <path>` for that exact string before
+calling it fabricated — the true prior state is sometimes one commit further
+back than the three-dot diff shows, especially right after a same-file
+stopgap fix landed on `main`.
