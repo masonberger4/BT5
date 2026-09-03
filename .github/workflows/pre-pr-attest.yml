@@ -51,7 +51,8 @@ name: pre-pr-attest
 #   pull_request_target -> `pre-pr-attest`, which owns the check on the HEAD SHA
 #                          and is the only job here that reports a verdict.
 #   issue_comment       -> `rearm`, which reports nothing at all and instead
-#                          re-runs that run so it re-reads the comments.
+#                          waits for that run to land and re-runs it if it is
+#                          not green, so it re-reads the comments.
 #
 # No `paths:`/`paths-ignore:` filter, ever -- check-workflow-gate.py rejects one
 # on any workflow, because a required check that never reports blocks the pull
@@ -197,24 +198,50 @@ jobs:
           HEAD_SHA="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '.head.sha')"
           echo "pull request #$PR, current head $HEAD_SHA"
 
-          # The newest COMPLETED pull_request_target run for this exact head.
-          # Scoped by head_sha rather than by branch: a run against a superseded
-          # commit is stale by design, and re-running it would prove nothing.
-          RUN_JSON="$(gh api \
-            "repos/$GH_REPO/actions/workflows/pre-pr-attest.yml/runs?event=pull_request_target&head_sha=$HEAD_SHA&per_page=100" \
-            --jq '[.workflow_runs[] | select(.status == "completed")]
-                  | sort_by(.run_number, .id) | last // {}')"
-          RUN="$(printf '%s' "$RUN_JSON" | jq -r '.id // empty')"
-          CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r '.conclusion // empty')"
+          # The newest pull_request_target run for this exact head, whatever its
+          # status. Scoped by head_sha rather than by branch: a run against a
+          # superseded commit is stale by design, and re-running it would prove
+          # nothing.
+          #
+          # WAIT FOR IT TO LAND rather than skipping an in-flight run. The
+          # attesting party pushes and then comments seconds later, so the run
+          # this needs is usually still executing -- and the first cut of this
+          # job exited 0 on exactly that state, which left the check red with
+          # nothing on the way to clear it. Harmless when a human is driving
+          # (comment again), unrecoverable when an agent is: nothing re-comments.
+          #
+          # An in-flight run may also go green by itself. It reads the comment
+          # list at step time, so if the attestation beat it to the API there is
+          # nothing to re-arm -- which is why this polls for the CONCLUSION
+          # instead of unconditionally re-running.
+          DEADLINE=$((SECONDS + 180))
+          while :; do
+            RUN_JSON="$(gh api \
+              "repos/$GH_REPO/actions/workflows/pre-pr-attest.yml/runs?event=pull_request_target&head_sha=$HEAD_SHA&per_page=100" \
+              --jq '[.workflow_runs[]] | sort_by(.run_number, .id) | last // {}')"
+            RUN="$(printf '%s' "$RUN_JSON" | jq -r '.id // empty')"
+            STATUS="$(printf '%s' "$RUN_JSON" | jq -r '.status // empty')"
+            CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r '.conclusion // empty')"
 
-          if [ -z "$RUN" ]; then
-            # Not a failure. Either a run is still in flight -- it reads the
-            # comment list itself at step time, so it will already see this
-            # attestation -- or the head moved after the comment was posted,
-            # which makes the attestation stale exactly as intended.
-            echo "::notice::No completed pre-pr-attest run for $HEAD_SHA; nothing to re-arm."
-            exit 0
-          fi
+            if [ -z "$RUN" ]; then
+              # The head moved after the comment was posted, so the attestation
+              # is stale exactly as intended. Not a failure.
+              echo "::notice::No pull_request_target run for $HEAD_SHA; nothing to re-arm."
+              exit 0
+            fi
+
+            [ "$STATUS" = "completed" ] && break
+
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              # Bounded so this job cannot outlive its own timeout-minutes. The
+              # attest job is one ~10s API step, so 180s means something is
+              # wrong upstream, not that it needs longer.
+              echo "::warning::run $RUN still $STATUS after 180s; not re-arming. Comment again to retry."
+              exit 0
+            fi
+            echo "run $RUN is $STATUS; waiting for it to land"
+            sleep 15
+          done
 
           if [ "$CONCLUSION" = "success" ]; then
             echo "run $RUN is already green for $HEAD_SHA; nothing to re-arm"
