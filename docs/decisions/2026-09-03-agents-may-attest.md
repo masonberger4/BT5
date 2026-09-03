@@ -53,8 +53,29 @@ its own `timeout-minutes: 5`) and re-runs only if the run landed non-green.
   not say.
 - `security-reviewer` could not complete: three attempts, two on opus and one on sonnet,
   all terminated by an API safeguard on `[bio]`. The agent's own definition is written
-  around "biosecurity posture", so the trigger is the agent, not the diff. The CI
-  permissions surface was reviewed by other means instead; see the PR.
+  around "biosecurity posture", so the trigger is the agent, not the diff. A substitute
+  permissions audit ran on a generic agent instead, and it earned its keep — see below.
+
+**A real hole the substitute audit found, fixed in this slice.** The matcher allowed
+`[ \t]*` before the command, and the attest job's own failure message prints
+`    /pre-pr <head-sha>` indented four spaces. So a counted author who pasted the log into
+a comment to ask about it silently turned the check green with no review having happened —
+the gate defeating its own single stated property. The matcher is now anchored to the line
+start. Verified both ways: the real OWNER attestation on #101 still matches through jq
+against the live API, and the pasted-help-text case flips `True` -> `False`, while
+quote-replies and `/pre-pr-bypass` stay correctly rejected.
+
+Three residuals from the same audit are now documented in the workflow header rather than
+fixed, because each needs a design decision rather than a patch: `author_association` is
+resolved at read time (so adding a collaborator retroactively promotes their old
+comments); only `issue_comment: [created]` is subscribed while bodies are re-read live (so
+a counted author can edit an old comment into an attestation, costing auditability rather
+than access); and `author_association` is not a permission check at all — `COLLABORATOR`
+includes read-only and triage. The last is latent, not live: the repository has exactly one
+collaborator, the owner, at `admin`. Two claims the audit could not settle from the files
+were closed from live data: `claude[bot]` resolves to `author_association: NONE`, so bot
+comments can never be counted, and a `pull_request_target` check run does attach to the PR
+head, proven when re-running 33784923222 flipped #101's rollup entry.
 - `rearm`'s six control-flow branches driven with `gh`/`jq`/`sleep` stubbed:
   in-flight→success (no re-run), in-flight→failure (re-run), in-flight→cancelled (re-run),
   deadline exceeded (warn, no re-run), no run for the head (notice), already green (no

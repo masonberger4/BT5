@@ -50,9 +50,21 @@ name: pre-pr-attest
 #
 #   pull_request_target -> `pre-pr-attest`, which owns the check on the HEAD SHA
 #                          and is the only job here that reports a verdict.
-#   issue_comment       -> `rearm`, which reports nothing at all and instead
-#                          waits for that run to land and re-runs it if it is
-#                          not green, so it re-reads the comments.
+#   issue_comment       -> `rearm`, which reports no VERDICT and instead waits
+#                          for that run to land and re-runs it if it is not
+#                          green, so it re-reads the comments.
+#
+# WHAT THIS STILL DOES NOT PREVENT, so nobody mistakes it for more than it is:
+#   * `author_association` is resolved when the comment list is READ, not when
+#     the comment was posted. Adding someone as a collaborator retroactively
+#     promotes every `/pre-pr <sha>` they ever wrote.
+#   * Only `issue_comment: [created]` is subscribed, but bodies are re-read
+#     live, so a counted author can EDIT an old comment into an attestation
+#     with no new timeline entry. They could equally post a fresh one, so this
+#     costs auditability rather than access.
+#   * The verdict is computed against a head fetched live at step time, while
+#     the check run is bound to the head fixed at event time. Two pushes inside
+#     the concurrency window can decouple them (see the API-read note below).
 #
 # No `paths:`/`paths-ignore:` filter, ever -- check-workflow-gate.py rejects one
 # on any workflow, because a required check that never reports blocks the pull
@@ -107,7 +119,14 @@ jobs:
           echo "$(jq 'length' /tmp/comments.json) comment(s) on this pull request"
 
           # A drive-by commenter must not be able to attest for someone else's
-          # branch, so only an author who can write to this repository counts.
+          # branch, so the author must be OWNER, COLLABORATOR or MEMBER. Note
+          # what that does and does not mean: `author_association` is NOT a
+          # permission check. COLLABORATOR covers read-only and triage
+          # collaborators too, and MEMBER means "in the owning organisation",
+          # which for a personal repository is unreachable but would widen the
+          # set on a transfer to an org. Today the repository has exactly one
+          # collaborator, the owner, at `admin`.
+          #
           # The SHA must be the full 40 characters: a short SHA would let an
           # attestation for one commit satisfy another that shares its prefix.
           #
@@ -115,12 +134,22 @@ jobs:
           # has prose around the command, so requiring space-tab-or-end-of-string
           # after the SHA silently failed to match every attestation that was not
           # the entire comment body -- caught by the fixture test below.
+          #
+          # NO LEADING WHITESPACE, and that is load-bearing rather than tidy.
+          # This used to allow `[ \t]*` before the command, which made THIS JOB'S
+          # OWN FAILURE MESSAGE a valid attestation: the help text below prints
+          # `    /pre-pr <head-sha>` indented four spaces, so a maintainer who
+          # pasted the log into a comment to ask about it silently turned the
+          # check green with no review having happened -- defeating the one
+          # property this file claims ("SKIPPING BECOMES VISIBLE"). Anchoring to
+          # the line start rejects the paste, and rejects a `>` quote-reply too,
+          # while the help text stays indented so it cannot match either way.
           claims() {
             jq -r --arg sha "$HEAD_SHA" --arg cmd "$1" --argjson who "$2" '
               [ .[]
                 | select(.author_association as $a | $who | index($a))
                 | .body
-                | select(test("(^|\\r?\\n)[ \\t]*" + $cmd + "[ \\t]+" + $sha + "([ \\t\\r\\n]|$)"))
+                | select(test("(^|\\r?\\n)" + $cmd + "[ \\t]+" + $sha + "([ \\t\\r\\n]|$)"))
               ] | length' /tmp/comments.json
           }
 
@@ -158,11 +187,19 @@ jobs:
           exit 1
 
   # ---- Re-arming: the half that was missing --------------------------------
-  # Reports NOTHING, on purpose. It exists only to make the job above
+  # Reports no VERDICT, on purpose. It exists only to make the job above
   # re-evaluate, because nothing an issue_comment run does can land a check on
-  # the pull request's head SHA. Reporting from here would put a second, rival
-  # `pre-pr-attest` on a commit that is not the one being merged -- which is the
-  # bug this job replaces, not a fix for it.
+  # the pull request's head SHA. Reporting a verdict from here would put a
+  # second, rival `pre-pr-attest` on a commit that is not the one being merged
+  # -- which is the bug this job replaces, not a fix for it.
+  #
+  # It is NOT check-run-free, and an earlier draft of this comment claimed it
+  # was. Every job emits a check run named by its `name:`, so this one puts a
+  # check called `rearm` on the default branch's tip -- which is itself a check
+  # reporting on a commit it was not evaluated against. Harmless because the
+  # name cannot be confused with `pre-pr-attest`, it gates nothing, and it is in
+  # NON_BLOCKING. It goes red on `main` if `gh run rerun` exits non-zero, e.g.
+  # a run outside the retention window.
   #
   # Deliberately outside any merge gate, and named in check-workflow-gate.py's
   # NON_BLOCKING set, so that promoting `pre-pr-attest` to a required context
@@ -183,9 +220,20 @@ jobs:
       github.event.comment.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # A job-level block REPLACES the workflow-level one outright rather than
+    # merging with it, so every scope absent here is `none` -- including
+    # `contents`, which is why this job could not check out even if it tried.
+    # Re-declaring `pull-requests: read` is therefore load-bearing, not
+    # redundant: drop it and it becomes `none`.
     permissions:
       pull-requests: read
-      actions: write        # `gh run rerun`, and nothing else
+      # All this job CALLS is `gh run rerun`, but the SCOPE is wider than that:
+      # `actions: write` also permits deleting workflow runs and their logs --
+      # the evidence trail this file exists to produce -- and approving pending
+      # fork-PR runs. Not reachable here (the guard below runs before any step,
+      # this job checks out nothing and uses no third-party action), but the
+      # grant is the thing to reason about, not the script.
+      actions: write
     steps:
       - name: Re-run the attestation against this pull request's head
         env:
