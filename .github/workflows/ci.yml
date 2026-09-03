@@ -235,8 +235,22 @@ jobs:
     if: >-
       always() && github.event_name == 'push' &&
       (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+    #
+    # `mypy` belongs in this list for the same reason it belongs in
+    # `required-checks.needs`: it is a required gate. It was added to the gate
+    # and not to the safety net, so a strict-mode type break landing on main
+    # went red on the push and then silent -- no issue, and the next merge
+    # landing on top of it gated on nothing.
     needs:
-      [changes, python-quality, invariants, contract, contract-freeze, python-tests]
+      [
+        changes,
+        python-quality,
+        mypy,
+        invariants,
+        contract,
+        contract-freeze,
+        python-tests,
+      ]
     runs-on: ubuntu-latest
     permissions:
       contents: read

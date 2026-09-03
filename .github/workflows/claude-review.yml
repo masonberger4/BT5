@@ -7,8 +7,8 @@
 #   To promote it, add ONE entry to main-protection.json:
 #       { "context": "claude-review-gate", "integration_id": 15368 }
 #   and nothing else. A PARALLEL required context, never an input to
-#   `required-checks` -- that gate counts `skipped` as failure (ci.yml:295-320)
-#   and this job skips on drafts and on forks.
+#   `required-checks` -- that gate counts `skipped` as failure (ci.yml, job
+#   `required-checks`), and this job skips on drafts and on forks.
 #   Precondition, from docs/research/github-setup.md:2804,2809: a week of
 #   watching the false-positive rate on `blocking=true` before promoting.
 #
@@ -134,9 +134,18 @@ jobs:
             say so.
 
             Set provenance to N/A when the diff changes no rule in the catalog.
+          # --max-turns is a RUNAWAY GUARD, not a budget -- `timeout-minutes: 25`
+          # above is what actually bounds the cost. At 30 it was a budget, and
+          # one set BELOW this job's own measured cost: completed reviews came in
+          # at 17, 27, 28, 32 and 42 turns, so the cap sat inside the normal
+          # distribution rather than outside it. Six of the last fifteen runs
+          # died on it, and two of those had already produced a verdict that the
+          # action then discarded -- "Claude reported a successful result after 42
+          # turns, exceeding the configured maximum of 30". Every one failed
+          # CLOSED, so the gate was red for arithmetic and not for the diff.
           claude_args: |
             --model claude-sonnet-5
-            --max-turns 30
+            --max-turns 100
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
             --json-schema '{"type":"object","properties":{"blocking":{"type":"boolean"},"summary":{"type":"string"},"blocking_findings":{"type":"array","items":{"type":"string"}},"provenance":{"type":"string","enum":["SUPPORTED","UNSUPPORTED","SUPERSEDED","UNRESOLVED","N/A"]}},"required":["blocking","summary","blocking_findings","provenance"],"additionalProperties":false}'
 
