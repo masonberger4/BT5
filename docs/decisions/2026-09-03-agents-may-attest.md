@@ -81,8 +81,24 @@ head, proven when re-running 33784923222 flipped #101's rollup entry.
   deadline exceeded (warn, no re-run), no run for the head (notice), already green (no
   re-run). Plus both live-API paths against real head SHAs.
 
-**Where:** PR #104, branch `claude/github-ci-checks-2969e5`, carrying `approved:ci-change`.
-Owner merges (CLAUDE.md §7b: protected path).
+**Where:** PR #113, branch `claude/pre-pr-agent-attest`, carrying `approved:ci-change`.
+(An earlier draft of this line said PR #104. Wrong: #104 was the re-arm and turn-cap fix,
+merged as `d428554`, and its diff never touches `.claude/skills/pre-pr/SKILL.md`. Caught by
+`claude-review-gate` on #113.)
+
+**Owner corroboration.** This record is agent-authored, and `pre-pr-attest.yml:32-34` says
+agent and owner actions cannot be told apart from this repository's metadata — so on its
+own it is a *claim* that the owner decided this, not evidence of it. The owner confirmed it
+in their own account on #113 (2026-09-03T20:26:54Z, `author_association: OWNER`):
+
+> Confirming I made this call. I chose full autonomy including attestation over the
+> human-gated alternative, knowing it downgrades `pre-pr-attest` from "a human vouched" to
+> "the agent's chain came back clean". Goal is unattended CI.
+
+That comment is the verifiable artifact; this file is the reasoning behind it. A future
+reader should check the comment, not trust the file. `claude-review-gate` returned the
+missing corroboration as a BLOCKING finding twice before it existed, which is the intended
+behaviour and is why the check earned its keep on the very change that weakens it.
 
 **Left open:** `claude-review-gate` is still red by construction on any PR that edits
 `claude-review.yml` — flagged at `2026-09-01-pre-pr-as-ci-gates.md:52` as *"a required
