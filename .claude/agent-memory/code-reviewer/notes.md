@@ -97,3 +97,55 @@ legitimate trade, not a diligence failure, as long as a canonical example surviv
 elsewhere (e.g. "splice donors are the canonical case" stays in `rule-add/SKILL.md`).
 `.claude/agents/`, `.claude/rules/`, `.claude/skills/` are not in CLAUDE.md's lane table
 or its §2 protected-path list — editing their prose needs no lane issue and no `approved:*` label.
+
+## "this code path never ran in production" claims: verify by chasing the caller chain to a filesystem/data mismatch, not just by reading the guard
+PR #112 (`score/null.py`, host-frequency weighted null draw, merged as `10456d8`)
+claimed the weighted
+branch of `synonymous_variant`/`null_distribution` never executed because no host
+resolves a codon-usage table (issue #98) — checked out true: `design/runner.py::
+_host_usage` looks up `data/codon_usage/{str(HostId)}.json` (e.g. `human.json`,
+`e_coli_k12.json`), but the files actually on disk are named by reference-set, not
+host (`human_highly_expressed_refseq_w.json`, `sharp_li_1987_ecoli_w.json`, etc. —
+a DIFFERENT lookup used by C1/C3's `CAI_REFERENCE_SET`/`MINMAX_REFERENCE_SET`
+maps). `_host_usage` is the only production caller feeding `null_distribution`, so
+every host raises `FileNotFoundError` there today and the weighted path is dead
+code. General pattern: when a PR's "scientific impact: none" / agent-mergeability
+argument rests on "this branch is unreachable", grep every production caller (not
+just tests) of the function that would reach it, and check any filename/lookup-key
+assumption against `ls` of the actual data directory — a two-path split (one
+correct lookup key elsewhere in the codebase, one stale one in the code under
+review) is exactly the shape that makes an "unreachable" claim true today but
+fragile to a future data-file rename.
+
+## Inverse-CDF / `bisect_right`-on-`rng.random()` draws: verify empirically, it's cheap and conclusive
+For a PR replacing `rng.choice(n, p=weights)` with `bisect_right(cumulative_cdf,
+rng.random(), hi=len(cumulative)-1)`: this is provably the same categorical
+distribution (bisect_right's tie-breaking toward higher indices means a
+zero-width interval from a zero-weight option can never be selected, and the
+`hi=len-1` cap only guards the rounding edge case where cumulative floating-point
+division leaves the last entry a hair under 1.0). Don't just eyeball it — a
+`.venv/bin/python` scratch script (no repo files touched) computing chi-square
+over ~100-400k draws both ways, plus checking `rng.bit_generator.state` equality
+after a single `rng.choice(n, p=p)` vs a single `rng.random()` call with the same
+seed, settles distribution-equivalence and stream-consumption questions in under a
+minute and is far more conclusive than reasoning about numpy's C internals from
+the docstring alone. In this PR they came out bit-identical for the tested weight
+vectors, stronger than the PR's own hedged "same distribution, exact stream
+changes" claim.
+
+## "verified rather than asserted" claims need a matching pinned test
+PR #112's *PR description* claimed a 400k-draw chi-square check and "zero-weight
+codons drawn 0/60k" and "all-zero family falls back to uniform" as verification
+(check with `gh pr view`, not `git show` — the squash commit `10456d8` carries only
+the follow-up line, so grepping the commit body for these will find nothing) — none of
+the three is a committed test in `tests/score/test_null.py`; the only weighted-path
+test (`test_weights_actually_bias_the_sampling`) uses a fixture (`usage` in
+`tests/score/conftest.py`) where every codon has weight 1.0 or 10.0, never 0.0, so
+the zero-weight-skip and all-zero-fallback branches of `weight_table()` are
+completely untested in CI. Flag this as non-blocking test-coverage gap (not a
+CLAUDE.md §4 suppression — nothing was skipped/loosened, coverage was just never
+added), but call it out explicitly since the PR description implies these were
+checked and locked in. #112 merged with the gap open; as of `369429a` the fixture
+is still `10.0 if c.endswith("C") else 1.0` (`tests/score/conftest.py:27`), so
+`running > 0` is always true and `null.py:133`'s `else None` arm has still never
+run — a ready-made first test for whoever turns host steering on.
