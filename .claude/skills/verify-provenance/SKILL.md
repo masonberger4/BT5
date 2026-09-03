@@ -30,7 +30,7 @@ job, and the one most likely to lapse."* This skill is that habit.
 ## Method
 
 Delegate to `rule-auditor` (opus/xhigh, project memory). With a rule id, audit that rule.
-With `--sweep`, audit all 15, five at a time, skipping ids its memory records as audited
+With `--sweep`, audit all 25, five at a time, skipping ids its memory records as audited
 within the last quarter.
 
 `rule-auditor` resolves each `brief_ref` via `docs-miner` — remember `brief_ref` strings

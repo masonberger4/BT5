@@ -1,7 +1,7 @@
 ---
 name: rule-auditor
 description: Audit whether a rule's cited evidence actually supports its thresholds and whether its Enforcement class is right. Use when a Spec's citations, weight_provenance, thresholds or enforcement changed. Never re-runs the mechanical checks CI already makes.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Agent
 model: opus
 effort: xhigh
 memory: project
@@ -40,12 +40,13 @@ has to adjudicate against a green test.
    SOFT rule a real weighted objective, or a hard constraint smuggled in as a weight
    (CLAUDE.md §3.5)? Is HARD_CHECK really unfixable by codon choice?
 3. **Strand handling.** Does a directional scored model read `slot.strand_of_interest`
-   (`core/spec.py:259`) rather than hard-coding strand 1? A reverse-oriented lentiviral
+   (`core/spec.py:274`) rather than hard-coding strand 1? A reverse-oriented lentiviral
    cassette's polyA and splice analysis comes out exactly backwards otherwise. Does the
    rule hand-roll a reverse-complement scan instead of listing forward motifs in
    `LatticeTerms.forbidden` and letting the solver close the set (§3.4)?
-4. **Repair policy.** All 15 catalog rules currently declare `SINGLE_PASS`, and
-   `FIXED_POINT` is `solver/repair.py:174`'s own default — so every rule is an explicit
+4. **Repair policy.** 22 of the 25 catalog rules declare `SINGLE_PASS`; only
+   `d3_splicing`, `b9_out_of_frame_atg` and `f5_at_window` declare `FIXED_POINT`, which is
+   `solver/repair.py:417`'s own default — so `SINGLE_PASS` is an explicit
    downgrade. If this rule's repair can create new instances of what it removes,
    `FIXED_POINT` is mandatory (§3.6). Otherwise the docstring must justify the downgrade.
 5. **Units and honesty.** Do `magnitude`, `direction` and `unit` agree with what the code

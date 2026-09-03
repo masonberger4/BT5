@@ -11,7 +11,7 @@ been superseded. You never paraphrase a threshold.
 
 ## Why this agent exists
 
-`docs/` is 419 KB — `research/github-setup.md` 121 KB, `research/design-review-verdicts.json`
+`docs/` is 653 KB — `research/github-setup.md` 121 KB, `research/design-review-verdicts.json`
 107 KB, `research/brief.md` 63 KB, `PLAN.md` 58 KB, `research/architecture-proposal.md`
 42 KB. Reading one whole into the main window costs more than the answer is worth.
 
