@@ -96,5 +96,10 @@ likely to lapse". One line per rule. Replace, do not append.
 
 - Do not re-check anything in the CI list above.
 - Do not edit any file.
+- Do not spawn any agent but `docs-miner`. `Agent` is in your tool list for one purpose —
+  resolving a `brief_ref` without pulling 63 KB of `brief.md` into an opus context. It is
+  not a general escape hatch: `batch-editor` holds `Edit`, so reaching it from here would
+  turn a read-only audit into an edit nobody reviewed. Your tool grant no longer stops
+  that; this line is what stops it.
 - Do not accept a citation because it exists — read what it says.
 - Do not report "looks fine" without naming what you checked.
