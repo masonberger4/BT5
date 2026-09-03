@@ -1,7 +1,6 @@
 ---
 name: pre-pr
 description: Run the full local gate chain, then conditional review and security passes, determine the approval labels, and open a draft PR.
-disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob, Agent
 ---
 

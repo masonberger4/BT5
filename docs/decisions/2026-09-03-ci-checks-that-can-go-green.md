@@ -37,8 +37,9 @@ goes 30 → 100. `main-broken` gains `mypy` in its `needs`.
   that PR's `pre-pr-attest` from `FAILURE` to `SUCCESS` with the owner's attestation
   comment already in place and nothing else changed. That is the whole mechanism, tested
   on a real head.
-- `claude-review-gate` turn counts: successes at 17, 27, 28; failures at 31, 31, 31, 32,
-  42. Two failures had already produced a verdict — *"Claude reported a successful result
+- `claude-review-gate` turn counts: successes at 17, 27, 28; failures at 31, 31, 31, 31,
+  32, 42 — six, matching the six of the last fifteen runs that died on the cap. Of those
+  six, four hit `error_max_turns` at 31 and two had already produced a verdict — *"Claude reported a successful result
   after 42 turns, exceeding the configured maximum of 30"* (runs 33660939981,
   33696385723). Only 33663943738 failed on an actual finding.
 - `main-broken.needs` listed `changes, python-quality, invariants, contract,

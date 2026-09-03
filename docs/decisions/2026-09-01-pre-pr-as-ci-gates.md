@@ -55,4 +55,8 @@ construction cannot be satisfied by any push.
 run it and therefore cannot honestly attest. Until that is decided, agent-opened PRs show
 `pre-pr-attest` red unless the owner runs `/pre-pr` or comments `/pre-pr-bypass <sha>`.
 
+> **Resolved 2026-09-03** — the flag is removed and an agent may attest, under step 10's
+> existing "not if blocking" condition. See `2026-09-03-agents-may-attest.md` for what the
+> check proves now and what it stopped proving.
+
 **Where:** PR #84, merged as `81a63d8`.
