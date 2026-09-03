@@ -26,15 +26,27 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 
 ## The chain, in order
 
-**1. Gates.** Issue this as **one compound command**:
+**1. Gates.** Delegate the whole chain to `gate-runner` — this is the "Gates →
+`gate-runner`" route CLAUDE.md names. It owns the Phase 0 environment probe and the exit
+vocabulary above, and it runs on haiku, so the full ruff/mypy/pytest output never enters
+this window. That is the entire point of the routing table in `SETUP-NOTES.md`: running
+the chain inline spends the most expensive context in the repo on output nobody reads.
+
+Take its report verbatim into the `GATES` line below. If it returns `ENV: MISSING` or
+`ENV: INCOMPLETE`, that is **BROKEN**, not FAIL — run `/bootstrap`, then restart this
+chain.
+
+Only if `gate-runner` is unavailable, run it here yourself:
 
 ```bash
-set -e; bash scripts/gates.sh
+bash scripts/gates.sh
 ```
 
-It must stay compound. The `PreToolUse` Bash hook appends truncating flags to *simple*
-commands and stands down on compound ones — so a later session that "simplifies" this
-into separate calls silently re-enables truncation on the one run that must be complete.
+A simple command is fine — `gates.sh` is on `compact_output.py`'s `NEVER` list
+(`.claude/hooks/compact_output.py:35-42`), so the truncating-flags hook never rewrites
+it, compound or not. What must not happen is running the gates *individually* to save
+time: four of five green reported as green is the failure this step exists to prevent,
+and `gates.sh` runs each one independently for exactly that reason.
 
 **2. Review.** Delegate the branch diff to `code-reviewer`.
 

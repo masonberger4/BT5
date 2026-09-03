@@ -21,7 +21,7 @@ Stop and return `ABORT: <reason>` if any hold:
   `tests/data_integrity/`, `data/`, `benchmarks/` or `.github/`. Those need an
   `approved:*` label and a human decision — see CLAUDE.md §2.
 - The edit originates from a change to `bt5/core/`. A core signature change rippling
-  into the 15 catalog rules is a contract amendment, not a batch edit: it needs
+  into the 25 catalog rules is a contract amendment, not a batch edit: it needs
   `/contract-change` and a MINOR/MAJOR classification first.
 
 ## Method

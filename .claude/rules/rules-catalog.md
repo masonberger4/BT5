@@ -13,7 +13,7 @@ rationale and the mechanics.
 
 Every `Spec` carries `brief_ref`, "section id in `docs/research/brief.md`". The values
 look like `2.E4`, `2.B1`, `2.D1`. **None of those strings appears in `brief.md`** —
-`grep -F "2.E4"` returns zero hits for all 15. The reference is *section-qualified* and
+`grep -F "2.E4"` returns zero hits for all 25. The reference is *section-qualified* and
 resolves in two steps:
 
 1. **Section:** `grep -n '^### 2\.E' docs/research/brief.md`.
@@ -54,14 +54,15 @@ missed.
 
 But **directional scored models are not revcomp-symmetric** — MaxEntScan, Salis TIR, the
 promoter calculator, the polyA downstream element. Those must read
-`slot.strand_of_interest` (`core/spec.py:259`). Hard-coding strand 1 makes a
+`slot.strand_of_interest` (`core/spec.py:274`). Hard-coding strand 1 makes a
 reverse-oriented lentiviral cassette's polyA and splice analysis exactly backwards, and
 nothing fails loudly when it does.
 
 ## Repair policy: `SINGLE_PASS` is a downgrade
 
-`RepairPolicy.FIXED_POINT` is the default of `solver/repair.py:174`. All 15 current
-catalog rules explicitly declare `SINGLE_PASS`, so each is an opt-out.
+`RepairPolicy.FIXED_POINT` is the default of `solver/repair.py:417`. 22 of the 25
+current catalog rules explicitly declare `SINGLE_PASS`, so each of those is an opt-out;
+`d3_splicing`, `b9_out_of_frame_atg` and `f5_at_window` keep `FIXED_POINT`.
 
 Point-mutating one cryptic splice donor activates cryptic donors nearby. A single pass
 ships a construct whose donors were removed *into* new donors — and the validator passes

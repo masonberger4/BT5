@@ -48,7 +48,7 @@ When a vector test fails in a way that looks impossible, check the wrap first.
 
 ## Strand
 
-Directional models read `slot.strand_of_interest` (`core/spec.py:259`). A hard-coded
+Directional models read `slot.strand_of_interest` (`core/spec.py:274`). A hard-coded
 strand 1 makes a reverse-oriented lentiviral cassette's polyA and splice analysis exactly
 backwards, silently.
 

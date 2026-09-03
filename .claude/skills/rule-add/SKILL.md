@@ -17,7 +17,7 @@ allowed-tools: Read, Edit, Write, Grep, Glob, Bash, Agent
    See the resolution procedure below — a `brief_ref` that resolves to nothing means the
    rule's evidence is unauditable.
 3. **`SINGLE_PASS` is a downgrade, not the default.** `RepairPolicy.FIXED_POINT` is
-   `solver/repair.py:174`'s own default, and all 15 existing rules explicitly downgrade.
+   `solver/repair.py:417`'s own default, and 22 of the 25 existing rules downgrade.
    If your repair can create new instances of what it removes — splice donors are the
    canonical case — `FIXED_POINT` is **mandatory** (CLAUDE.md §3.6). Otherwise justify
    the downgrade in the docstring.
@@ -59,7 +59,7 @@ and `lo < hi`) · `localization` · `repair` · `cost_class` · `conflicts_with`
 
 Also: never scan the reverse strand yourself — list forward motifs in
 `LatticeTerms.forbidden` and let the solver close the set under reverse complement.
-A directional scored model must read `slot.strand_of_interest` (`core/spec.py:259`),
+A directional scored model must read `slot.strand_of_interest` (`core/spec.py:274`),
 never a hard-coded strand 1 (§3.4).
 
 ## Verify

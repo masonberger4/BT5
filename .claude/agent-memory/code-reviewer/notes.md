@@ -78,3 +78,20 @@ gap classes that actually recur, not on re-confirming precision:
 - no GitHub API access here — cross-check issue/PR numbers only against
   `git log --oneline` squash-merge `(#N)` trails, and say explicitly when a
   citation has no such trail rather than silently skipping it.
+
+## "read-only agent" is policy here, not mechanism — do not claim otherwise
+`rule-auditor` holds `Agent` (added Sep 2026, to resolve `brief_ref` via `docs-miner`),
+which also reaches `batch-editor` (holds `Edit`). Worth flagging — but do NOT write it
+up as "the only agent whose read-only-ness is not mechanical". That was asserted in a
+review and is false: `code-reviewer`, `debugger`, `docs-miner`, `gate-runner` and
+`security-reviewer` all hold `Bash`, and `sed -i` writes as well as `Edit`. Five of six
+no-edit agents were already policy-enforced; the `Agent` grant widens an existing
+surface, it does not create a new class.
+Two facts established by testing, not inference: `tools: Agent(docs-miner)` is NOT
+honoured by this CLI — the parameterised form is dropped silently, leaving the agent no
+`Agent` tool at all (fails closed, but it does not scope). And an agent holding `Bash`
+can reach the `claude` CLI on PATH regardless of its tool list.
+Generalise the method, not the verdict: before calling a control "mechanical", name the
+mechanism and check it holds. Separately — when a diff corrects a fact, grep the whole
+file for the old value; a stale `repair.py:174` survived in an example block after the
+same fact was fixed a few lines above.
