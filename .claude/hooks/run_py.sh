@@ -122,7 +122,25 @@ fi
 # so a hook is never executed twice and its real stdout is never discarded. A hook that
 # runs and crashes exits non-zero WITH its traceback, correctly attributed to the hook
 # instead of being misreported as a dead interpreter.
-if [ -n "$PY" ] && [ -f "$SCRIPT" ]; then
+if [ -n "$PY" ] && [ -f "$SCRIPT" ] && [ -r "$SCRIPT" ]; then
+  if [ "$MODE" = "--optional" ]; then
+    # --optional promises never to block, and that promise has to survive CPython too.
+    # `-f` tests existence, not openability: a script that is unreadable, mid-write or
+    # syntactically broken makes CPython exit 2, which `exec` would hand to Claude Code
+    # as a BLOCK -- from a tier whose entire job is keeping Bash alive on a broken box.
+    # Both hooks registered here (compact_output.py, push_gate.py on the Bash matcher)
+    # signal through stdout JSON and always return 0, so a 2 is never their decision.
+    # Clamp it. stdout and stderr still pass through untouched on inherited fds.
+    "$PY" "$SCRIPT" "$@"
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+      printf 'BT5 hooks: %s exited 2, clamped to 0 -- it is registered --optional, which\n' "$SCRIPT" >&2
+      printf 'must never block. That exit is CPython failing to run the file, not the hook\n' >&2
+      printf 'deciding anything. Run: bash .claude/verify-setup.sh\n' >&2
+      exit 0
+    fi
+    exit "$rc"
+  fi
   exec "$PY" "$SCRIPT" "$@"
 fi
 

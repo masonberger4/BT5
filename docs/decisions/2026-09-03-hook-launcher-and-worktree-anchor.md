@@ -74,7 +74,13 @@ bundle, **not** executed end to end. That is a merge acceptance criterion, not a
 assumption: set `BT5_PYTHON=/nonexistent/python`, attempt a `Write` to `pyproject.toml`,
 confirm it is refused.
 
-**Where:** branch `claude/hook-launcher-worktree-anchor`; commits `0ea3378` (launcher),
-`0b8b074` (worktree anchor), and this one (verifier, detector, scheduling). The CI shape
-check `.github/scripts/check-hook-commands.py` is a separate PR carrying
-`approved:ci-change`.
+**Where:** branch `claude/hook-launcher-worktree-anchor`, in four commits — the launcher and
+the five rewired command strings; the `repo_root_for()` worktree anchor; the verifier
+repair, SessionStart detector and `/pre-pr` scheduling; and the `--optional` exit-2 clamp
+from code review. Deliberately no SHAs here: this branch was rebased onto a moving `main`
+mid-flight and an earlier version of this file cited commits that no longer existed.
+
+The CI shape check (`.github/scripts/check-hook-commands.py` plus a step in `ci.yml`) is a
+**separate, stacked** branch, `claude/ci-hook-command-guard`, because `.github/**` is a §2
+protected path and carries `approved:ci-change` — which is owner sign-off, so bundling it
+would have forced a label onto an otherwise unlabelled PR.
