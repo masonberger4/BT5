@@ -45,7 +45,14 @@ RULESET = pathlib.Path(".github/rulesets/main-protection.json")
 #: event. The gate counts `skipped` as failure, so putting it in `needs` would
 #: block every pull request permanently -- the exact deadlock this script exists
 #: to catch, arrived at from the other direction.
-NON_BLOCKING: frozenset[str] = frozenset({"main-broken"})
+#:
+#: `rearm` (pre-pr-attest.yml) runs ONLY on issue_comment and produces no check
+#: run of its own -- it re-runs the pull_request_target run that owns the check,
+#: because an issue_comment run's check lands on main's tip and not on the
+#: pull request's head. Same skipped-is-failure deadlock, and listing it here is
+#: what keeps promoting `pre-pr-attest` to a required context the single ruleset
+#: line that file's header promises it is.
+NON_BLOCKING: frozenset[str] = frozenset({"main-broken", "rearm"})
 
 PATH_FILTER_KEYS = ("paths", "paths-ignore")
 

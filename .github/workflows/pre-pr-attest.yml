@@ -7,10 +7,13 @@
 #   To promote it, add ONE entry to main-protection.json:
 #       { "context": "pre-pr-attest", "integration_id": 15368 }
 #   and nothing else. It is a PARALLEL required context, never an input to
-#   `required-checks` -- that gate counts `skipped` as failure (ci.yml:295-320),
-#   which is why `main-broken` is excluded from it too.
+#   `required-checks` -- that gate counts `skipped` as failure (ci.yml, job
+#   `required-checks`), which is why `main-broken` is excluded from it too.
+#   The `rearm` job below is already in check-workflow-gate.py's NON_BLOCKING
+#   set, which is what keeps that one line one line.
 #   Precondition: a week of clean runs with the re-arm behaviour confirmed on a
-#   real push.
+#   real push -- and note that until this commit there WAS no working re-arm, so
+#   no run before it counts towards that week.
 #
 # WHY THIS EXISTS. `/pre-pr` runs code-reviewer, rule-auditor and
 # security-reviewer as subagents inside one Claude session. Their verdicts live
@@ -36,6 +39,20 @@ name: pre-pr-attest
 # cannot edit the check to make itself pass. There is deliberately no checkout
 # step: this job never executes PR code.
 #
+# TWO EVENTS, TWO JOBS, AND ONLY ONE OF THEM IS ALLOWED TO REPORT.
+# A check run attaches to the commit of the workflow run that produced it, and
+# an `issue_comment` run is a DEFAULT-BRANCH run -- so its check lands on main's
+# tip and the pull request never sees it. One job answering both events
+# therefore made the re-arm a no-op that LOOKED like it worked: the attestation
+# turned `pre-pr-attest` green on `main`, while the pull request kept the red
+# check it was opened with and had no way to clear it. #92, #94, #97, #89 and
+# #101 all merged with this check red for that reason and no other. So:
+#
+#   pull_request_target -> `pre-pr-attest`, which owns the check on the HEAD SHA
+#                          and is the only job here that reports a verdict.
+#   issue_comment       -> `rearm`, which reports nothing at all and instead
+#                          re-runs that run so it re-reads the comments.
+#
 # No `paths:`/`paths-ignore:` filter, ever -- check-workflow-gate.py rejects one
 # on any workflow, because a required check that never reports blocks the pull
 # request forever with no error (CLAUDE.md section 9).
@@ -46,7 +63,11 @@ on:
     types: [created]
 
 concurrency:
-  group: pre-pr-attest-${{ github.event.pull_request.number || github.event.issue.number }}
+  # Keyed on the EVENT as well as the pull request. Under one shared group
+  # `cancel-in-progress` let an attestation comment cancel the very
+  # pull_request_target run it was posted to re-arm -- and a cancelled check run
+  # is red on the head SHA with no verdict inside it to explain why.
+  group: pre-pr-attest-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 permissions:
@@ -55,11 +76,12 @@ permissions:
 jobs:
   pre-pr-attest:
     name: pre-pr-attest
-    # Skips only for a comment on a plain issue, which is associated with no
-    # pull request and therefore reports no check anywhere. On every
-    # pull_request_target event this job always runs and always reports, which
-    # is what makes it safe to promote to a required context later.
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    # `pull_request_target` ONLY -- the one event whose check run lands on the
+    # commit the pull request would merge. It fires on every such event and
+    # always reports, which is what makes it safe to promote to a required
+    # context later. Comments are handled by `rearm` below, which deliberately
+    # produces no check of its own.
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -67,13 +89,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
-          # Read the head from the API rather than the event payload: on an
-          # issue_comment event the payload carries no head, and on a stale
-          # re-run the payload's head may no longer be the tip.
+          # Read the head from the API rather than the event payload. A re-run
+          # replays the ORIGINAL payload, and a re-run is exactly how `rearm`
+          # works -- so the payload's head can be stale by the time it is read,
+          # and an attestation for a superseded commit must not satisfy this.
           HEAD_SHA="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
           echo "pull request #$PR, current head $HEAD_SHA"
 
@@ -132,3 +155,71 @@ jobs:
           which records the waiver on the timeline instead of hiding it.
           EOF
           exit 1
+
+  # ---- Re-arming: the half that was missing --------------------------------
+  # Reports NOTHING, on purpose. It exists only to make the job above
+  # re-evaluate, because nothing an issue_comment run does can land a check on
+  # the pull request's head SHA. Reporting from here would put a second, rival
+  # `pre-pr-attest` on a commit that is not the one being merged -- which is the
+  # bug this job replaces, not a fix for it.
+  #
+  # Deliberately outside any merge gate, and named in check-workflow-gate.py's
+  # NON_BLOCKING set, so that promoting `pre-pr-attest` to a required context
+  # stays the single ruleset line this file's header promises it is.
+  rearm:
+    name: rearm
+    # This repository is PUBLIC, so any account can comment, and `actions: write`
+    # in a drive-by's hands would be a re-run button on someone else's branch.
+    # The association is therefore filtered here as well -- belt and braces, since
+    # the re-run itself re-checks it and counts only OWNER/COLLABORATOR/MEMBER.
+    # The comment body reaches `contains()` and nothing else: it is never
+    # interpolated into a shell command, an argument, or a jq program.
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/pre-pr') &&
+      contains(fromJSON('["OWNER","COLLABORATOR","MEMBER"]'),
+      github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      actions: write        # `gh run rerun`, and nothing else
+    steps:
+      - name: Re-run the attestation against this pull request's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          HEAD_SHA="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '.head.sha')"
+          echo "pull request #$PR, current head $HEAD_SHA"
+
+          # The newest COMPLETED pull_request_target run for this exact head.
+          # Scoped by head_sha rather than by branch: a run against a superseded
+          # commit is stale by design, and re-running it would prove nothing.
+          RUN_JSON="$(gh api \
+            "repos/$GH_REPO/actions/workflows/pre-pr-attest.yml/runs?event=pull_request_target&head_sha=$HEAD_SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.status == "completed")]
+                  | sort_by(.run_number, .id) | last // {}')"
+          RUN="$(printf '%s' "$RUN_JSON" | jq -r '.id // empty')"
+          CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r '.conclusion // empty')"
+
+          if [ -z "$RUN" ]; then
+            # Not a failure. Either a run is still in flight -- it reads the
+            # comment list itself at step time, so it will already see this
+            # attestation -- or the head moved after the comment was posted,
+            # which makes the attestation stale exactly as intended.
+            echo "::notice::No completed pre-pr-attest run for $HEAD_SHA; nothing to re-arm."
+            exit 0
+          fi
+
+          if [ "$CONCLUSION" = "success" ]; then
+            echo "run $RUN is already green for $HEAD_SHA; nothing to re-arm"
+            exit 0
+          fi
+
+          echo "re-running $RUN ($CONCLUSION) so it re-reads the comments on #$PR"
+          gh run rerun "$RUN"
