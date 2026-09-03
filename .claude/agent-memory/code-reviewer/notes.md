@@ -78,15 +78,22 @@ of its tool list. Before calling a control "mechanical", name the mechanism
 and check it holds. When a diff corrects a fact, grep the whole file for the
 old value — a stale citation can survive in an example block below the fix.
 
-## A "fabricated-looking" historical number in a skill/doc may be real — check `git log --all -p <file>`, not just the PR diff, before flagging
-A diff to `.claude/skills/verify-provenance/SKILL.md` (2026-09-03) added prose
-citing a past state ("this skill said 'audit all 15' while the catalog had 25
-rules"). The number looked invented — the file changed "25" -> glob in this
-diff, never touching "15". It was real: commit 574ea0e (the immediate parent,
-already in `origin/main`) had itself just patched "15" -> "25" as a stopgap
-before this diff replaced the hardcoded count entirely. Lesson: when a diff's
-own prose cites a specific historical number/string for "how long this bug
-existed", grep `git log --all -p -- <path>` for that exact string before
-calling it fabricated — the true prior state is sometimes one commit further
-back than the three-dot diff shows, especially right after a same-file
-stopgap fix landed on `main`.
+## Rule-count/repair-count prose in `.claude/*.md` is a recurring drift point — verify, don't assume loss of a number is a defect
+This repo has repeatedly patched `.claude/agents/`, `.claude/rules/`, `.claude/skills/`
+prose that hardcoded "25 catalog rules" or "22 of 25 declare SINGLE_PASS" style counts
+(574ea0e stopgap 15->25; #103 replaced a hardcoded count with an enumeration; a later
+diff removed the "25" count and the "d3_splicing/b9_out_of_frame_atg/f5_at_window"
+FIXED_POINT enumeration entirely, replacing with structural explanations). When review-
+ing such a diff: (1) grep `git log --all -p -- <path>` for any historical number the
+prose cites as "how long this bug existed" before calling it fabricated — the true prior
+state can be one commit further back than a three-dot diff shows; (2) verify every
+line:number and mechanism citation in the *replacement* text against live source (e.g.
+`core/spec.py:231`, `solver/repair.py:417`, `solver/catalog.py`'s `policies()`) rather
+than trusting the count it removed was accurate — sometimes the old enumeration was
+itself already stale (e.g. a "four brief.md sections" list that omitted `2.C` even
+though `c1_cai`/`c3_min_max` already cited it); (3) losing a concrete example (which
+rules currently declare `FIXED_POINT`) in exchange for a rule that never goes stale is a
+legitimate trade, not a diligence failure, as long as a canonical example survives
+elsewhere (e.g. "splice donors are the canonical case" stays in `rule-add/SKILL.md`).
+`.claude/agents/`, `.claude/rules/`, `.claude/skills/` are not in CLAUDE.md's lane table
+or its §2 protected-path list — editing their prose needs no lane issue and no `approved:*` label.
