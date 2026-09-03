@@ -194,10 +194,14 @@ jobs:
   # -- which is the bug this job replaces, not a fix for it.
   #
   # It is NOT check-run-free, and an earlier draft of this comment claimed it
-  # was. Every job emits a check run named by its `name:`, so this one puts a
-  # check called `rearm` on the default branch's tip -- which is itself a check
-  # reporting on a commit it was not evaluated against. Harmless because the
-  # name cannot be confused with `pre-pr-attest`, it gates nothing, and it is in
+  # was. Every job emits a check run named by its `name:`, wherever its workflow
+  # run attaches -- so `rearm` reports a check called `rearm` in both places: on
+  # the PULL REQUEST HEAD on a pull_request_target run, where its `if:` is false
+  # and it lands `skipped` (visible in the PR's own check list), and on the
+  # DEFAULT BRANCH TIP on an issue_comment run, where it does the actual work
+  # and is therefore a check reporting on a commit it was not evaluated against.
+  # Harmless in both: the name cannot be confused with `pre-pr-attest`, a
+  # `skipped` conclusion gates nothing, and it is in
   # NON_BLOCKING. It goes red on `main` if `gh run rerun` exits non-zero, e.g.
   # a run outside the retention window.
   #
