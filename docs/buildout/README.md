@@ -1,5 +1,11 @@
 # Buildout sessions — closing BT5 to PLAN's v1 bar
 
+> **Wave 1 is done.** All six landed except S2 (biosecurity screen), which the owner
+> killed on purpose — PR #87 closed unmerged. **Wave 2 is [`wave2/`](wave2/README.md).**
+> This file is kept as the record of how Wave 1 was split and why; its shared rules,
+> its "branches are not pre-created" argument and its un-draft policy all carry forward
+> and are not repeated there.
+
 Six prompts, written to be run **at the same time** in six separate Claude Code
 sessions. Each file in this directory is a complete prompt: open it, copy the whole
 thing, paste it into a fresh session on this repo.
