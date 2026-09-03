@@ -96,10 +96,24 @@ def main() -> int:
         )
 
     produced: dict[str, pathlib.Path] = {}
+    triggers: dict[pathlib.Path, set[str]] = {}
     for wf in sorted(WORKFLOWS.glob("*.y*ml")):
         doc = yaml.safe_load(wf.read_text()) or {}
         jobs = doc.get("jobs") or {}
         on = load_on(doc)
+
+        # `on:` is a mapping in every workflow here, but the schema also permits
+        # a bare string or a list, and a guard that only understands one shape
+        # silently passes the others -- the failure this file already documents
+        # for `paths:`.
+        if isinstance(on, dict):
+            triggers[wf] = set(on)
+        elif isinstance(on, str):
+            triggers[wf] = {on}
+        elif isinstance(on, list):
+            triggers[wf] = set(on)
+        else:
+            triggers[wf] = set()
 
         if on is None:
             problems.append(f"{wf}: no `on:` block found; cannot verify its triggers")
@@ -142,6 +156,28 @@ def main() -> int:
                 f"ruleset requires the check {context!r}, which no job in "
                 f"{WORKFLOWS} produces. A required check that never reports blocks "
                 f"every pull request permanently, with no error."
+            )
+            continue
+
+        # THIRD silent killer, and the one that arrives without touching a file.
+        # A merge queue evaluates required checks against the MERGE-GROUP ref,
+        # not the pull request head. A required context whose workflow does not
+        # trigger on `merge_group` therefore never reports there, and the queue
+        # blocks forever with no error -- the same deadlock as a `paths:` filter,
+        # reached through a repository SETTING that no diff will ever show.
+        #
+        # Required unconditionally rather than only when some other workflow
+        # declares it. Declaring `merge_group:` while no queue exists is inert;
+        # discovering the gap the day a queue is switched on is not.
+        wf = produced[context]
+        if "merge_group" not in triggers.get(wf, set()):
+            problems.append(
+                f"{wf}: produces the required check {context!r} but does not "
+                f"trigger on `merge_group`. If a merge queue is ever enabled, "
+                f"this check never reports on the merge-group ref and the queue "
+                f"blocks with no error. Add `merge_group:` to its `on:` block "
+                f"and make the job report there (see ci.yml's `approvals` job, "
+                f"which exits 0 off a pull request for the same reason)."
             )
 
     for problem in problems:

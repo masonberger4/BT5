@@ -1,19 +1,25 @@
 # pre-pr-attest -- did /pre-pr actually run against the commit being merged?
 #
-# ADVISORY ON PURPOSE. This job is deliberately NOT a required check yet: it is
-# absent from `.github/rulesets/main-protection.json` and absent from
-# `required-checks.needs` in ci.yml. That is a decision, not an oversight.
+# REQUIRED as of 2026-09-03. `pre-pr-attest` is named in
+# `.github/rulesets/main-protection.json` as a PARALLEL required context. It is
+# never an input to `required-checks` -- that gate counts `skipped` as failure
+# (ci.yml, job `required-checks`), which is why `main-broken` is excluded from
+# it too. `rearm` is in check-workflow-gate.py's NON_BLOCKING set for the same
+# reason. Rationale and the accepted risks: docs/decisions/2026-09-03-promote-
+# pre-pr-attest.md.
 #
-#   To promote it, add ONE entry to main-protection.json:
-#       { "context": "pre-pr-attest", "integration_id": 15368 }
-#   and nothing else. It is a PARALLEL required context, never an input to
-#   `required-checks` -- that gate counts `skipped` as failure (ci.yml, job
-#   `required-checks`), which is why `main-broken` is excluded from it too.
-#   The `rearm` job below is already in check-workflow-gate.py's NON_BLOCKING
-#   set, which is what keeps that one line one line.
-#   Precondition: a week of clean runs with the re-arm behaviour confirmed on a
-#   real push -- and note that until this commit there WAS no working re-arm, so
-#   no run before it counts towards that week.
+#   THE FILE IS A SPEC, NOT THE LIVE CONFIG. Editing it changes nothing until
+#   `scripts/apply-repo-settings.sh` is run by the owner on an authenticated
+#   machine.
+#
+#   IF THIS JOB EVER BREAKS ON `main`, IT BLOCKS ITS OWN FIX. `pull_request_target`
+#   runs the BASE branch copy, so a defect here fails every open pull request --
+#   including the one that would repair it -- and `bypass_actors: []` means no
+#   one, admin included, can merge past it. `/pre-pr-bypass` does NOT help: it is
+#   read by this job, so it clears a MISSING attestation but not a job that died
+#   before reaching that check. The only escape is out of band: set
+#   main-protection to `"enforcement": "disabled"`, merge the fix, turn it back
+#   on. Know that before editing anything below.
 #
 # WHY THIS EXISTS. `/pre-pr` runs code-reviewer, rule-auditor and
 # security-reviewer as subagents inside one Claude session. Their verdicts live
@@ -74,13 +80,26 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
+  # REQUIRED now that this is a required context, and it must stay in lockstep
+  # with ci.yml's `merge_group:`. A merge queue evaluates required checks against
+  # the merge-group ref; a required context whose workflow does not trigger on
+  # that event never reports there, and the queue blocks forever with no error --
+  # CLAUDE.md section 9, arrived at through the one door nobody watches, because
+  # enabling a queue is a repository SETTING and touches no file in this repo.
+  # check-workflow-gate.py now fails if the two workflows disagree on this.
+  merge_group:
 
 concurrency:
   # Keyed on the EVENT as well as the pull request. Under one shared group
   # `cancel-in-progress` let an attestation comment cancel the very
   # pull_request_target run it was posted to re-arm -- and a cancelled check run
   # is red on the head SHA with no verdict inside it to explain why.
-  group: pre-pr-attest-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  #
+  # `merge_group` carries neither number, so it falls back to the merge-group
+  # head SHA. Without that every merge group would share one group and
+  # `cancel-in-progress` would have them cancel each other -- a cancelled
+  # required check, which blocks the queue.
+  group: pre-pr-attest-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.merge_group.head_sha }}
   cancel-in-progress: true
 
 permissions:
@@ -94,7 +113,7 @@ jobs:
     # always reports, which is what makes it safe to promote to a required
     # context later. Comments are handled by `rearm` below, which deliberately
     # produces no check of its own.
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request_target' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -103,8 +122,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
+
+          # A merge group is not a pull request: its payload carries no PR
+          # number, and its head is a transient commit the queue invented, which
+          # nobody could have attested and nobody should. Report and stop.
+          #
+          # This is NOT a hole, and the reason is structural rather than a
+          # promise: a pull request cannot ENTER the queue until the required
+          # checks pass on its own head, and this check is one of them. So by
+          # the time a merge group exists, every pull request in it has already
+          # been attested at the only SHA where an attestation means anything.
+          #
+          # Same shape as ci.yml's `approvals` job, which exits 0 off a pull
+          # request for the same reason -- a PR-time gate cannot re-run itself
+          # somewhere there is no PR. Deliberately mirrored rather than invented.
+          #
+          # Residual, small and worth naming: GitHub may BATCH several pull
+          # requests into one merge group, and this reports on the batch without
+          # re-reading any of them. Each was attested on entry; nothing here
+          # re-checks that an attestation was not edited away afterwards, which
+          # is the same comment-editing residual documented above.
+          if [ "$EVENT" = "merge_group" ]; then
+            echo "merge group: attestation is a pull-request-time gate and was"
+            echo "enforced on each pull request's own head before it could queue."
+            exit 0
+          fi
 
           # Read the head from the API rather than the event payload. A re-run
           # replays the ORIGINAL payload, and a re-run is exactly how `rearm`
@@ -178,11 +223,29 @@ jobs:
           An attestation names one commit. Pushing again makes it stale on
           purpose -- a review of the previous tree says nothing about this one.
 
+          WHO CAN ATTEST. Only a comment author GitHub reports as OWNER,
+          COLLABORATOR or MEMBER counts. If you are contributing from a fork you
+          are CONTRIBUTOR, and your own /pre-pr comment will be ignored silently
+          -- it will not even start a job. Ask a maintainer to attest, and note
+          they must do it again after every push you make.
+
+          IF COMMENTING DOES NOT CLEAR IT. The comment path works by re-running
+          the check on this commit, and that can fail for reasons unrelated to
+          your diff (the run aged out of the re-run window, the runner queue is
+          saturated, an API error). Any of these forces a fresh run on the SAME
+          commit, without needing a new attestation:
+
+            * close the pull request and reopen it
+            * convert it to a draft and mark it ready again
+            * re-run the pre-pr-attest workflow from the Actions tab
+
           To merge without the review pass, the repository owner may comment:
 
               /pre-pr-bypass $HEAD_SHA
 
-          which records the waiver on the timeline instead of hiding it.
+          which records the waiver on the timeline instead of hiding it. Note
+          the bypass is read by THIS job, so it clears a missing attestation but
+          cannot clear a job that failed before reaching this point.
           EOF
           exit 1
 
@@ -290,8 +353,19 @@ jobs:
               # one bounded wait in the genuinely-stale case, which is rare and
               # cheap next to a check that can never go green.
               if [ "$SECONDS" -ge "$DEADLINE" ]; then
-                echo "::notice::No pull_request_target run for $HEAD_SHA after 180s; nothing to re-arm."
-                exit 0
+                # FAIL, do not exit 0. Now that `pre-pr-attest` is a required
+                # context, a green `rearm` sitting over a permanently red pull
+                # request is CLAUDE.md section 9's failure exactly -- blocked
+                # with no error to click on. This job is in NON_BLOCKING and
+                # gates nothing, so its red is pure signal and costs no merge.
+                echo "::error::No pull_request_target run for $HEAD_SHA after 180s."
+                echo "The attestation could not be re-armed. Either the head moved"
+                echo "after the comment (attestation is stale by design -- attest the"
+                echo "new head), or no run was ever created for it. To force a fresh"
+                echo "run on the SAME commit, close and reopen the pull request, or"
+                echo "convert it to draft and back; either fires a new"
+                echo "pull_request_target event without changing the SHA."
+                exit 1
               fi
               echo "no run for $HEAD_SHA yet; waiting for one to appear"
               sleep 15
@@ -304,8 +378,17 @@ jobs:
               # Bounded so this job cannot outlive its own timeout-minutes. The
               # attest job is one ~10s API step, so 180s means something is
               # wrong upstream, not that it needs longer.
-              echo "::warning::run $RUN still $STATUS after 180s; not re-arming. Comment again to retry."
-              exit 0
+              # Same reasoning as the branch above: fail loudly rather than
+              # report green over a pull request that is still red. 180s is a
+              # budget on the attest job's ~10s of API work, but it also has to
+              # absorb QUEUE time, and CLAUDE.md section 7 puts the ceiling at 20
+              # concurrent job slots -- so a saturated repository can land here
+              # without anything being wrong.
+              echo "::error::run $RUN was still $STATUS after 180s; not re-arming."
+              echo "Nothing is necessarily broken -- the runner queue may just be"
+              echo "full. Comment the attestation again once that run finishes, or"
+              echo "re-run it directly from the Actions tab."
+              exit 1
             fi
             echo "run $RUN is $STATUS; waiting for it to land"
             sleep 15

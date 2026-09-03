@@ -126,8 +126,18 @@ PR, so at most 5 open non-draft PRs at a time).
 ### 7b. Merging on green
 
 **An agent may squash-merge its own PR once CI is green.** The ruleset requires zero
-approving reviews and one required context, `required-checks`, so green means every job
-in that gate's `needs` succeeded — verify against the PR's CURRENT head, not a stale run.
+approving reviews and **two** required contexts — verify both against the PR's CURRENT
+head, not a stale run:
+
+- `required-checks` — green means every job in that gate's `needs` succeeded.
+- `pre-pr-attest` — green means `/pre-pr <head-sha>` was attested by an OWNER,
+  COLLABORATOR or MEMBER for **this** commit, or the owner waived it with
+  `/pre-pr-bypass <head-sha>`. Pushing again makes it stale on purpose, so it is the last
+  thing to go green and the first thing to go red.
+
+Checking only `required-checks` and concluding "green" is the mistake this wording exists
+to prevent: the merge box will refuse, with a `required_status_checks` failure and no
+explanation attached to any job.
 
 Green is necessary, not sufficient. These go to the owner instead:
 
