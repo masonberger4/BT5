@@ -99,6 +99,18 @@ jobs:
       - name: Guard the merge gate
         run: .venv/bin/python .github/scripts/check-workflow-gate.py
 
+      # The attestation matcher is one regex inside pre-pr-attest.yml, and it is
+      # the whole decision for whether a commit was reviewed. It has already
+      # shipped two matching bugs -- a trailing class that rejected every
+      # attestation with prose around it, and a leading `[ 	]*` that made the
+      # job's own indented help text a valid attestation when pasted. Both were
+      # caught by reading, which does not scale and did not catch them the first
+      # time. This drives the REAL jq program, extracted from the workflow, over
+      # fixtures. `jq` is preinstalled on ubuntu runners; the script exits 2
+      # rather than reporting a pass if it is ever absent.
+      - name: Test the attestation matcher
+        run: .venv/bin/python .github/scripts/test-attestation-matcher.py
+
   # mypy is configured `strict = true` in pyproject.toml and demanded by
   # CLAUDE.md section 8 and the PR template, and until now ran in NO CI job --
   # a self-declared checkbox was the only enforcement of a strict-mode type
