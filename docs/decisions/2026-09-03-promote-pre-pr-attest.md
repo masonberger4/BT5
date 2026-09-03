@@ -15,8 +15,22 @@ Four changes ship in the same diff because promotion is what makes each of them 
    checks pass on its own head, so everything in a merge group was already attested at the
    only SHA where an attestation means anything.
 2. **`check-workflow-gate.py` now enforces that**, unconditionally, for every workflow
-   owning a required context. Verified both directions: passes as shipped, and rejects a
-   synthetic ruleset requiring `claude-review-gate` (whose workflow has no `merge_group`).
+   owning a required context — and in *both* halves, which the first cut missed. Declaring
+   `merge_group:` on the workflow is not enough: if the job producing the context carries
+   an `if:` excluding the event it lands `skipped`, and a skipped check **satisfies** a
+   required status check. That fails green, which is worse than the deadlock it replaces
+   and is the "looks like coverage, enforces nothing" pattern this script opens by
+   rejecting. `code-reviewer` caught the gap; the guard now checks the job condition too.
+
+   The condition check is textual, since GitHub expressions cannot be evaluated here, and
+   it fires only when a condition *branches on the event* without naming `merge_group`. A
+   naive "must contain merge_group" version flagged `ci.yml`'s `required-checks`, which
+   carries `if: always()` and does run in a queue — that would have blocked all of CI the
+   moment the guard shipped. Caught by this script's own negative test, not in review.
+
+   Verified in three directions: passes as shipped; rejects a workflow that drops the
+   `merge_group:` trigger; rejects a workflow that keeps the trigger but narrows the
+   producing job's `if:`.
 3. **`rearm`'s two silent-green exits now fail.** "No run after 180s" and "still in flight
    after 180s" both returned 0, so `rearm` reported green over a pull request that stayed
    red — CLAUDE.md §9's signature, from a direction the guard does not model. Harmless
@@ -69,11 +83,13 @@ real and are being taken on knowingly:
 - **Fork pull requests now need a maintainer to attest after every push**, and an honest
   attestation means having run `scripts/gates.sh` — i.e. executed the contributor's code
   locally. `claude-review.yml` skips forks deliberately; this does not.
-- **The matcher has no automated test**, though the workflow claims one ("caught by the
-  fixture test below" — there is no fixture test, in this file or anywhere). It has already
-  shipped two distinct matching bugs: the trailing character class, and the leading-
-  whitespace hole fixed in `369429a`. It is now the single point of decision for every
-  merge.
+- **The matcher has no automated test.** The workflow used to claim one — "caught by the
+  fixture test below" — and there is no fixture test, in that file or anywhere in the
+  repository; the false claim is removed in this diff rather than left standing in the one
+  file whose correctness now gates every merge. The regex has already shipped two distinct
+  matching bugs: the trailing character class, and the leading-whitespace hole fixed in
+  `369429a`. It is now the single point of decision for every merge, with no coverage at
+  all. Writing that test is the highest-value follow-up on this file.
 
 **Evidence:**
 

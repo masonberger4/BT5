@@ -178,7 +178,17 @@ jobs:
           # The trailing class must include \r and \n. A comment almost always
           # has prose around the command, so requiring space-tab-or-end-of-string
           # after the SHA silently failed to match every attestation that was not
-          # the entire comment body -- caught by the fixture test below.
+          # the entire comment body.
+          #
+          # An earlier version of this comment said that bug was "caught by the
+          # fixture test below". THERE IS NO FIXTURE TEST -- not below, not
+          # anywhere in the repository. The claim was false when written and is
+          # removed rather than left standing in the one file whose correctness
+          # now gates every merge. This regex has already shipped two distinct
+          # matching bugs (this trailing class, and the leading-whitespace hole
+          # closed in 369429a); it is the single point of decision for the check,
+          # and it has no automated coverage at all. Writing that test is the
+          # highest-value follow-up on this file.
           #
           # NO LEADING WHITESPACE, and that is load-bearing rather than tidy.
           # This used to allow `[ \t]*` before the command, which made THIS JOB'S

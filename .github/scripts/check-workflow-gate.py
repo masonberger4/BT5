@@ -95,7 +95,10 @@ def main() -> int:
             f"wrong shape -- both mean nothing is gating a merge."
         )
 
-    produced: dict[str, pathlib.Path] = {}
+    # context -> (workflow file, job body). The BODY is needed too: a workflow
+    # can trigger on an event while the job producing the context is gated off
+    # it, and those two failures need different messages.
+    produced: dict[str, tuple[pathlib.Path, Any]] = {}
     triggers: dict[pathlib.Path, set[str]] = {}
     for wf in sorted(WORKFLOWS.glob("*.y*ml")):
         doc = yaml.safe_load(wf.read_text()) or {}
@@ -131,7 +134,7 @@ def main() -> int:
                         )
 
         for name, body in jobs.items():
-            produced[job_context(name, body)] = wf
+            produced[job_context(name, body)] = (wf, body)
 
         # Every job in a workflow that owns a gate must feed that gate.
         for name, body in jobs.items():
@@ -169,7 +172,7 @@ def main() -> int:
         # Required unconditionally rather than only when some other workflow
         # declares it. Declaring `merge_group:` while no queue exists is inert;
         # discovering the gap the day a queue is switched on is not.
-        wf = produced[context]
+        wf, body = produced[context]
         if "merge_group" not in triggers.get(wf, set()):
             problems.append(
                 f"{wf}: produces the required check {context!r} but does not "
@@ -178,6 +181,38 @@ def main() -> int:
                 f"blocks with no error. Add `merge_group:` to its `on:` block "
                 f"and make the job report there (see ci.yml's `approvals` job, "
                 f"which exits 0 off a pull request for the same reason)."
+            )
+            continue
+
+        # ...and the HALF OF THAT which is worse, because it fails green.
+        # Triggering the workflow on `merge_group` is not enough: if the job
+        # producing the context carries an `if:` that excludes the event, the job
+        # lands `skipped` -- and a skipped check SATISFIES a required status
+        # check. The queue then merges with this gate enforcing nothing, which is
+        # the "looks like coverage, enforces nothing" failure this file opens by
+        # rejecting. Blocking is loud; a silent pass is not.
+        #
+        # A textual check, not an evaluation -- GitHub expressions cannot be
+        # evaluated here. The rule: a condition is suspect only if it BRANCHES ON
+        # THE EVENT (mentions `github.event_name` or `github.event.`) without
+        # naming `merge_group`. A condition that does not discriminate on the
+        # event cannot exclude one, so it passes.
+        #
+        # `if: always()` is why this is not simply "must contain merge_group".
+        # ci.yml's `required-checks` carries exactly that, runs on every event
+        # including a merge group, and a naive check flagged it -- which would
+        # have blocked all of CI the moment this guard shipped. Caught by this
+        # script's own negative test, not in review.
+        condition = str((body or {}).get("if") or "")
+        branches_on_event = "github.event_name" in condition or "github.event." in condition
+        if branches_on_event and "merge_group" not in condition:
+            problems.append(
+                f"{wf}: triggers on `merge_group`, but the job producing the "
+                f"required check {context!r} has an `if:` that never mentions it, "
+                f"so it is skipped on that event -- and a skipped check SATISFIES "
+                f"a required status check. The queue would merge with this gate "
+                f"enforcing nothing. Name the event in the `if:`, or drop the "
+                f"`if:` so the job always runs."
             )
 
     for problem in problems:
