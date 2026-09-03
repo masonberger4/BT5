@@ -92,8 +92,12 @@ own it is a *claim* that the owner decided this, not evidence of it. The owner c
 in their own account on #113 (2026-09-03T20:26:54Z, `author_association: OWNER`):
 
 > Confirming I made this call. I chose full autonomy including attestation over the
-> human-gated alternative, knowing it downgrades `pre-pr-attest` from "a human vouched" to
-> "the agent's chain came back clean". Goal is unattended CI.
+> human-gated alternative, knowing it downgrades pre-pr-attest from a "human vouched" to
+> "agent's chain came back clean". Goal is unattended CI
+
+(Verbatim. An earlier draft of this block silently added backticks, moved a quotation mark,
+inserted "the" and added a full stop — in the one paragraph whose whole purpose is that a
+reader can check it against the source. Caught by `claude-review-gate`.)
 
 That comment is the verifiable artifact; this file is the reasoning behind it. A future
 reader should check the comment, not trust the file. `claude-review-gate` returned the
