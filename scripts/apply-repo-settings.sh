@@ -58,7 +58,8 @@ echo "    integration_id = $APP_ID"
 echo "==> 4/4 creating the main-protection ruleset"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
-python3 - "$RULESET_FILE" "$APP_ID" > "$TMP" <<'PY'
+PY_BIN=$(bash .claude/hooks/run_py.sh --which) || { echo "no working Python 3 -- see .claude/hooks/run_py.sh" >&2; exit 1; }
+"$PY_BIN" - "$RULESET_FILE" "$APP_ID" > "$TMP" <<'PY'
 import json, sys
 spec = json.load(open(sys.argv[1]))
 for rule in spec["rules"]:
