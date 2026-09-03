@@ -69,6 +69,13 @@ from bt5.score.report import (
     render,
     screening_burden,
 )
+from bt5.score.steering import (
+    REPEAT_STEERING_PENALTY,
+    SWEEP_AXES,
+    blended_scorer,
+    gc_fraction,
+    live_axes,
+)
 
 __all__ = [
     "write_idt_plate",
@@ -98,6 +105,8 @@ __all__ = [
     "MAX_GALLERY",
     "MIN_GALLERY",
     "PRESETS",
+    "REPEAT_STEERING_PENALTY",
+    "SWEEP_AXES",
     "Gallery",
     "NullDistribution",
     "NullKind",
@@ -107,13 +116,16 @@ __all__ = [
     "SweepPoint",
     "WeightEntry",
     "band_deviation",
+    "blended_scorer",
     "build_gallery",
     "codon_distance",
     "design_hash",
     "detect_conflicts",
     "distance_matrix",
+    "gc_fraction",
     "greedy_max_min",
     "hard_versus_soft",
+    "live_axes",
     "normalise",
     "null_distribution",
     "nucleotide_distance",
