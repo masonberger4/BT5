@@ -17,10 +17,11 @@ allowed-tools: Read, Edit, Write, Grep, Glob, Bash, Agent
    See the resolution procedure below — a `brief_ref` that resolves to nothing means the
    rule's evidence is unauditable.
 3. **`SINGLE_PASS` is a downgrade, not the default.** `RepairPolicy.FIXED_POINT` is
-   `solver/repair.py:417`'s own default, and 22 of the 25 existing rules downgrade.
-   If your repair can create new instances of what it removes — splice donors are the
-   canonical case — `FIXED_POINT` is **mandatory** (CLAUDE.md §3.6). Otherwise justify
-   the downgrade in the docstring.
+   `solver/repair.py:417`'s own default and the `repair` ClassVar carries none of its
+   own, so a spec reads `SINGLE_PASS` only because an author typed it. The docstring
+   owes the reader why this repair cannot create new instances of what it removes. If
+   it can — splice donors are the canonical case — `FIXED_POINT` is **mandatory**
+   (CLAUDE.md §3.6), not a judgement call.
 4. **There is no registration step.** Rules autodiscover via the `@register` decorator.
    `core/registry.py`: *"Adding a rule edits ZERO shared files, not even an `__init__.py`."*
    Do not add your rule to a list.

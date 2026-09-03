@@ -44,11 +44,13 @@ has to adjudicate against a green test.
    cassette's polyA and splice analysis comes out exactly backwards otherwise. Does the
    rule hand-roll a reverse-complement scan instead of listing forward motifs in
    `LatticeTerms.forbidden` and letting the solver close the set (§3.4)?
-4. **Repair policy.** 22 of the 25 catalog rules declare `SINGLE_PASS`; only
-   `d3_splicing`, `b9_out_of_frame_atg` and `f5_at_window` declare `FIXED_POINT`, which is
-   `solver/repair.py:417`'s own default — so `SINGLE_PASS` is an explicit
-   downgrade. If this rule's repair can create new instances of what it removes,
-   `FIXED_POINT` is mandatory (§3.6). Otherwise the docstring must justify the downgrade.
+4. **Repair policy.** `core/spec.py:231` gives `repair` no default, so every rule types
+   one of its own; the repair driver's default is `FIXED_POINT` (`solver/repair.py:417`),
+   so a typed `SINGLE_PASS` is a downgrade from the engine's posture — and it is the
+   routine thing to type, which is exactly how a wrong one passes unremarked. If this
+   rule's repair can create new instances of what it removes, `FIXED_POINT` is mandatory
+   (§3.6). Otherwise the docstring must justify the downgrade, and "it is what the other
+   rules declare" is not a justification.
 5. **Units and honesty.** Do `magnitude`, `direction` and `unit` agree with what the code
    computes — `magnitude > 0` must mean worse? Does `Breach.message` name the exact
    offending substring? Is `n_evaluated` an honest denominator?
