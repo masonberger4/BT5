@@ -119,6 +119,15 @@ jobs:
       - name: Test the attestation matcher
         run: .venv/bin/python .github/scripts/test-attestation-matcher.py
 
+      # Same argument, one job over: `main-broken`'s suppression predicate is
+      # embedded bash/jq that no pytest can reach, and it decides whether a
+      # break on `main` is announced at all. Its false-positive half already
+      # cost five bogus issues in ten minutes (#136-#141). This drives the REAL
+      # jq program, extracted from this file, over those five payloads, and
+      # checks the shell guard around it structurally.
+      - name: Test the main-broken predicate
+        run: .venv/bin/python .github/scripts/test-main-broken-predicate.py
+
   # mypy is configured `strict = true` in pyproject.toml and demanded by
   # CLAUDE.md section 8 and the PR template, and until now ran in NO CI job --
   # a self-declared checkbox was the only enforcement of a strict-mode type
