@@ -38,7 +38,7 @@
 #   Detail: docs/decisions/2026-09-04-autonomous-ci-owner-merges.md.
 #
 # WHY THIS EXISTS. `/pre-pr` runs code-reviewer, rule-auditor and
-# security-reviewer as subagents inside one Claude session. Their verdicts live
+# boundary-reviewer as subagents inside one Claude session. Their verdicts live
 # in that session's transcript, so they are invisible to GitHub and to every
 # other session -- and `.claude/.pre-pr-marker` is gitignored (.gitignore:19) and
 # digests `git status` + `git diff HEAD`, which are empty and constant on a clean

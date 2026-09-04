@@ -205,11 +205,11 @@ The fleet every session inherits:
 | `code-reviewer` | sonnet / high | The complete branch diff, via `/pre-pr`. Has project memory. |
 | `batch-editor` via `/cheap-pass` | sonnet / medium | ≥5 identical edits, before/after already decided. |
 | `rule-auditor` | opus / xhigh | Does the cited source actually support the number? |
-| `security-reviewer` | opus / xhigh | Biosecurity posture and the CI trust boundary. |
+| `boundary-reviewer` | opus / xhigh | Index scope, the banned objectives, and the CI trust boundary. |
 | `debugger` | opus / xhigh | A failure a first-pass fix already missed. |
 | `/architect`, `/escalate` | opus / xhigh + ultracode | Cross-lane, `core/`, MINOR-vs-MAJOR, or a decision already got wrong. |
 
-**`/pre-pr` fires reviewers conditionally, by path.** `security-reviewer` runs iff the
+**`/pre-pr` fires reviewers conditionally, by path.** `boundary-reviewer` runs iff the
 diff touches `vector/`, `core/services.py`, `verify.py`, `cassette/` or `.github/`.
 `rule-auditor` runs iff a Spec's `citations`, `weight_provenance`, `enforcement`,
 `last_verified` or a threshold changed. S2 trips the first by construction; S3 and S4

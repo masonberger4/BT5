@@ -192,7 +192,7 @@ failure raises the model; diligence failure raises the effort.
 - **Anything in `docs/`** → `docs-miner`. Never read `brief.md` (63 KB), `PLAN.md` (58 KB), `github-setup.md` (121 KB) or `design-review-verdicts.json` (107 KB) inline.
 - **Code** → `Explore`. **Gates** → `gate-runner`. **≥5 identical edits** → `/cheap-pass`. **A failure a first-pass fix missed** → `debugger`.
 - **Before a PR** → `/pre-pr`: `gate-runner` → `code-reviewer`, adding `rule-auditor` and
-  `security-reviewer` only when the diff warrants them.
+  `boundary-reviewer` only when the diff warrants them.
 - **Cross-lane, `core/`, or a MINOR/MAJOR call** → `/architect`; **stuck on a decision** →
   `/escalate`. Both run opus at ultracode and orchestrate rather than answer alone.
 - **Never bare-Read a source file over 20 KB** (`vector/backbone.py` 28.9 KB,

@@ -22,10 +22,8 @@ class of bug, not a red flag by itself. When reviewing a similar split, check:
 - The re-arm job selects the run to rerun by scoping on the CURRENT head_sha (fetched
   fresh via API, not from the event payload) and filters to `status == completed` —
   otherwise it can rerun a stale-head run or race against an in-flight rerun.
-- A re-arm/no-report job's own failure (e.g. `gh run rerun` erroring) is invisible to
-  the PR (it's a default-branch run) — that's by design for the check-gate, but it
-  means operational failures of the rerun call are silently swallowed from the PR
-  author's point of view. Flag as non-blocking, not blocking, given this repo's
+- A re-arm/no-report job's own failure (e.g. `gh run rerun` erroring) is invisible to the
+  PR (default-branch run) — flag as non-blocking, not blocking, given this repo's
   single-owner low-traffic operation.
 
 **`check-workflow-gate.py`'s `NON_BLOCKING` set is a flat, workflow-unqualified set of
@@ -41,25 +39,17 @@ paraphrases.** On PR #104 the workflow comment said six of the last fifteen runs
 entries for six failures, one `31` dropped. Real defect, corrected to
 "31, 31, 31, 31, 32, 42".
 
-Be careful *how* you argue it, though: my first write-up of this also claimed a mismatch
-between "8 cited" and "fifteen runs", which was my own error — the turn-count list and the
-run count measure different things, and a workflow comment listing only the runs that
-*completed* is not inconsistent with a decision doc listing all *outcomes*. Check the
-arithmetic of the objection before raising it. A miscounted objection to a miscount costs
-more credibility than staying silent.
+Check the arithmetic of the objection itself before raising it — a prior draft of this
+finding claimed a second mismatch ("8 cited" vs "fifteen runs") that was the reviewer's own
+error, conflating two different counts. A miscounted objection to a miscount costs more
+credibility than staying silent.
 
-**A gate's own error message can be a valid input to the gate.** The single best find in
-this area came from reading `pre-pr-attest.yml`'s matcher against the text the same job
-prints on failure. The regex allowed `[ \t]*` before the command; the help text prints
-`    /pre-pr <head-sha>` indented four spaces. So anyone counted as an attestor who pasted
-the failing log into a comment to ask about it silently turned the check green with no
-review having happened. Fixed by anchoring to the line start (PR #113).
-
-Generalise it: **whenever a job both EMITS text and PARSES text, check whether its own
-output satisfies its own parser.** Same question for log lines, bot comments, PR templates
-and issue bodies. Nothing else in the review — not the original design, not a full pass by
-this agent — caught it; it only appeared when the two halves of the file were read against
-each other.
+**A gate's own error message can be a valid input to the gate.** `pre-pr-attest.yml`'s
+attestation regex allowed `[ \t]*` before the command, and the job's own failure text prints
+`    /pre-pr <head-sha>` indented four spaces — so pasting the failing log into a comment
+silently turned the check green with no review done. Fixed by anchoring to line start
+(PR #113). Generalise: **whenever a job both EMITS text and PARSES text, check whether its
+own output satisfies its own parser** (log lines, bot comments, PR templates, issue bodies).
 
 **Verify a claim about where a check run lands by looking at a real rollup**, not by
 reasoning from the YAML. Two comments in `pre-pr-attest.yml` were confidently wrong about
@@ -72,15 +62,13 @@ named by its `name:`), and then the correction itself, which named one location 
 **"The workflow triggers on the event" is not "the job runs on the event", and for a
 required check the difference inverts the failure.** A workflow can declare
 `on: {merge_group:}` while the job producing the required context is gated
-`if: github.event_name == 'pull_request_target'`. The job is then `skipped` on
-`merge_group` — and a skipped check **satisfies** a required status check. So the gate
-passes while enforcing nothing, which is worse than the deadlock it was added to prevent,
-because nothing goes red.
+`if: github.event_name == 'pull_request_target'` — the job then `skipped`s on `merge_group`,
+and a skipped check **satisfies** a required status check, so the gate passes while
+enforcing nothing (worse than the deadlock it was added to prevent).
 
-Raised on PR #114 as a non-blocking finding against the first cut of
-`check-workflow-gate.py`'s `merge_group` guard, which only read the workflow-level `on:`
-block. **Closed in `e87f2a4`** — the guard now inspects the producing job's `if:` too.
-Check both halves when reviewing anything of this shape.
+Raised on PR #114 against the first cut of `check-workflow-gate.py`'s `merge_group` guard
+(only read the workflow-level `on:`). **Closed in `e87f2a4`** — now inspects the producing
+job's `if:` too. Check both halves when reviewing anything of this shape.
 
 **And the trap inside that fix.** The obvious rule — "a gate job's `if:` must contain
 `merge_group`" — flags `ci.yml`'s `required-checks`, whose `if: always()` runs on every
@@ -89,5 +77,24 @@ guard therefore fires only when a condition *branches on the event*
 (`github.event_name` / `github.event.`) without naming `merge_group`. It was the script's
 own negative test that caught this, not a reading of it — when adding a heuristic guard,
 write the negative test before trusting the positive result.
+
+**Merge-ref self-edit/drift detection: anchor to `HEAD^1`/`HEAD^2`, never a payload SHA.**
+PR #145 (`03a2008`→`c46d1b2`) fixed `git diff --quiet "$BASE_SHA" HEAD` (`base.sha` frozen
+at event time) to `git diff --quiet "HEAD^1" HEAD`, guarded by
+`git rev-parse --verify --quiet "HEAD^2"`. On the default `pull_request` checkout
+(`refs/pull/N/merge`, **needs `fetch-depth: 0`** — a shallow clone lacks `HEAD^1`'s tree),
+the merge ref's first parent is the base tip as of merge-ref computation, second is the PR
+head; testing `HEAD^2` existence is how you detect "this is actually a merge ref" (plain
+push/checkout has none). Diffing a frozen payload SHA against a freshly-recomputed merge
+ref silently attributes anything `main` gained in between to the PR. Apply the same
+scrutiny to any future "did this PR touch file X" check keyed off
+`github.event.pull_request.base.sha`.
+
+**`bypass_actors` on `main-protection.json` is a closed question.** Rejected twice: once by
+`docs/research/github-setup.md:244,246,2828,2903` (the repo's own design doc, unread before
+the first attempt), once in review (PR #145, `03a2008`, reverted in `c46d1b2`). Agents in
+this repo authenticate as the repo owner (GitHub cannot tell an agent's token from the owner
+at a keyboard), so any bypass on the admin role is held by every session. Treat a future
+bypass-actor addition as blocking on sight.
 
 See also [[skill-frontmatter-governance]].

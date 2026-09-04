@@ -66,7 +66,7 @@ and `gates.sh` runs each one independently for exactly that reason.
 
 **2. Review.** Delegate the branch diff to `code-reviewer`.
 
-**3. Security — only if warranted.** Run `security-reviewer` **iff**
+**3. Boundaries — only if warranted.** Run `boundary-reviewer` **iff**
 `git diff --name-only origin/main...HEAD` touches any of
 `packages/engine/src/bt5/vector/`, `packages/engine/src/bt5/core/services.py`,
 `packages/engine/src/bt5/verify.py`, `packages/engine/src/bt5/cassette/`, `.github/`.

@@ -34,7 +34,7 @@ A `database=` parameter added **here** would:
   with a default conforms, so it catches a *broken* signature, not a *widened* one.
 
 So `ConstructKmerIndex.of()` takes a `Construct` and nothing else, and that is a rule you
-hold yourself. Any change to its signature goes to `security-reviewer` via `/pre-pr`.
+hold yourself. Any change to its signature goes to `boundary-reviewer` via `/pre-pr`.
 
 ## Circularity is the recurring defect shape
 

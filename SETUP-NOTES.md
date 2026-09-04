@@ -27,7 +27,7 @@ where the saving is.
 | `code-reviewer` | sonnet | high | The branch diff before a PR | DILIGENCE — the rules are written down; missing one is inattention |
 | `rule-auditor` | opus | xhigh | A rule Spec's provenance changed | CAPABILITY — does the cited source support the number? |
 | `debugger` | opus | xhigh | A failure a first-pass fix already missed | CAPABILITY — a wrong model of the failure |
-| `security-reviewer` | opus | xhigh | `/pre-pr`, on the biosecurity/CI surface | CAPABILITY — intent, not signature |
+| `boundary-reviewer` | opus | xhigh | `/pre-pr`, on the index-scope/CI surface | CAPABILITY — intent, not signature |
 | `/architect` *(skill)* | opus | **ultracode** | Cross-lane, `core/`, MINOR-vs-MAJOR | CAPABILITY — fields and protocol methods classify oppositely |
 | `/escalate` *(skill)* | opus | **ultracode** | A decision a normal attempt got wrong | CAPABILITY |
 

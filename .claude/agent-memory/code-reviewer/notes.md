@@ -69,7 +69,7 @@ source. Recurring gap classes worth the verification budget:
 `rule-auditor` holds `Agent` (to resolve `brief_ref` via `docs-miner`), which
 also reaches `batch-editor` (holds `Edit`). Do NOT write this up as "the only
 agent whose read-only-ness is not mechanical" — `code-reviewer`, `debugger`,
-`docs-miner`, `gate-runner`, `security-reviewer` all hold `Bash`, which writes
+`docs-miner`, `gate-runner`, `boundary-reviewer` all hold `Bash`, which writes
 via `sed -i` too. The `Agent` grant widens an existing surface, it doesn't
 create a new class. `tools: Agent(docs-miner)` (parameterised) is dropped
 silently by this CLI, leaving no `Agent` tool at all (fails closed, doesn't
