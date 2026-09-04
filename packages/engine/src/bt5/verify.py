@@ -29,7 +29,7 @@ Invariants:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import cast
 
 from Bio.Data import CodonTable
@@ -110,17 +110,60 @@ def gc_fraction(seq: str) -> float:
     return (seq.count("G") + seq.count("C")) / len(seq)
 
 
+def homopolymer_runs(seq: str) -> Iterator[tuple[str, int, int]]:
+    """Every maximal single-base run, as (base, start, length).
+
+    I8 needs the POSITION as well as the length: a run inside a whitelisted ITR
+    is the feature's own sequence, not a synthesis liability the design can fix,
+    and a length alone cannot say which run it was.
+    """
+    start = 0
+    for i, ch in enumerate(seq):
+        if i and ch != seq[i - 1]:
+            yield seq[start], start, i - start
+            start = i
+    if seq:
+        yield seq[start], start, len(seq) - start
+
+
 def longest_homopolymer(seq: str) -> tuple[str, int]:
     best_base, best = "", 0
-    run_base, run = "", 0
-    for ch in seq:
-        if ch == run_base:
-            run += 1
-        else:
-            run_base, run = ch, 1
-        if run > best:
-            best_base, best = run_base, run
+    for base, _start, length in homopolymer_runs(seq):
+        if length > best:
+            best_base, best = base, length
     return best_base, best
+
+
+def _at(start: int, length: int, n: int) -> Interval:
+    """A hit at `start` in a DOUBLED scan, in construct coordinates.
+
+    `end` past `n` is the one representation `Interval` defines for a wrapping
+    interval, and it is what the wrap-aware predicates below expect.
+    """
+    return Interval(start % n, start % n + length) if n else Interval(start, start + length)
+
+
+def _wholly_exempt(iv: Interval, exempt: Sequence[Interval], n: int, circular: bool) -> bool:
+    """Does `iv` lie WHOLLY inside a scan-exempt region? Wrap-aware.
+
+    WRAP-AWARE IS THE WHOLE POINT (#70). An exempt region spanning the origin is
+    stored with `end > n`, while a hit found past the origin in the doubled scan
+    comes back as a small `start % n`. A bare `iv.start <= pos < iv.end` compares
+    those two representations directly and can never match, so an AAV ITR sitting
+    across the origin silently lost its exemption and the oracle refused a legal
+    construct. `Interval.contains` tries the (0, +n, -n) shifts and resolves it.
+
+    WHOLLY, and deliberately stricter than the rules lane. `rules/exempt.py`
+    exempts a repeat arm at `coverage >= EXEMPT_COVERAGE`; this asks for total
+    containment. The oracle must never exempt MORE than the rule it backstops --
+    erring toward refusing is the safe direction for a validator, and an oracle
+    that waved through what E5 would flag is the failure this file exists to
+    prevent. (It cannot import that helper anyway: the independence gate forbids
+    this file from touching the rules lane at all -- and that gate greps for the
+    dotted module path as a raw substring, so do not write one here even in
+    prose. This sentence is the second thing it caught.)
+    """
+    return any(region.contains(iv, n, circular) for region in exempt)
 
 
 def find_motifs(construct: Construct, patterns: Sequence[str]) -> list[tuple[str, int]]:
@@ -145,7 +188,13 @@ def find_motifs(construct: Construct, patterns: Sequence[str]) -> list[tuple[str
                 start = haystack.find(probe)
                 while start != -1:
                     pos = start % n if n else start
-                    if not any(iv.start <= pos < iv.end for iv in exempt):
+                    # The START base, not the whole motif: that is the exemption
+                    # rule this check has always applied, and only its wrap
+                    # blindness is the defect #70 names. Widening it to require
+                    # whole-motif containment would newly un-exempt a motif that
+                    # begins inside an ITR and runs out of it, which is a
+                    # separate call.
+                    if not _wholly_exempt(_at(pos, 1, n), exempt, n, construct.is_circular):
                         hits.append((pattern, pos))
                     start = haystack.find(probe, start + 1)
     return sorted(set(hits), key=lambda h: (h[1], h[0]))
@@ -301,23 +350,49 @@ def verify_construct(
                 )
 
     # I8 -- homopolymer and repeat ceilings
+    #
+    # BOTH SCANS HONOUR `Construct.exempt` (#69). I6 above consulted it and these
+    # two did not, which made the oracle refuse the very constructs the exemption
+    # exists to permit: an LTR or an AAV ITR irreducibly violates the repeat
+    # rules, and the answer is a strain and temperature protocol rather than a
+    # redesign, so those regions are immutable AND unscanned. A wired pipeline
+    # passing `max_repeat` could therefore never arm it on a real viral vector.
+    n = len(seq)
+    exempt: Sequence[Interval] = construct.exempt
     if max_homopolymer is not None:
         scan = seq + seq[:max_homopolymer] if construct.is_circular else seq
-        base, run = longest_homopolymer(scan)
-        if run > max_homopolymer:
+        worst_base, worst = "", 0
+        for base, start, length in homopolymer_runs(scan):
+            if exempt and _wholly_exempt(_at(start, length, n), exempt, n, construct.is_circular):
+                continue
+            if length > worst:
+                worst_base, worst = base, length
+        if worst > max_homopolymer:
             raise VerificationError(
-                "I8", f"homopolymer run of {run} {base}s exceeds {max_homopolymer}"
+                "I8", f"homopolymer run of {worst} {worst_base}s exceeds {max_homopolymer}"
             )
     if max_repeat is not None:
         seen: dict[str, int] = {}
         scan = seq + seq[:max_repeat] if construct.is_circular else seq
         for i in range(len(scan) - max_repeat + 1):
             kmer = scan[i : i + max_repeat]
-            if kmer in seen:
-                raise VerificationError(
-                    "I8", f"repeat of length {max_repeat} at {seen[kmer]} and {i}: {kmer!r}"
-                )
-            seen[kmer] = i
+            first = seen.get(kmer)
+            if first is None:
+                seen[kmer] = i
+                continue
+            # BOTH arms, never either -- the rule `rules/exempt.py` states in as
+            # many words. A designed repeat that happens to match part of an ITR
+            # is still the design's problem, and exempting it because one end
+            # landed on a whitelisted feature would hide exactly the finding the
+            # user can act on.
+            if exempt and all(
+                _wholly_exempt(_at(pos, max_repeat, n), exempt, n, construct.is_circular)
+                for pos in (first, i)
+            ):
+                continue
+            raise VerificationError(
+                "I8", f"repeat of length {max_repeat} at {first} and {i}: {kmer!r}"
+            )
 
     # I9 -- THE BACKBONE IS UNTOUCHED
     # The worst possible bug in a vector-context tool is silently editing the

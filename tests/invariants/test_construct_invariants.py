@@ -256,3 +256,123 @@ class TestTheCallersDeclarationIsChecked:
             verify_construct(c, protein="MKP", table_id=12)
         assert exc.value.invariant == "I3"
         assert "table 12" in str(exc.value)
+
+
+# --- Scan exemptions: I6 across the origin (#70), I8 at all (#69) -------------
+#
+# An LTR or an AAV ITR irreducibly violates the repeat rules. The answer is a
+# strain and temperature protocol, not a redesign, so those regions are immutable
+# AND unscanned. An oracle that refuses them refuses a construct the user cannot
+# fix -- the failure mode is a tool that will not build a legal viral vector.
+
+REPEAT = "AGCTTGCATGCA"  # 12 bp, no internal periodicity
+SPACER_A = "TTGGACCATGGTCAAG"
+SPACER_B = "GTCATGCCAGTTAGGC"
+#: REPEAT at 0 and at 28, and nothing else repeats at k=12.
+TWO_COPIES = REPEAT + SPACER_A + REPEAT + SPACER_B
+
+
+def exempt_build(
+    seq: str,
+    exempt: Interval | None,
+    *,
+    topology: Topology = Topology.LINEAR,
+) -> Construct:
+    """A construct whose only non-designable segment is a whitelisted repeat."""
+    if exempt is None:
+        segments = (Segment(Interval(0, len(seq)), SegmentKind.DESIGNABLE_CDS, "cds"),)
+    else:
+        segments = (
+            Segment(exempt, SegmentKind.WHITELISTED_REPEAT, "itr"),
+            Segment(Interval(exempt.end % len(seq), len(seq)), SegmentKind.DESIGNABLE_CDS, "cds"),
+        )
+    return Construct(sequence=seq, topology=topology, segments=segments)
+
+
+class TestI6ExemptionIsWrapAware:
+    """#70. `find_motifs` reduces a hit in the doubled haystack to `start % n`,
+    but an exempt region spanning the origin is stored with `end > n`. Comparing
+    those two representations directly can never match, so an ITR sitting across
+    the origin silently lost its exemption."""
+
+    #: 80 bp. GGATCC appears once, at position 2 -- inside the wrapped half of an
+    #: ITR declared as Interval(70, 90).
+    SEQ = (
+        "TT" + "GGATCC" + "TTACGTTACGATCGTTAAGCCATTGCAAGGTTACCAAGTTGCCATTAAGGTCCAATTGACCTTAAGGCTTAC"
+    )
+
+    def test_the_sequence_is_the_probe_this_test_thinks_it_is(self) -> None:
+        assert len(self.SEQ) == 80
+        assert self.SEQ.find("GGATCC") == 2
+        assert self.SEQ.find("GGATCC", 3) == -1, "the probe must occur exactly once"
+
+    def test_a_motif_past_the_origin_inside_a_wrapping_itr_is_exempt(self) -> None:
+        """THE #70 REGRESSION. Interval(70, 90) on an 80 bp circle covers 70..79
+        and 0..9, so the hit at 2 is inside the ITR and must not be reported."""
+        c = exempt_build(self.SEQ, Interval(70, 90), topology=Topology.CIRCULAR)
+        assert find_motifs(c, ["GGATCC"]) == [], (
+            "a motif inside an origin-spanning WHITELISTED_REPEAT must be exempt; "
+            "before #70 the wrapped interval could never match a `start % n` hit"
+        )
+
+    def test_the_same_motif_outside_the_itr_is_still_reported(self) -> None:
+        """The control. Without it, a fix that exempted everything would pass."""
+        c = exempt_build(self.SEQ, Interval(40, 60), topology=Topology.CIRCULAR)
+        assert find_motifs(c, ["GGATCC"]), "a motif outside the ITR must still be found"
+
+    def test_a_non_wrapping_exemption_still_works(self) -> None:
+        """The wrap fix must not regress the ordinary case."""
+        c = exempt_build(self.SEQ, Interval(0, 20), topology=Topology.CIRCULAR)
+        assert find_motifs(c, ["GGATCC"]) == []
+
+
+class TestI8HonoursExempt:
+    """#69. I6 consulted `Construct.exempt` and I8's two scans did not, so a
+    pipeline passing `max_repeat` or `max_homopolymer` could never arm them on a
+    real viral vector: the ITR's own sequence tripped the ceiling every time."""
+
+    def test_a_repeat_with_both_copies_in_an_itr_is_exempt(self) -> None:
+        c = exempt_build(TWO_COPIES, Interval(0, 40))
+        verify_construct(c, protein="", table_id=11, max_repeat=12)
+
+    def test_the_same_repeat_is_refused_when_nothing_is_exempt(self) -> None:
+        """Proves the construct really does carry the repeat, so the test above
+        is an exemption rather than a sequence with nothing to find."""
+        c = exempt_build(TWO_COPIES, None)
+        with pytest.raises(VerificationError) as exc:
+            verify_construct(c, protein="", table_id=11, max_repeat=12)
+        assert exc.value.invariant == "I8"
+        assert REPEAT in str(exc.value), "the only 12-mer repeat here must be ours"
+
+    def test_one_arm_exempt_is_not_enough(self) -> None:
+        """BOTH, never either -- the rule the rules lane states in as many words.
+        A designed repeat that happens to match part of an ITR is still the
+        design's problem, and exempting it because one end landed on a
+        whitelisted feature would hide exactly the finding the user can act on."""
+        c = exempt_build(TWO_COPIES, Interval(0, 20))
+        with pytest.raises(VerificationError) as exc:
+            verify_construct(c, protein="", table_id=11, max_repeat=12)
+        assert exc.value.invariant == "I8"
+
+    def test_a_homopolymer_run_inside_an_itr_is_exempt(self) -> None:
+        seq = "A" * 14 + "GTCATGCCAGTTAGGCTTGGACCATGGTCAAG"
+        c = exempt_build(seq, Interval(0, 14))
+        verify_construct(c, protein="", table_id=11, max_homopolymer=10)
+
+    def test_the_same_run_outside_an_itr_is_refused(self) -> None:
+        seq = "A" * 14 + "GTCATGCCAGTTAGGCTTGGACCATGGTCAAG"
+        c = exempt_build(seq, None)
+        with pytest.raises(VerificationError) as exc:
+            verify_construct(c, protein="", table_id=11, max_homopolymer=10)
+        assert exc.value.invariant == "I8"
+        assert "14 As" in str(exc.value)
+
+    def test_a_run_only_partly_inside_an_itr_is_refused(self) -> None:
+        """WHOLLY inside, not merely overlapping. A run that starts in the ITR
+        and continues into designed DNA is the design's problem for the part it
+        owns, and the oracle must err toward refusing."""
+        seq = "A" * 14 + "GTCATGCCAGTTAGGCTTGGACCATGGTCAAG"
+        c = exempt_build(seq, Interval(0, 8))
+        with pytest.raises(VerificationError) as exc:
+            verify_construct(c, protein="", table_id=11, max_homopolymer=10)
+        assert exc.value.invariant == "I8"
