@@ -93,6 +93,50 @@ class TestRuleContract:
             f"{spec.id}: param_schema drives the UI controls and must be a JSON Schema object"
         )
 
+    def test_is_probeable_per_slot(self, spec: type) -> None:
+        """Every spec must be no-arg constructible AND expose the per-slot probe.
+
+        `score/presets.py::_unscored_enforcement` is the guard that stops a
+        preset weighting a rule that is HARD in the modality the preset is
+        pinned to. It probes by calling `spec()` and then `enforcement_for(slot)`,
+        and it has two fallbacks that both resolve to "treat this spec as
+        scored", i.e. ALLOW the weight: a `TypeError` from the constructor, and a
+        missing `enforcement_for`. Either one silently drops the guard back to
+        the class-level `enforcement` ClassVar.
+
+        That ClassVar is only the FLOOR. Reading it alone is exactly the defect
+        #72 fixed: `d4_internal_polya` declares SOFT and its `enforcement_for`
+        returns HARD_REPAIR on every packaged modality, and two shipped presets
+        came to weight it. A future rule that took a required constructor
+        argument would sail straight back into that hole.
+
+        CAUGHT HERE RATHER THAN THERE, deliberately (#82). At the preset the
+        symptom is a weight that silently appears; at the rule it is a plain fact
+        about the rule, with a message naming it. Same argument
+        `core/registry.py::check_engine_calibration` makes for raising rather
+        than skipping: a skipped rule is a missing constraint nobody sees.
+
+        Unreachable today -- every catalog rule has all-default `__init__`
+        parameters and implements the full Protocol -- but that is a coincidence
+        of the current catalog, not a property of it, and nothing else gates it.
+        """
+        try:
+            rule = spec()
+        except TypeError as exc:  # pragma: no cover - the failure this exists for
+            pytest.fail(
+                f"{spec.id}: must be constructible with no arguments. "
+                f"`_unscored_enforcement` probes rules by calling `spec()`, and on "
+                f"TypeError it falls back to the `enforcement` ClassVar -- the floor, "
+                f"not what the solver routes on -- which is how a HARD rule silently "
+                f"regains an objective weight. Give every parameter a default. ({exc})"
+            )
+        for member in ("enforcement_for", "gate"):
+            assert callable(getattr(rule, member, None)), (
+                f"{spec.id}: must expose a callable `{member}`; it is a member of the "
+                f"Spec Protocol, and `_unscored_enforcement` treats its absence as "
+                f"permission to weight the rule"
+            )
+
 
 def test_rule_ids_are_unique_and_sorted_stably() -> None:
     ids = [s.id for s in SPECS]
