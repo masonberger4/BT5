@@ -26,10 +26,23 @@ against the same Aho-Corasick automaton before it is accepted. Tier B can never
 weaken a Tier-A guarantee; it can only fail to find a fix, which surfaces as an
 infeasibility certificate.
 
-Search parameters follow DNA Chisel's calibrated defaults rather than invented
-ones: exhaustive local search when the local mutation space is under 10,000
-variants, otherwise guided random with 2 mutations per iteration, capped at 1000
-iterations with a stagnation tolerance of 100.
+Search parameters start from DNA Chisel's calibrated defaults rather than
+invented ones: exhaustive local search when the local mutation space is under
+10,000 variants, otherwise guided random, capped at 1000 iterations with a
+stagnation tolerance of 100.
+
+Two of those defaults did not survive measurement against #111, and this
+paragraph used to describe the pre-#111 behaviour:
+
+* the random branch perturbs `len(window) / MUTATION_WINDOW_DIVISOR` codons,
+  NOT a fixed 2. Two is only the floor (`MUTATIONS_PER_ITERATION`) -- a fixed
+  2 is unreachable for a windowed composition rule over 100 nt.
+* a single breach is abandoned after `PER_TARGET_TOLERANCE` fruitless rounds,
+  so one unclearable target cannot spend the whole iteration budget. An
+  abandoned breach never reports `converged`.
+
+Each constant carries its own derivation; read those rather than this summary
+when the number matters.
 """
 
 from __future__ import annotations

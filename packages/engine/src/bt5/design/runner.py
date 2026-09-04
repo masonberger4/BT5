@@ -66,6 +66,7 @@ from bt5.design.provenance import (
 )
 from bt5.design.ranking import Nulls, build_nulls, comparable_totals, score_candidate
 from bt5.design.sites import choose_site
+from bt5.rules.catalog.c1_cai import CAI_REFERENCE_SET
 from bt5.rules.vendors import DEFAULT_SELECTION, VendorSelection
 from bt5.score import build_report, design_hash, render
 from bt5.score.distance import distance_matrix
@@ -252,19 +253,43 @@ def _context(
 def _host_usage(host: HostId) -> tuple[CodonUsage | None, str | None]:
     """The host's codon-usage table, or None plus the degradation to report.
 
-    Absence is a gap in BT5's data, not an error in the request, so it degrades
-    the null from host-frequency sampling to uniform-synonymous sampling and
+    Resolved through `c1_cai.CAI_REFERENCE_SET`, which is the reason this reads
+    a rule module from the design lane rather than mapping hosts to tables
+    itself. The shipped tables are named by REFERENCE SET
+    (`human_highly_expressed_refseq_w`), never by host, and one host can share
+    another's set -- HEK293 uses the human one. A second mapping here would be a
+    second answer to "which table is this host scored against", free to drift
+    from the one C1 actually scores with: the sweep would steer toward one table
+    while the scorecard reported against another. `score/report.py`'s
+    `ERROR_FREE_BP` docstring records what that costs when it happens.
+
+    Absence is still a gap in BT5's data, not an error in the request, so it
+    degrades the null from host-frequency to uniform-synonymous sampling and
     SAYS so. Inventing a usage table, or silently borrowing a related host's,
     would make every percentile in the report a measurement against a
     distribution the user was never told about.
+
+    The two absences are reported separately because they are different facts.
+    A host absent from the map has no reference set in this build, which is a
+    deliberate state for S. cerevisiae, P. pastoris and Sf9. A mapped set whose
+    file will not load is a broken build, and saying "no table for this host"
+    there would blame the request for a packaging fault.
     """
+    reference_set = CAI_REFERENCE_SET.get(host)
+    if reference_set is None:
+        return None, (
+            f"no codon usage reference set is defined for host {host} in this "
+            f"build; the null was sampled uniformly over synonymous codons rather "
+            f"than at host frequency, and the percentiles are against that null"
+        )
     try:
-        return FileTableProvider().usage(str(host)), None
+        return FileTableProvider().usage(reference_set), None
     except (FileNotFoundError, KeyError):
         return None, (
-            f"no codon usage table on file for host {host}; the null was sampled "
-            f"uniformly over synonymous codons rather than at host frequency, and "
-            f"the percentiles are against that null"
+            f"host {host} maps to codon usage reference set {reference_set}, but "
+            f"that table could not be loaded; the null was sampled uniformly over "
+            f"synonymous codons rather than at host frequency, and the percentiles "
+            f"are against that null"
         )
 
 
