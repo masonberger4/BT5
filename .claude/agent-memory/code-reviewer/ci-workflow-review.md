@@ -69,4 +69,25 @@ named by its `name:`), and then the correction itself, which named one location 
 `skipped`, and the default-branch tip on `issue_comment` where it does the work.
 `gh pr view <n> --json statusCheckRollup` settles it in one call.
 
+**"The workflow triggers on the event" is not "the job runs on the event", and for a
+required check the difference inverts the failure.** A workflow can declare
+`on: {merge_group:}` while the job producing the required context is gated
+`if: github.event_name == 'pull_request_target'`. The job is then `skipped` on
+`merge_group` — and a skipped check **satisfies** a required status check. So the gate
+passes while enforcing nothing, which is worse than the deadlock it was added to prevent,
+because nothing goes red.
+
+Raised on PR #114 as a non-blocking finding against the first cut of
+`check-workflow-gate.py`'s `merge_group` guard, which only read the workflow-level `on:`
+block. **Closed in `e87f2a4`** — the guard now inspects the producing job's `if:` too.
+Check both halves when reviewing anything of this shape.
+
+**And the trap inside that fix.** The obvious rule — "a gate job's `if:` must contain
+`merge_group`" — flags `ci.yml`'s `required-checks`, whose `if: always()` runs on every
+event including a merge group. Shipping that would have blocked all of CI immediately. The
+guard therefore fires only when a condition *branches on the event*
+(`github.event_name` / `github.event.`) without naming `merge_group`. It was the script's
+own negative test that caught this, not a reading of it — when adding a heuristic guard,
+write the negative test before trusting the positive result.
+
 See also [[skill-frontmatter-governance]].
