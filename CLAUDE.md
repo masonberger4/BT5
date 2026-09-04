@@ -19,9 +19,9 @@ vocabulary from the schema.
 One lane per PR; you own exactly one directory under `bt5/` and edit no other: M1 `solver/`,
 M2 `vector/`, M3 `score/`, M4 `rules/catalog/`, M5 `codon/`, M6 `structure/`, M8 `cassette/`.
 Rules never touch the solver or the oracle; nothing but M1 touches the solver. M7/M9/M10
-(`packaging/`, `packages/server/`, `apps/web/`) are planned — no files yet. Cross-lane
-changes need an issue first. Blocked on another lane? Code against the protocol in
-`bt5/core/` and a recorded fixture — never reach into their directory.
+(`packaging/`, `packages/server/`, `apps/web/`) are planned. Cross-lane changes need an issue
+first; blocked on another lane, code against the protocol in `bt5/core/` and a recorded
+fixture — never reach into their directory.
 
 ## 2. Protected paths
 
@@ -38,33 +38,33 @@ default, a new protocol method — needs an RFC and a deprecation shim. Use
 
 ## 3. Rules that are not negotiable
 
-1. **The genetic code table is explicit, never defaulted**, and **never emit a codon that is
-   also a stop in that table.** A wrong table is a silently wrong protein no assay catches.
-2. **Never evaluate a rule against a bare string** — rules take a `Construct`, which is what
+1. **The genetic code table is explicit, never defaulted** — a wrong table is a silently
+   wrong protein no assay catches for months.
+2. **Never emit a codon that is also a stop codon in the target table.**
+3. **Never evaluate a rule against a bare string.** Rules take a `Construct`; that is what
    makes junction-, origin-spanning and reverse-strand hits impossible to miss.
-3. **Never scan the reverse strand yourself for motif rules.** List forward motifs in
+4. **Never scan the reverse strand yourself for motif rules.** List forward motifs in
    `LatticeTerms.forbidden` and let the solver close the set. Directional scored models are
    NOT revcomp-symmetric — they must read `slot.strand_of_interest`.
-4. **Hard constraints are never a penalty weight.** Use `HARD_LATTICE`, `HARD_REPAIR` or
+5. **Hard constraints are never a penalty weight.** Use `HARD_LATTICE`, `HARD_REPAIR` or
    `HARD_CHECK`, each with `default_weight` 0.0; `steering_weight` nudges the DP.
-5. **Splice-site removal must use `RepairPolicy.FIXED_POINT`.** A single pass ships a
+6. **Splice-site removal must use `RepairPolicy.FIXED_POINT`.** A single pass ships a
    construct whose donors were removed *into* new donors, and the validator passes it.
-6. **Seed every RNG explicitly** with `np.random.default_rng(seed)`. Global `np.random.*`
+7. **Seed every RNG explicitly** with `np.random.default_rng(seed)`. Global `np.random.*`
    and stdlib `random` are banned in engine source and tests; CI greps for both.
-7. **ViennaRNA is pinned.** A bump is a scientific change: `approved:algorithm-change` plus a
+8. **ViennaRNA is pinned.** A bump is a scientific change: `approved:algorithm-change` plus a
    baseline regeneration. Never put a ΔG in a byte-exact snapshot.
-8. **Suppression is not a fix.** Never skip, disable, `xfail` or loosen a test; never weaken
-   a Hypothesis property; `--snapshot-update` and re-recording a contract fixture are not
-   fixes either. A property failing on your PR **and** on the merge base is a pre-existing
-   bug: record a fixture under `tests/data/regressions/`, open an issue, say so in the PR,
-   and let the **owner** merge that one.
-9. **Never give a workflow that owns a required check a `paths:` filter**, and never add a
+9. **Suppression is not a fix.** Never skip, disable, `xfail` or loosen a test or weaken a
+   Hypothesis property; `--snapshot-update` and re-recording a contract fixture are no better.
+   A property failing on your PR **and** on the merge base is a pre-existing bug: record a
+   fixture under `tests/data/regressions/`, open an issue, say so in the PR — **owner** merges.
+10. **Never give a workflow that owns a required check a `paths:` filter**, and never add a
    CI job without adding it to `required-checks.needs` — a required check that never reports
    blocks the PR forever, with no error anywhere.
-10. **Never add a "minimize identity to a reference sequence" objective**, or let `KmerIndex`
+11. **Never add a "minimize identity to a reference sequence" objective**, or let `KmerIndex`
    accept an external database — constraining the index to the assembled construct is all
    that keeps BT5 from being a general-purpose screening-evasion tool.
-11. **Never report a predicted expression level, titer, yield or fold-improvement.**
+12. **Never report a predicted expression level, titer, yield or fold-improvement.**
 
 ## 4. Branching, PRs and merging
 
@@ -79,7 +79,7 @@ contexts on the PR's CURRENT head: `required-checks` **and** `pre-pr-attest`. Ch
 the first is the mistake this sentence exists to prevent; the merge box then refuses with a
 bare `required_status_checks` failure. Green is necessary, not sufficient — four things go
 to the owner instead: an `approved:*` label on a §2 path (the label signs off the change, not
-the merge); a recorded pre-existing bug (§3.8); a non-"none" scientific impact or any change
+the merge); a recorded pre-existing bug (§3.9); a non-"none" scientific impact or any change
 to what the app REFUSES to build; an unresolved review thread. Say in the PR why it qualified.
 
 ## 5. Context management
