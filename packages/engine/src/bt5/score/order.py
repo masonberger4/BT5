@@ -210,7 +210,7 @@ def write_csv(entries: Sequence[OrderEntry], target: str | Path | IO[str] | None
     text = handle.getvalue()
     if target is not None:
         if isinstance(target, str | Path):
-            Path(target).write_text(text, newline="")
+            Path(target).write_text(text, newline="", encoding="utf-8")
         else:
             target.write(text)
     return text

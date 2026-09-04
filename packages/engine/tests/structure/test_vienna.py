@@ -58,7 +58,7 @@ class TestAvailabilityAndDegradation:
         the constant a benchmark comparability guard reads."""
         import pathlib
 
-        text = pathlib.Path("pyproject.toml").read_text()
+        text = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
         assert f'viennarna=={CALIBRATED_VERSION}"' in text
 
     def test_the_calibration_key_matches_the_spec_field_form(self) -> None:

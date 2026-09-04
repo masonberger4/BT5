@@ -37,7 +37,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     live = surface.extract()
-    current = json.loads(surface.MANIFEST_PATH.read_text())
+    current = json.loads(surface.MANIFEST_PATH.read_text(encoding="utf-8"))
 
     # The manifest on this branch must already match the live code. The local
     # test says so too, but repeating it here means CI never classifies against
@@ -51,12 +51,12 @@ def main(argv: list[str]) -> int:
         return 1
 
     baseline_path = Path(argv[1])
-    if not baseline_path.exists() or not baseline_path.read_text().strip():
+    if not baseline_path.exists() or not baseline_path.read_text(encoding="utf-8").strip():
         print("No contract manifest on the base branch: this commit IS the freeze.")
         print(f"Recording {sum(len(v) for v in live.values())} entries as contract version 1.")
         return 0
 
-    verdict = surface.review(json.loads(baseline_path.read_text()), current, live)
+    verdict = surface.review(json.loads(baseline_path.read_text(encoding="utf-8")), current, live)
 
     if not verdict.changes:
         print("Contract unchanged.")

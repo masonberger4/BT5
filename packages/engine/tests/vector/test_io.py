@@ -97,13 +97,13 @@ class TestRoundTrip:
 class TestOtherFormats:
     def test_fasta_requires_an_explicit_topology(self, tmp_path: Path) -> None:
         path = tmp_path / "v.fasta"
-        path.write_text(">v\nACGTACGTACGT\n")
+        path.write_text(">v\nACGTACGTACGT\n", encoding="utf-8")
         with pytest.raises(VectorError, match="cannot record topology"):
             read_vector(path)
 
     def test_fasta_with_a_topology_parses(self, tmp_path: Path) -> None:
         path = tmp_path / "v.fasta"
-        path.write_text(">v\nACGTACGTACGT\n")
+        path.write_text(">v\nACGTACGTACGT\n", encoding="utf-8")
         backbone = read_fasta(path, topology=Topology.CIRCULAR)
         assert backbone.sequence == "ACGTACGTACGT"
         assert backbone.is_circular
@@ -114,7 +114,7 @@ class TestOtherFormats:
 
     def test_unknown_extension_is_refused(self, tmp_path: Path) -> None:
         path = tmp_path / "v.xyz"
-        path.write_text("nonsense")
+        path.write_text("nonsense", encoding="utf-8")
         with pytest.raises(VectorError, match="unrecognised vector file extension"):
             read_vector(path)
 

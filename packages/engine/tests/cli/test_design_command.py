@@ -62,7 +62,7 @@ def test_design_writes_order_csv(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert out_csv.exists()
-    rows = list(csv.reader(io.StringIO(out_csv.read_text())))
+    rows = list(csv.reader(io.StringIO(out_csv.read_text(encoding="utf-8"))))
     assert rows[0] == ["Name", "Sequence"]
     assert len(rows) == 2
     name, sequence = rows[1]
@@ -129,7 +129,7 @@ def test_design_accepts_multiple_hosts(tmp_path: Path) -> None:
 
 def test_design_reads_protein_from_fasta_file(tmp_path: Path) -> None:
     fasta = tmp_path / "protein.fasta"
-    fasta.write_text(f">example\n{PROTEIN}\n")
+    fasta.write_text(f">example\n{PROTEIN}\n", encoding="utf-8")
     out_gb = tmp_path / "out.gb"
     args = [
         "design",
@@ -167,6 +167,7 @@ def test_python_dash_m_bt5_runs(tmp_path: Path) -> None:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     assert completed.returncode == 0, completed.stderr

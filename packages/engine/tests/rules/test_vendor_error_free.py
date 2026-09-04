@@ -27,7 +27,7 @@ FIELD = "error_free_bp"
 def sidecar() -> dict:
     import bt5.rules.vendors as mod
 
-    return json.loads(Path(mod.__file__).with_name("_provenance.json").read_text())
+    return json.loads(Path(mod.__file__).with_name("_provenance.json").read_text(encoding="utf-8"))
 
 
 class TestEveryProfileStatesItsFidelityProvenance:
