@@ -12,6 +12,15 @@
 #   Precondition, from docs/research/github-setup.md:2804,2809: a week of
 #   watching the false-positive rate on `blocking=true` before promoting.
 #
+#   The OTHER precondition on promotion is now met. Until 2026-09-04 this job
+#   was red by construction on any pull request editing this file -- a state no
+#   push could clear -- which `docs/decisions/2026-09-03-agents-may-attest.md`
+#   named as "the blocker on ever promoting it". The self-edit branch in the
+#   verdict step below now passes on a checked compensating control instead.
+#   Read that branch's comment before promoting: it is the one path here that
+#   does not fail closed, and promotion is what would make its correctness
+#   load-bearing rather than advisory.
+#
 # WHY. tests/data_integrity/test_rule_contract.py says it plainly -- it "catches
 # MISSING provenance; it cannot catch WRONG provenance." It verifies a rule's
 # citations exist, are https and are labelled. It cannot read the cited paper and
@@ -161,6 +170,15 @@ jobs:
           # what was really an unconfigured repository.
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Used only on the self-edit path below, to read this pull request's
+          # labels LIVE. Deliberately not from the event payload: `labels` there
+          # is captured at event time and is EMPTY on `opened`, because a label
+          # is always applied after the pull request exists. Same reasoning as
+          # pre-pr-attest.yml reading the head SHA from the API rather than from
+          # a payload that a re-run replays unchanged.
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           if [ -z "${OUT:-}" ]; then
@@ -181,17 +199,79 @@ jobs:
               echo "     gh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${{ github.repository }} --body '<token>'"
               echo "or run /install-github-app, which does both. See this file's header comment."
             elif [ "$SELF_EDIT" = "yes" ]; then
-              echo "::error::This pull request changes claude-review.yml, so the action refused to run."
-              echo "The Claude GitHub App will only mint a token for a workflow file that is"
-              echo "byte-identical to the copy on the default branch. That is a supply-chain"
-              echo "guard: it stops a pull request from editing its own reviewer. The action"
-              echo "self-skips, exits 0 and emits no verdict, which is why this reads as empty."
+              # THE ONE CASE THAT IS NOT A FAULT, and so the only one here that
+              # does not fail closed. The distinction is the whole justification,
+              # because the fail-closed rule in the `else` below is untouched.
+              #
+              # The Claude GitHub App mints a token only for a workflow file
+              # byte-identical to the copy on the default branch. That is a
+              # supply-chain guard -- it stops a pull request editing its own
+              # reviewer -- so the action self-skips, exits 0 and emits no
+              # verdict. DETERMINISTIC, not flaky: no push to this branch can
+              # ever produce a verdict, because every push still carries the
+              # edit. `docs/decisions/2026-09-03-agents-may-attest.md` recorded
+              # exactly this as "red by construction ... cannot be satisfied by
+              # any push" and left it open. This closes it.
+              #
+              # `2026-09-03-ci-checks-that-can-go-green.md` rejected making this
+              # job neutral when it cannot produce a verdict -- "a review that
+              # did not happen must not read as a pass. The cap was the bug, not
+              # the fail-closed." THAT REJECTION STANDS, and it is about the
+              # `else` branch: a crash, a timeout or a turn cap is a FAULT, where
+              # a re-run can still deliver the verdict, so passing would lose a
+              # review that was genuinely owed. This branch is the opposite
+              # shape. Nothing is owed that any amount of re-running could
+              # deliver, so a permanent red does not mean "the review is
+              # missing" -- it means "this check has no opinion", said with the
+              # one conclusion CLAUDE.md section 4 forbids working around, on the
+              # one class of pull request that changes CI itself.
+              #
+              # So it passes CONDITIONALLY AND CHECKED, not waved through.
+              # `approved:ci-change` must be on the pull request. That label is
+              # not a formality standing in for the review: ci.yml's `approvals`
+              # job enforces it independently for any .github/ change and sits
+              # inside the REQUIRED `required-checks` gate, and `pre-pr-attest`
+              # -- also required -- separately demands the /pre-pr chain ran
+              # against this exact head. A self-editing pull request is gated by
+              # those two required checks; an ordinary one by those two plus this
+              # advisory one. The reviewer's absence is stated in the log and in
+              # the check's own annotation rather than hidden.
+              echo "::warning::claude-review-gate could not run: this pull request edits claude-review.yml."
+              echo "The Claude GitHub App refuses to mint a token for a workflow file differing from"
+              echo "the copy on the default branch -- the supply-chain guard that stops a pull"
+              echo "request from editing its own reviewer. The action self-skips and emits no"
+              echo "verdict, and NO PUSH TO THIS BRANCH CAN CHANGE THAT."
               echo ""
-              echo "EXPECTED on any pull request that touches this file, including the one"
-              echo "that first adds it. The review runs normally on every other pull request"
-              echo "once this one merges."
+              # The PULLS endpoint, not `issues/$PR/labels`. Both return this
+              # pull request's labels, but the issues path is mapped to the
+              # `issues` scope, which this workflow does not grant -- so it would
+              # 403, `set -e` would kill the step, and the fix would land right
+              # back on the permanent red it exists to remove. `pulls` is covered
+              # by the `pull-requests: write` granted above.
+              # `if ! VAR="$(...)"` rather than a bare assignment: under `set -e`
+              # a failing command substitution in an assignment kills the step
+              # with no message of its own, and this branch exists to REMOVE an
+              # unexplained permanent red, not to add a new one.
+              if ! LABELS="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '[.labels[].name]')"; then
+                echo "::error::Could not read this pull request's labels, so the compensating"
+                echo "control could not be checked. Failing closed. Re-run this job."
+                exit 1
+              fi
+              if printf '%s' "$LABELS" | grep -qF '"approved:ci-change"'; then
+                echo "approved:ci-change is present, so this change is gated by the two REQUIRED"
+                echo "checks instead: approvals (inside required-checks) and pre-pr-attest."
+                echo "Passing, with the reviewer's absence on the record rather than red forever."
+                exit 0
+              fi
+              echo "::error::...and approved:ci-change is NOT on this pull request."
+              echo "Labels seen: $LABELS"
               echo ""
-              echo "Still failing closed: no review happened, so this must not read as a pass."
+              echo "That label is the compensating control for a review that cannot run. Add it"
+              echo "(approvals in ci.yml demands it for any .github/ change anyway), then re-run"
+              echo "this job from the Actions tab. This workflow deliberately does not trigger on"
+              echo "'labeled': a full review costs 25 minutes of a 20-slot budget and must not"
+              echo "fire on every label edit."
+              exit 1
             else
               echo "::error::No verdict (crash, timeout, or --max-turns). Failing closed."
             fi

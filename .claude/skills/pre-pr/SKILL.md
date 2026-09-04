@@ -22,6 +22,10 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 - **This is not CI parity on invariants.** Locally Hypothesis runs `dev` at 50
   examples; CI runs `ci` at 200. A property can pass here and fail there. Pytest's run
   header prints the profile and budget — read it rather than assuming.
+- **This chain never merges, and neither does its caller.** It ends at a draft PR and an
+  attestation. Taking the PR the rest of the way to green is yours too — labels, review
+  threads, a re-run of a flaked job — but the merge is the owner's, delegated per PR
+  (CLAUDE.md §7b). Report readiness; do not press the button.
 
 ## The chain, in order
 

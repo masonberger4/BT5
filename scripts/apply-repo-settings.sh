@@ -106,6 +106,34 @@ echo "  legacy branch protection (expect 404):"
 gh api "repos/$REPO/branches/main/protection" >/dev/null 2>&1 \
   && echo "    WARNING: legacy protection exists and stacks most-restrictive-wins; remove it" \
   || echo "    none (good)"
+
+# READ THE BYPASS BACK, do not assume it. The spec names the built-in
+# "Repository admin" role by its numeric id, and a numeric id is exactly the
+# kind of constant that is wrong silently: GitHub accepts any id that resolves,
+# so a wrong one grants the bypass to a DIFFERENT role rather than erroring.
+# That is the one failure this script must not report as success -- the bypass
+# is what stops a wedged required check from blocking every pull request
+# including its own fix (pre-pr-attest.yml's header), so it is load-bearing
+# precisely on the day nobody can test it interactively.
+echo "  bypass actors (expect exactly: Repository admin, pull_request):"
+RULESET_ID="$(gh api "repos/$REPO/rulesets" \
+  --jq '[.[] | select(.name=="main-protection") | .id] | first')"
+BYPASS="$(gh api "repos/$REPO/rulesets/$RULESET_ID" \
+  --jq '.bypass_actors // [] | .[] | "    \(.actor_type) id=\(.actor_id) mode=\(.bypass_mode)"')"
+if [ -z "$BYPASS" ]; then
+  echo "    NONE -- the spec asked for one and the API stored none." >&2
+  echo "    A required check that wedges will block every pull request, yours" >&2
+  echo "    included, with no in-band recovery. Investigate before relying on it." >&2
+else
+  echo "$BYPASS"
+  echo "    Confirm in the UI that id=5 renders as 'Repository admin':" >&2
+  echo "      $(gh repo view "$REPO" --json url --jq .url)/settings/rules" >&2
+fi
+
 echo
-echo "Done. Open a throwaway PR and confirm the merge box shows: one required"
-echo "check, squash-only, no approval requirement, and NO bypass available to you."
+echo "Done. Open a throwaway PR and confirm the merge box shows: two required"
+echo "checks (required-checks, pre-pr-attest), squash-only, no approval"
+echo "requirement -- and, as repository admin, that you CAN merge past a red"
+echo "required check. That last one is deliberate as of 2026-09-04: it is the"
+echo "in-band escape from a wedged gate. Merging red is now your call to make"
+echo "rather than something the ruleset makes for you."

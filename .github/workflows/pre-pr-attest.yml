@@ -14,12 +14,23 @@
 #
 #   IF THIS JOB EVER BREAKS ON `main`, IT BLOCKS ITS OWN FIX. `pull_request_target`
 #   runs the BASE branch copy, so a defect here fails every open pull request --
-#   including the one that would repair it -- and `bypass_actors: []` means no
-#   one, admin included, can merge past it. `/pre-pr-bypass` does NOT help: it is
+#   including the one that would repair it. `/pre-pr-bypass` does NOT help: it is
 #   read by this job, so it clears a MISSING attestation but not a job that died
-#   before reaching that check. The only escape is out of band: set
-#   main-protection to `"enforcement": "disabled"`, merge the fix, turn it back
-#   on. Know that before editing anything below.
+#   before reaching that check. Know that before editing anything below.
+#
+#   THE ESCAPE IS NOW IN BAND, as of 2026-09-04, and it is the repository owner:
+#   main-protection.json lists the Repository admin role in `bypass_actors` with
+#   `bypass_mode: pull_request`, so the owner can merge the repair past this
+#   check while it is red. Until that day the file said `bypass_actors: []` and
+#   this comment said the only escape was to disable the ruleset out of band --
+#   which cannot be done from a Claude session at all, because the proxy blocks
+#   every repo-scoped REST path (scripts/apply-repo-settings.sh:5-7).
+#
+#   TWO THINGS THAT ARE STILL TRUE. The bypass lives in the LIVE ruleset, not in
+#   the committed spec, so it exists only once the owner has run
+#   `scripts/apply-repo-settings.sh` -- a spec file changes nothing by itself.
+#   And it is the OWNER's, deliberately: an agent cannot merge here at all
+#   (CLAUDE.md section 7b), so nothing automated can route around a red gate.
 #
 # WHY THIS EXISTS. `/pre-pr` runs code-reviewer, rule-auditor and
 # security-reviewer as subagents inside one Claude session. Their verdicts live

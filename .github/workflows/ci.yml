@@ -128,6 +128,21 @@ jobs:
       - name: Test the main-broken predicate
         run: .venv/bin/python .github/scripts/test-main-broken-predicate.py
 
+      # The FOURTH of these, and the one guarding the loosest branch in CI.
+      # claude-review-gate's verdict step now has a path that PASSES WITHOUT A
+      # VERDICT: a pull request editing claude-review.yml cannot be reviewed at
+      # all (the Claude GitHub App will not mint a token for a workflow file
+      # differing from the default branch's copy), so that case passes on a
+      # checked compensating control -- `approved:ci-change` -- instead of
+      # staying red forever with nothing able to clear it.
+      #
+      # A branch turning "no review happened" into a green check is precisely
+      # what this repository has agreed not to ship on reading alone. Same
+      # pattern as the three steps above, including the property that makes it
+      # worth having: the script is EXTRACTED from the workflow, not restated.
+      - name: Test the claude-review verdict step
+        run: .venv/bin/python .github/scripts/test-claude-review-selfedit.py
+
   # mypy is configured `strict = true` in pyproject.toml and demanded by
   # CLAUDE.md section 8 and the PR template, and until now ran in NO CI job --
   # a self-declared checkbox was the only enforcement of a strict-mode type

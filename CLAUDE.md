@@ -93,9 +93,8 @@ Rationale for 3, 4 and 6 is in `.claude/rules/rules-catalog.md`.
 Never skip, disable, `xfail` or loosen a test to get green. Never weaken a Hypothesis
 property. If a property fails on your PR and reproduces on the merge base, it is a
 pre-existing bug: file it as a fixture under `tests/data/regressions/` plus an issue, and
-say so in the PR. **The owner merges that one** — an explicit exception to §7b's
-merge-on-green permission, because green was reached by recording the bug rather than
-fixing it.
+say so in the PR and **name it in the readiness report** (§7b): green was reached by
+recording the bug rather than fixing it, and a green tick does not say so.
 
 `--snapshot-update` is not a fix either, and neither is re-recording a contract
 fixture. *(`goldens-not-hand-edited` is named in the plan but does not exist yet.)*
@@ -122,34 +121,39 @@ Open your PR as a **draft** until you believe it is done; drafts skip the expens
 jobs, and CI capacity is the binding constraint (20 concurrent job slots, ~12 per Python
 PR, so at most 5 open non-draft PRs at a time).
 
-### 7b. Merging on green
+### 7b. Green is yours. Merging is the owner's.
 
-**An agent may squash-merge its own PR once CI is green.** The ruleset requires zero
-approving reviews and **two** required contexts — verify both against the PR's CURRENT
-head, not a stale run:
+**An agent takes a PR to green and stops. It does not merge.** Everything up to the merge
+button is yours: the code, the `approved:*` labels, review threads, the attestation,
+re-running a flaked job. The merge is the owner's, delegated per PR ("merge #N") — a
+standing permission is not that delegation, which is why the one that used to be here is
+gone (2026-09-04). Do not merge because the PR looks fine, because it is yours, or because
+nothing is left to do: that last is what this rule describes, not an exception to it.
+
+Report readiness against **two** required contexts, both on the CURRENT head:
 
 - `required-checks` — green means every job in that gate's `needs` succeeded.
 - `pre-pr-attest` — green means `/pre-pr <head-sha>` was attested by an OWNER,
   COLLABORATOR or MEMBER for **this** commit, or the owner waived it with
-  `/pre-pr-bypass <head-sha>`. Pushing again makes it stale on purpose, so it is the last
-  thing to go green and the first thing to go red.
+  `/pre-pr-bypass <head-sha>`. Pushing makes it stale on purpose: last to go green, first
+  to go red.
 
-Checking only `required-checks` and concluding "green" is the mistake this wording exists
-to prevent: the merge box will refuse, with a `required_status_checks` failure and no
-explanation attached to any job.
+Checking only `required-checks` and calling it green is the mistake this wording exists to
+prevent: the merge box refuses with a `required_status_checks` failure attached to no job.
+`claude-review-gate` is advisory and **not** one of the two — say whether it is red on
+findings or could not produce a verdict, rather than calling the PR red.
 
-Green is necessary, not sufficient. These go to the owner instead:
+**Name these four in the report** — none is visible from a green tick:
 
-- A protected path from §2, carrying an `approved:*` label. The label is sign-off on the
-  change, not a licence to also merge it unreviewed.
-- A Hypothesis property that fails and reproduces on the merge base (§4) — green was
-  reached by recording the bug, not fixing it.
-- A non-"none" scientific impact, or any change to what the app REFUSES to build. Ranks,
-  refusals and bands are the product.
-- An unresolved review thread (the ruleset enforces this mechanically too).
+- The `approved:*` labels you applied and the path each covers (§2). You apply them; they
+  record the class of change. The owner's sign-off is the merge.
+- A Hypothesis property that failed and reproduced on the merge base (§4).
+- The scientific impact, and any change to what the app REFUSES to build ("none" is real).
+- Any review thread you resolved without acting on the substance.
 
-Squash only — the ruleset requires linear history. Say in the PR that you merged it and
-why it qualified.
+If the owner delegates a merge: squash only, and say in the PR on whose instruction. **The
+owner can also merge past a red required check** (`bypass_actors`, Repository admin) so a
+wedged gate cannot block its own fix — never ask for that instead of fixing what is red.
 
 ## 7a. Merged branches leave a stale ref behind
 
