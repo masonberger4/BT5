@@ -98,6 +98,14 @@ jobs:
       # filters and a quoted `"on":` key, each of which deadlocks identically.
       - name: Guard the merge gate
         run: .venv/bin/python .github/scripts/check-workflow-gate.py
+      # The mirror image of the step above. That one guards against a required check
+      # that never reports and blocks a PR forever; this one against a hook whose
+      # interpreter is missing, which does not block at all -- and is therefore worse,
+      # because it is silent. A STEP, not a job: python-quality is already in
+      # required-checks.needs with no `if:` gate, so this is blocking without touching
+      # the ruleset, and a step cannot carry a `paths:` filter (CLAUDE.md section 9).
+      - name: Guard the hook launchers
+        run: .venv/bin/python .github/scripts/check-hook-commands.py
 
       # The attestation matcher is one regex inside pre-pr-attest.yml, and it is
       # the whole decision for whether a commit was reviewed. It has already
