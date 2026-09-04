@@ -311,7 +311,7 @@ class TestTheSidecarAndTheCodeAgree:
         import bt5.rules.vendors as mod
 
         path = Path(mod.__file__).with_name("_provenance.json")
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def test_every_orderable_profile_is_documented(self) -> None:
         doc = self.sidecar()

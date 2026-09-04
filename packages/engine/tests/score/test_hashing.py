@@ -32,6 +32,7 @@ def test_it_is_stable_across_processes() -> None:
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
         env={"PATH": "/usr/bin:/bin"},
     )

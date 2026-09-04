@@ -415,7 +415,7 @@ def main() -> None:
         },
         "w": w,
     }
-    with open(out_path, "w") as fh:
+    with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
         fh.write("\n")
     print(

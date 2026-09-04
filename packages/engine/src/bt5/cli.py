@@ -44,7 +44,7 @@ _REPORTABLE_ERRORS = (
 def _read_protein(args: argparse.Namespace) -> str:
     if args.protein is not None:
         return str(args.protein).strip()
-    text = Path(args.protein_file).read_text()
+    text = Path(args.protein_file).read_text(encoding="utf-8")
     return "".join(line.strip() for line in text.splitlines() if not line.startswith(">"))
 
 
@@ -141,7 +141,7 @@ def _cmd_design(args: argparse.Namespace) -> int:
         max_candidates=args.max_candidates,
     )
 
-    args.out_genbank.write_text(result.genbank)
+    args.out_genbank.write_text(result.genbank, encoding="utf-8")
     print(f"wrote {args.out_genbank}")
 
     if args.out_order is not None:

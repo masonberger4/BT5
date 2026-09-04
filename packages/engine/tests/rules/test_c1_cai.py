@@ -826,7 +826,9 @@ class TestServicesBoundary:
         """`Services` is what decouples the rules lane from M5. One convenience
         import of `CodonUsage.cai` would erase that and is invisible in behaviour."""
         root = Path(__file__).resolve().parents[4]
-        source = (root / "packages/engine/src/bt5/rules/catalog/c1_cai.py").read_text()
+        source = (root / "packages/engine/src/bt5/rules/catalog/c1_cai.py").read_text(
+            encoding="utf-8"
+        )
         assert "bt5.codon" not in source
         assert "from bt5.core.services import" in source
 

@@ -25,7 +25,7 @@ extras. Add extras for what you actually plan to do:
 |---|---|---|
 | `fold` | `viennarna==2.7.2` | Folding-derived objectives (5' cap structure, hairpins). Without it, BT5 still runs and says so: see [ViennaRNA](#viennarna) below. |
 | `export` | `openpyxl` | `bt5 design --out-order` when the target format is a vendor plate workbook (`bt5.score.order.write_idt_plate`); the plain `Name,Sequence` CSV the CLI writes today needs neither. |
-| `screen` | `commec>=0.2` | Protein-level biosecurity screening. See [commec database](#commec-database) below — installing the extra is necessary but not sufficient. |
+| `screen` | *(nothing — currently commented out)* | Protein-level biosecurity screening. **Not installable today:** `commec` is not published on PyPI, so the extra was commented out in `pyproject.toml` under [#106](https://github.com/masonberger4/BT5/issues/106) — it made every whole-project `uv run`/`sync`/`lock` fail in the repo root. Nothing imports `commec` yet, so nothing is lost. See [commec database](#commec-database) below. |
 | `server` | `fastapi`, `uvicorn`, `sse-starlette` | M9 (`packages/server/`) — not built yet; installing this extra today buys you nothing. |
 
 Combine extras as needed, e.g. `uv pip install -e ".[fold,export]"`. Contributors

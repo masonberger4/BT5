@@ -187,7 +187,7 @@ class FileTableProvider:
         path = self.data_dir / "codon_usage" / f"{host}.json"
         if not path.exists():
             raise FileNotFoundError(f"no codon usage table for host {host!r} at {path}")
-        raw = json.loads(path.read_text())
+        raw = json.loads(path.read_text(encoding="utf-8"))
         prov = raw.get("_provenance", {})
         return CodonUsage(
             host=host,

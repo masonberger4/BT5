@@ -109,6 +109,7 @@ def run(program: str, comments: list[dict[str, str]], cmd: str, who: list[str]) 
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
     finally:
         Path(path).unlink(missing_ok=True)
