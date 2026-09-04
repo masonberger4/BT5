@@ -28,7 +28,8 @@ from bt5.core.types import DNA_ALPHABET
 from bt5.design import DesignError, design
 from bt5.design.errors import DesignError as DesignErrorAlias
 from bt5.design.gallery import DEFAULT_SWEEP_STEPS, SolveSpace, sweep_designs
-from bt5.design.runner import DEFAULT_GALLERY_SIZE, UNSCREENED
+from bt5.design.runner import DEFAULT_GALLERY_SIZE, UNSCREENED, _host_usage
+from bt5.rules.catalog.c1_cai import CAI_REFERENCE_SET
 from bt5.score.gallery import G4_MIN_PAIRWISE_DISTANCE, MAX_GALLERY, MIN_GALLERY
 from bt5.score.null import DEFAULT_NULL_N
 from bt5.score.steering import SWEEP_AXES, live_axes
@@ -139,9 +140,14 @@ DEGRADATION_SOURCES: dict[str, tuple[str, str]] = {
         "single candidate only: no weight vector in the sweep produced a design",
         "single candidate only: no weight vector in the sweep produced a design",
     ),
-    r"no codon usage table on file": (
-        "no codon usage table on file for host hek293; the null was sampled",
-        "no codon usage table on file for host ",
+    r"no codon usage reference set is defined for host \S+": (
+        "no codon usage reference set is defined for host sf9 in this build; the null was sampled",
+        "no codon usage reference set is defined for host ",
+    ),
+    r"host \S+ maps to codon usage reference set \S+, but": (
+        "host hek293 maps to codon usage reference set "
+        "human_highly_expressed_refseq_w, but that table could not be loaded",
+        " maps to codon usage reference set ",
     ),
     r"no native baseline:": (
         "no native baseline: the caller supplied no wild-type CDS, and BT5 will",
@@ -630,9 +636,70 @@ class TestSweepAxes:
         assert live.swept == everything.swept - 1  # one solve saved, nothing lost
 
     def test_a_host_with_a_usage_table_keeps_the_adaptation_axis(self) -> None:
-        """The axis is dropped because it is DEAD here, not because it is
-        unwanted. When S6 ships a host table it comes back on its own."""
+        """The axis is dropped because it is DEAD, not because it is unwanted.
+        With a table it comes back on its own -- which is now the case for every
+        host in `CAI_REFERENCE_SET`, not a hypothetical."""
         assert "codon_adaptation" in live_axes({"CTG": 1.0, "TTA": 0.1})
+
+
+class TestHostUsageResolvesThroughTheRuleSMap:
+    """One answer to "which table is this host scored against", not two.
+
+    The shipped tables are named by REFERENCE SET, and one host can share
+    another's -- HEK293 uses the human set. `_host_usage` used to look up
+    `usage(str(host))`, which is a different namespace entirely, so it resolved
+    NOTHING for every one of the nine hosts: the null was always uniform
+    -synonymous and the `codon_adaptation` sweep axis was always dead.
+
+    Resolving through `c1_cai.CAI_REFERENCE_SET` is what keeps the sweep steering
+    toward the same table C1 scores against. A second mapping here would be free
+    to drift from it, and `score/report.py`'s `ERROR_FREE_BP` docstring records
+    what a namespace that overlaps the real one "by one key and by coincidence"
+    costs.
+    """
+
+    def test_every_host_resolves_the_way_the_rule_s_map_says(self) -> None:
+        """Total over `HostId`, so a reintroduced local mapping cannot hide in a
+        host the other tests do not name."""
+        provider = FileTableProvider()
+        for host in HostId:
+            usage, degradation = _host_usage(host)
+            expected = CAI_REFERENCE_SET.get(host)
+            if expected is None:
+                assert usage is None, f"{host} has no reference set but resolved one"
+                assert degradation is not None
+            else:
+                assert usage is not None, f"{host} maps to {expected} but resolved nothing"
+                assert degradation is None
+                assert usage.w == provider.usage(expected).w
+
+    def test_the_mammalian_hosts_are_no_longer_degraded(self) -> None:
+        """The regression that started this: every host degraded, including the
+        four whose tables ship."""
+        for host in (HostId.HUMAN, HostId.HEK293, HostId.MOUSE, HostId.CHO):
+            usage, degradation = _host_usage(host)
+            assert usage is not None, f"{host} still resolves no table"
+            assert degradation is None, f"{host} still degrades: {degradation}"
+
+    def test_hek293_and_human_share_one_table_rather_than_each_getting_a_guess(
+        self,
+    ) -> None:
+        """A cell line is not its own organism. C1 makes that call; the design
+        lane must not make a second one."""
+        assert _host_usage(HostId.HEK293)[0] == _host_usage(HostId.HUMAN)[0]
+
+    def test_an_unmapped_host_degrades_and_says_which_absence_it_is(self) -> None:
+        """S. cerevisiae, P. pastoris and Sf9 are deliberately unmapped. The
+        report must say no reference set is DEFINED, not that a table failed to
+        load -- one is a gap in this build's data, the other a broken package,
+        and blaming the request for a packaging fault is the failure mode."""
+        for host in (HostId.S_CEREVISIAE, HostId.P_PASTORIS, HostId.SF9):
+            usage, degradation = _host_usage(host)
+            assert usage is None
+            assert degradation is not None
+            _assert_recognised(degradation)
+            assert "no codon usage reference set is defined" in degradation
+            assert "could not be loaded" not in degradation
 
 
 class TestTheNullNeverFoldsWholeTranscripts:
