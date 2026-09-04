@@ -74,6 +74,24 @@ real and are being taken on knowingly:
   green was proven manually on #101; `rearm` issuing re-runs was proven on #112 and #113;
   the two composed — push, comment, re-arm, green, unattended — have not been observed on a
   real pull request.
+- **A required context is matched by NAME, and the name is not exclusive to us.** The
+  ruleset pins `pre-pr-attest` to `integration_id: 15368`, which is the generic "GitHub
+  Actions" app — not this workflow and not this job. A `pull_request`-triggered workflow
+  runs the file *from the pull request's own branch*, so a PR that adds any workflow with
+  a job named `pre-pr-attest` produces a second check run of that name, from that app, on
+  that SHA, and can make it succeed trivially. `check-workflow-gate.py` cannot see it: it
+  reads the workflows the repo ships, not ones a pull request introduces. **This is
+  pre-existing and applies identically to `required-checks`** — promotion did not create
+  it, it raised the payoff. Mitigated, not closed, by tightening the fork-PR workflow
+  approval policy from GitHub's default `first_time_contributors` to
+  `all_external_contributors` in `scripts/apply-repo-settings.sh`, so no outside
+  contributor's workflow runs without a human approving it. Deserves its own issue.
+- **`rearm` holds `actions: write` behind an `author_association` filter**, and that is
+  not a permission check — `COLLABORATOR` includes read-only and triage collaborators.
+  Inert while the repository has exactly one collaborator at `admin`, and bounded because
+  the comment body reaches only a `contains()` expression, never a shell or a jq program.
+  It becomes a live escalation the moment a second, lower-privileged collaborator is
+  added. Recorded here because promotion put that job upstream of a blocking check.
 - **`rearm`'s 180s deadline is wall-clock**, so it also absorbs queue time against
   CLAUDE.md §7's 20-slot ceiling. A saturated repository can exhaust it with nothing wrong.
 - **`rearm` pins `HEAD_SHA` before its poll loop**, so a push landing mid-poll can have it
