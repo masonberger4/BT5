@@ -43,7 +43,6 @@ not own, **stop and open an issue** — do not reach into another lane.
 | # | Session | Branch | Owns (write) | Mutex |
 |---|---|---|---|---|
 | S1 | [Ranking increment](s1-ranking-increment.md) | `claude/s1-ranking-increment` | `bt5/design/**`, `bt5/score/**`, `packages/engine/tests/{design,score}/**` | — |
-
 | S3 | [Rules: translation](s3-rules-translation.md) | `claude/s3-rules-translation` | `rules/catalog/{b,c}*.py` + paired tests | — |
 | S4 | [Rules: liabilities](s4-rules-liabilities.md) | `claude/s4-rules-liabilities` | `rules/catalog/{d,e,f}*.py`, `rules/vendors.py`, `rules/_provenance.json` + paired tests | — |
 | S5 | [CLI + packaging](s5-cli-packaging.md) | `claude/s5-cli-packaging` | `bt5/cli.py`, `packaging/**`, `packages/engine/tests/cli/**` | **`pyproject.toml`** |
