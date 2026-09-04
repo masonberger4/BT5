@@ -177,7 +177,7 @@ class RulePolicy:
     to `repair()` are the fallback for any rule without one.
 
     This is caller-supplied on PURPOSE: importing the registry to read the
-    policies off the rule classes would pull the whole 15-rule catalog, Biopython
+    policies off the rule classes would pull the entire rule catalog, Biopython
     and the vendor registry into the solver, make Tier A untestable without the
     catalog, and violate the lane boundary -- and the values live on rule
     INSTANCES (`e2`'s window is `self.window`), which the classes do not carry.
