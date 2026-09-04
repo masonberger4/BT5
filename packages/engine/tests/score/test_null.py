@@ -20,6 +20,7 @@ from bt5.score import (
     percentile_of,
     synonymous_variant,
 )
+from bt5.score.null import weight_table
 from conftest import make_cds, translate
 
 
@@ -275,3 +276,97 @@ class TestRandomnessIsSpentOnlyOnChoices:
         fixed = {**synonyms, "TAA": ["TAA"]}
         rng = np.random.default_rng(3)
         assert synonymous_variant("ATGTAA", fixed, rng).endswith("TAA")
+
+
+class TestTheNullsSupport:
+    """What `weight_table` keeps IN the null, which is what percentiles are
+    measured against.
+
+    BT5 reports no predicted expression number -- it reports where a design sits
+    against a random-synonymous null. The set of sequences that null can contain
+    is therefore load-bearing, and `weight_table` is where a codon silently
+    leaves it. Both branches below were unreachable until #98 resolved a host to
+    a real table, and neither had ever executed (#118).
+
+    The specific refactor these defend against is collapsing `None` into "weight
+    zero everywhere". It is superficially reasonable -- both mean "no weight" --
+    and it would move every reported percentile for an unknown family with no
+    test failing and no error surfaced.
+    """
+
+    # One real Leu family. Small enough that the expected counts are exact
+    # rather than approximate, which is what makes the ratio assertion mean
+    # something.
+    LEU = ("CTA", "CTC", "CTG")
+    SYNONYMS = dict.fromkeys(LEU, list(LEU))
+
+    def counts(self, variant: str) -> dict[str, int]:
+        codons = [variant[i : i + 3] for i in range(0, len(variant), 3)]
+        return {codon: codons.count(codon) for codon in self.LEU}
+
+    def test_a_zero_weight_codon_is_never_drawn(self) -> None:
+        """A codon the host never uses leaves a zero-width interval in the
+        cumulative, which `bisect_right` can never select. The others keep their
+        ratio -- a zero weight must not renormalise into a share."""
+        weights = {"CTA": 0.0, "CTC": 1.0, "CTG": 3.0}
+        table = weight_table(self.SYNONYMS, weights)
+        assert table is not None
+        assert table["CTG"] == [0.0, 0.25, 1.0], "a 0.0 option must leave a zero-width interval"
+
+        drawn = self.counts(
+            synonymous_variant(
+                "CTG" * 2000, self.SYNONYMS, np.random.default_rng(4), weights=weights
+            )
+        )
+        assert drawn["CTA"] == 0, "a zero-weight codon must never be emitted"
+        assert drawn["CTC"] + drawn["CTG"] == 2000
+        # 1:3 on 2000 draws; the band is wide enough to be seed-robust and far
+        # narrower than the 1:1 a dropped weight would give.
+        assert 0.20 < drawn["CTC"] / 2000 < 0.30, drawn
+
+    @pytest.mark.parametrize(
+        ("label", "weights"),
+        [
+            ("all options explicitly zero", {"CTA": 0.0, "CTC": 0.0, "CTG": 0.0}),
+            ("family absent from the table", {}),
+            ("family partially absent, rest zero", {"CTA": 0.0}),
+        ],
+    )
+    def test_a_family_carrying_no_weight_falls_back_to_uniform(
+        self, label: str, weights: dict[str, float]
+    ) -> None:
+        """`weights.get(option, 0.0)` makes absent and zero the same input, so
+        all three spellings must reach the same fallback.
+
+        A family absent from the host's table is UNKNOWN, not forbidden. Mapping
+        it to None means the draw is uniform over its options; dropping it
+        instead would remove every one of its codons from the null's support.
+        """
+        table = weight_table(self.SYNONYMS, weights)
+        assert table is not None
+        assert table["CTG"] is None, f"{label}: must map to None, not to a cumulative"
+
+        drawn = self.counts(
+            synonymous_variant(
+                "CTG" * 600, self.SYNONYMS, np.random.default_rng(9), weights=weights
+            )
+        )
+        assert all(drawn[codon] > 0 for codon in self.LEU), (
+            f"{label}: every option must stay in the null's support, got {drawn}"
+        )
+        assert sum(drawn.values()) == 600
+        for codon in self.LEU:
+            assert 0.25 < drawn[codon] / 600 < 0.42, f"{label}: not uniform, got {drawn}"
+
+    def test_the_fallback_is_uniform_rather_than_first_option(self) -> None:
+        """The `None` arm draws through `rng.integers`, a different stream from
+        the weighted arm's `rng.random`. Pinning it against an unweighted draw
+        proves it is the SAME uniform sampler, not a lookalike."""
+        no_weights = synonymous_variant("CTG" * 60, self.SYNONYMS, np.random.default_rng(21))
+        all_zero = synonymous_variant(
+            "CTG" * 60,
+            self.SYNONYMS,
+            np.random.default_rng(21),
+            weights=dict.fromkeys(self.LEU, 0.0),
+        )
+        assert all_zero == no_weights, "a no-weight family must draw exactly as an unweighted one"
