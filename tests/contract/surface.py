@@ -66,7 +66,7 @@ def _defined_names(module: Any) -> tuple[str, ...]:
     From the AST rather than `dir()`, because `dir()` cannot distinguish a type
     alias the contract promises from a module the file happens to import.
     """
-    source = Path(inspect.getfile(module)).read_text()
+    source = Path(inspect.getfile(module)).read_text(encoding="utf-8")
     out: list[str] = []
     for node in ast.parse(source).body:
         if isinstance(node, ast.ClassDef | ast.FunctionDef):

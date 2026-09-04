@@ -26,6 +26,7 @@ irreproducible, which makes the number it produced unfalsifiable.
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -93,6 +94,60 @@ def synonymous_variant(
     incidental: it means the stream depends only on positions that actually have
     a choice, so inserting a Met into a protein does not silently reshuffle every
     codon downstream of it and change the whole null.
+
+    Building the weight table costs one pass over `synonyms`, so a caller drawing
+    many variants from one table should use `null_distribution`, which hoists it
+    out of the loop.
+    """
+    return _variant(cds, synonyms, rng, table=weight_table(synonyms, weights))
+
+
+def weight_table(
+    synonyms: Mapping[str, Sequence[str]],
+    weights: Mapping[str, float] | None,
+) -> dict[str, list[float] | None] | None:
+    """Per-codon cumulative weights, normalised to end at 1.0.
+
+    Hoisted out of the draw because it depends only on the table and the host,
+    never on the variant: rebuilding it per codon per variant is what made the
+    weighted path ~15x the cost of the uniform one, and that went unnoticed for
+    as long as no host resolved to a table and the path never ran (#98).
+
+    A codon whose options carry no weight at all maps to None, which the draw
+    reads as "fall back to uniform over those options". That is the same
+    behaviour as the previous `total <= 0` guard: a family absent from the host's
+    table is unknown, not forbidden, and silently never emitting its codons would
+    quietly remove them from the null's support.
+    """
+    if weights is None:
+        return None
+    table: dict[str, list[float] | None] = {}
+    for codon, options in synonyms.items():
+        if not options or len(options) == 1:
+            continue
+        running = 0.0
+        cumulative: list[float] = []
+        for option in options:
+            running += max(0.0, weights.get(option, 0.0))
+            cumulative.append(running)
+        table[codon] = [c / running for c in cumulative] if running > 0 else None
+    return table
+
+
+def _variant(
+    cds: str,
+    synonyms: Mapping[str, Sequence[str]],
+    rng: np.random.Generator,
+    *,
+    table: dict[str, list[float] | None] | None,
+) -> str:
+    """One variant against a prepared `weight_table`; None means uniform.
+
+    The weighted draw is an inverse-CDF lookup on one `rng.random()` rather than
+    `rng.choice(p=...)`. Same distribution, ~23x cheaper at these sizes, where
+    `choice`'s argument validation and CDF construction dwarf a 2-6 element pick.
+    `bisect_right` is capped at the last index so a cumulative that floating-point
+    division left a hair under 1.0 cannot index past the end.
     """
     out: list[str] = []
     for i in range(0, len(cds), 3):
@@ -101,15 +156,11 @@ def synonymous_variant(
         if not options or len(options) == 1:
             out.append(codon)
             continue
-        if weights is None:
+        cumulative = table.get(codon) if table is not None else None
+        if cumulative is None:
             out.append(options[int(rng.integers(0, len(options)))])
             continue
-        w = np.array([max(0.0, weights.get(c, 0.0)) for c in options], dtype=float)
-        total = w.sum()
-        if total <= 0:
-            out.append(options[int(rng.integers(0, len(options)))])
-        else:
-            out.append(options[int(rng.choice(len(options), p=w / total))])
+        out.append(options[bisect_right(cumulative, float(rng.random()), hi=len(cumulative) - 1)])
     return "".join(out)
 
 
@@ -144,9 +195,11 @@ def null_distribution(
         )
     rng = np.random.default_rng(seed)
     picked = weights if kind == "host_frequency" else None
-    values = tuple(
-        score(build(synonymous_variant(cds, synonyms, rng, weights=picked))) for _ in range(n)
-    )
+    # Built ONCE, not once per variant: `n` is 200 by default and the table is
+    # the same for every draw, so hoisting it is the difference between one pass
+    # over `synonyms` and 200 * len(cds)/3 of them.
+    table = weight_table(synonyms, picked)
+    values = tuple(score(build(_variant(cds, synonyms, rng, table=table))) for _ in range(n))
     return NullDistribution(
         values=values, kind=kind, windowed_fold_only=windowed_fold_only, seed=seed
     )

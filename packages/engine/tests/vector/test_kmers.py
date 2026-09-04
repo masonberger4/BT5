@@ -404,7 +404,7 @@ class TestProtocolConformance:
         of gap that let the mismatch exist. This test only checks the assertion
         is still present; mypy is what evaluates it.
         """
-        source = Path(kmers.__file__).read_text()
+        source = Path(kmers.__file__).read_text(encoding="utf-8")
         assert "_protocol_conformance: type[KmerIndex] = ConstructKmerIndex" in source
 
     def test_duplicates_yields_interval_pairs(self) -> None:

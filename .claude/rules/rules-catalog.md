@@ -12,13 +12,18 @@ rationale and the mechanics.
 ## Resolving `brief_ref` — it does not resolve by literal search
 
 Every `Spec` carries `brief_ref`, "section id in `docs/research/brief.md`". The values
-look like `2.E4`, `2.B1`, `2.D1`. **None of those strings appears in `brief.md`** —
-`grep -F "2.E4"` returns zero hits for all 25. The reference is *section-qualified* and
+look like `2.E4`, `2.B1`, `2.D1`. **No such string appears in `brief.md`** — not for any
+rule, present or future: `grep -F "2.E4"` returns zero hits because the section heading
+and the row it qualifies sit lines apart, and nothing in the file writes them as one
+string. The reference is *section-qualified* and
 resolves in two steps:
 
 1. **Section:** `grep -n '^### 2\.E' docs/research/brief.md`.
-   The four sections are `### 2.B` (translation initiation / 5′), `### 2.D` (motif
-   avoidance), `### 2.E` (manufacturability), `### 2.F` (plasmid propagation).
+   Grep for the section the ref actually names; do not work from a list. Catalog refs
+   reach `2.B` (translation initiation / 5′), `2.C` (codon composition), `2.D` (motif
+   avoidance), `2.E` (manufacturability) and `2.F` (plasmid propagation) today, and
+   `brief.md` also carries 2.A, 2.G, 2.H and 2.I for a rule that needs them. A ref may
+   also name two rows at once — `e2_gc_band` declares `2.E2/2.E3` — and both resolve.
 2. **Row**, beneath that heading. Ids appear in exactly two shapes:
    - a **table row** — `| E4 | **GC variation.** ... |`
    - a **bold run-in** — `**D1 Restriction / Type IIS (H, scan BOTH strands ...):**`
@@ -60,9 +65,13 @@ nothing fails loudly when it does.
 
 ## Repair policy: `SINGLE_PASS` is a downgrade
 
-`RepairPolicy.FIXED_POINT` is the default of `solver/repair.py:417`. 22 of the 25
-current catalog rules explicitly declare `SINGLE_PASS`, so each of those is an opt-out;
-`d3_splicing`, `b9_out_of_frame_atg` and `f5_at_window` keep `FIXED_POINT`.
+`repair` is a required `ClassVar` with no default (`core/spec.py:231`), so nothing is
+inherited and every `SINGLE_PASS` in the catalog is a line somebody typed — a downgrade
+from `solver/repair.py:417`'s `FIXED_POINT`, which is the engine's default discipline and
+not a safety net: `solver/catalog.py` hands `repair()` each repairing rule's own
+`spec.repair` and never escalates it globally. The trap is that a new rule starts life as
+a copy of a neighbouring rule file, so that line rides in with the imports and the
+downgrade arrives chosen by nobody. Reread it against your own repair before you keep it.
 
 Point-mutating one cryptic splice donor activates cryptic donors nearby. A single pass
 ships a construct whose donors were removed *into* new donors — and the validator passes

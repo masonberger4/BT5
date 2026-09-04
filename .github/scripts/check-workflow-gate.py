@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import sys
 from typing import Any
 
@@ -45,7 +46,14 @@ RULESET = pathlib.Path(".github/rulesets/main-protection.json")
 #: event. The gate counts `skipped` as failure, so putting it in `needs` would
 #: block every pull request permanently -- the exact deadlock this script exists
 #: to catch, arrived at from the other direction.
-NON_BLOCKING: frozenset[str] = frozenset({"main-broken"})
+#:
+#: `rearm` (pre-pr-attest.yml) runs ONLY on issue_comment and produces no check
+#: run of its own -- it re-runs the pull_request_target run that owns the check,
+#: because an issue_comment run's check lands on main's tip and not on the
+#: pull request's head. Same skipped-is-failure deadlock, and listing it here is
+#: what keeps promoting `pre-pr-attest` to a required context the single ruleset
+#: line that file's header promises it is.
+NON_BLOCKING: frozenset[str] = frozenset({"main-broken", "rearm"})
 
 PATH_FILTER_KEYS = ("paths", "paths-ignore")
 
@@ -60,7 +68,7 @@ def load_on(doc: dict[str, Any]) -> Any:
 
 
 def required_contexts() -> set[str]:
-    spec = json.loads(RULESET.read_text())
+    spec = json.loads(RULESET.read_text(encoding="utf-8"))
     return {
         check["context"]
         for rule in spec.get("rules", [])
@@ -88,11 +96,28 @@ def main() -> int:
             f"wrong shape -- both mean nothing is gating a merge."
         )
 
-    produced: dict[str, pathlib.Path] = {}
+    # context -> (workflow file, job body). The BODY is needed too: a workflow
+    # can trigger on an event while the job producing the context is gated off
+    # it, and those two failures need different messages.
+    produced: dict[str, tuple[pathlib.Path, Any]] = {}
+    triggers: dict[pathlib.Path, set[str]] = {}
     for wf in sorted(WORKFLOWS.glob("*.y*ml")):
-        doc = yaml.safe_load(wf.read_text()) or {}
+        doc = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
         jobs = doc.get("jobs") or {}
         on = load_on(doc)
+
+        # `on:` is a mapping in every workflow here, but the schema also permits
+        # a bare string or a list, and a guard that only understands one shape
+        # silently passes the others -- the failure this file already documents
+        # for `paths:`.
+        if isinstance(on, dict):
+            triggers[wf] = set(on)
+        elif isinstance(on, str):
+            triggers[wf] = {on}
+        elif isinstance(on, list):
+            triggers[wf] = set(on)
+        else:
+            triggers[wf] = set()
 
         if on is None:
             problems.append(f"{wf}: no `on:` block found; cannot verify its triggers")
@@ -110,7 +135,7 @@ def main() -> int:
                         )
 
         for name, body in jobs.items():
-            produced[job_context(name, body)] = wf
+            produced[job_context(name, body)] = (wf, body)
 
         # Every job in a workflow that owns a gate must feed that gate.
         for name, body in jobs.items():
@@ -135,6 +160,75 @@ def main() -> int:
                 f"ruleset requires the check {context!r}, which no job in "
                 f"{WORKFLOWS} produces. A required check that never reports blocks "
                 f"every pull request permanently, with no error."
+            )
+            continue
+
+        # THIRD silent killer, and the one that arrives without touching a file.
+        # A merge queue evaluates required checks against the MERGE-GROUP ref,
+        # not the pull request head. A required context whose workflow does not
+        # trigger on `merge_group` therefore never reports there, and the queue
+        # blocks forever with no error -- the same deadlock as a `paths:` filter,
+        # reached through a repository SETTING that no diff will ever show.
+        #
+        # Required unconditionally rather than only when some other workflow
+        # declares it. Declaring `merge_group:` while no queue exists is inert;
+        # discovering the gap the day a queue is switched on is not.
+        wf, body = produced[context]
+        if "merge_group" not in triggers.get(wf, set()):
+            problems.append(
+                f"{wf}: produces the required check {context!r} but does not "
+                f"trigger on `merge_group`. If a merge queue is ever enabled, "
+                f"this check never reports on the merge-group ref and the queue "
+                f"blocks with no error. Add `merge_group:` to its `on:` block "
+                f"and make the job report there (see ci.yml's `approvals` job, "
+                f"which exits 0 off a pull request for the same reason)."
+            )
+            continue
+
+        # ...and the HALF OF THAT which is worse, because it fails green.
+        # Triggering the workflow on `merge_group` is not enough: if the job
+        # producing the context carries an `if:` that excludes the event, the job
+        # lands `skipped` -- and a skipped check SATISFIES a required status
+        # check. The queue then merges with this gate enforcing nothing, which is
+        # the "looks like coverage, enforces nothing" failure this file opens by
+        # rejecting. Blocking is loud; a silent pass is not.
+        #
+        # A textual check, not an evaluation -- GitHub expressions cannot be
+        # evaluated here. The rule: a condition is suspect if it BRANCHES ON THE
+        # EVENT (mentions `github.event_name` or `github.event.`) without
+        # POSITIVELY admitting `merge_group`. A condition that does not
+        # discriminate on the event cannot exclude one, so it passes.
+        #
+        # `if: always()` is why this is not simply "must contain merge_group".
+        # ci.yml's `required-checks` carries exactly that, runs on every event
+        # including a merge group, and a naive check flagged it -- which would
+        # have blocked all of CI the moment this guard shipped. Caught by this
+        # script's own negative test, not in review.
+        #
+        # And it demands `== 'merge_group'` rather than the mere substring,
+        # because `!= 'merge_group'` CONTAINS the substring while meaning the
+        # exact opposite: skipped on precisely the event this check exists to
+        # guarantee coverage for. A substring test called that safe.
+        #
+        # Known limitation, stated rather than hidden: a positive form that is
+        # not an equality -- say
+        # `contains(fromJSON('["pull_request_target","merge_group"]'), github.event_name)`
+        # -- is flagged even though it is correct. That is the safe direction to
+        # be wrong in: the fix is one edit to the `if:`, whereas a false pass is
+        # a merge gate that enforces nothing and never goes red.
+        condition = str((body or {}).get("if") or "")
+        branches_on_event = "github.event_name" in condition or "github.event." in condition
+        admits_merge_group = re.search(r"==\s*['\"]merge_group['\"]", condition) is not None
+        if branches_on_event and not admits_merge_group:
+            problems.append(
+                f"{wf}: triggers on `merge_group`, but the job producing the "
+                f"required check {context!r} has an `if:` that does not positively "
+                f"admit it (no `== 'merge_group'`; note a `!= 'merge_group'` names "
+                f"the event while excluding it), so the job is skipped on that "
+                f"event -- and a skipped check SATISFIES a required status check. "
+                f"The queue would merge with this gate enforcing nothing. Add "
+                f"`github.event_name == 'merge_group'` to the `if:`, or drop the "
+                f"`if:` so the job always runs."
             )
 
     for problem in problems:

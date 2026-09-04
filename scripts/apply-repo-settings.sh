@@ -41,6 +41,28 @@ gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
   -F can_approve_pull_request_reviews=false >/dev/null
 echo "    default token read-only; Actions cannot approve PRs"
 
+# Fork pull requests must not run workflows unreviewed, and this became
+# load-bearing when `pre-pr-attest` was promoted to a required context.
+#
+# WHY. A required status check is matched by CONTEXT NAME plus integration id,
+# and 15368 is the generic "GitHub Actions" app -- not this workflow, not this
+# job. A `pull_request`-triggered workflow runs the file FROM THE PULL REQUEST'S
+# OWN BRANCH. So a pull request that adds `.github/workflows/anything.yml` with a
+# job named `pre-pr-attest` (or `required-checks`) produces a second check run of
+# that exact name, from that exact app, on that exact SHA -- and it can be made
+# to succeed trivially. Nothing in check-workflow-gate.py sees it: that script
+# reads the workflows the repo already ships, not ones a pull request introduces.
+#
+# GitHub's default here is `first_time_contributors`, which lets a RETURNING
+# outside contributor's workflows run unreviewed. `all_external_contributors`
+# requires a human to approve every fork run, which is what actually stands
+# between that name collision and a forged green. Note this is the pre-existing
+# exposure of `required-checks` too; promotion did not create it, it raised the
+# payoff.
+gh api -X PUT "repos/$REPO/actions/permissions/fork-pr-contributor-approval" \
+  -f approval_policy=all_external_contributors >/dev/null
+echo "    every fork-PR workflow run needs human approval"
+
 echo "==> 3/4 discovering the GitHub Actions app id"
 # Pinning the required check to its producing app is what stops any token with
 # statuses:write from posting a forged green. Discover it rather than assume:
@@ -58,7 +80,8 @@ echo "    integration_id = $APP_ID"
 echo "==> 4/4 creating the main-protection ruleset"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
-python3 - "$RULESET_FILE" "$APP_ID" > "$TMP" <<'PY'
+PY_BIN=$(bash .claude/hooks/run_py.sh --which) || { echo "no working Python 3 -- see .claude/hooks/run_py.sh" >&2; exit 1; }
+"$PY_BIN" - "$RULESET_FILE" "$APP_ID" > "$TMP" <<'PY'
 import json, sys
 spec = json.load(open(sys.argv[1]))
 for rule in spec["rules"]:

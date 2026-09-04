@@ -22,7 +22,7 @@ from bt5.solver.lattice import (
     solve_with_gc_steering,
 )
 from bt5.solver.pipeline import optimize
-from bt5.solver.repair import codon_span, localize, repair
+from bt5.solver.repair import PER_TARGET_TOLERANCE, codon_span, localize, repair
 from bt5.verify import gc_fraction
 
 FORBID = ["GAATTC", "GGATCC", "GGTCTC"]
@@ -362,3 +362,90 @@ class TestPipelineComposition:
         from bt5.solver import pipeline
 
         assert inspect.signature(pipeline.optimize).parameters["_verify"].default is True
+
+
+class TestAHopelessBreachDoesNotBurnTheBudget:
+    """#111. A breach no codon choice can clear must stop being re-attacked
+    while the sequence stands still -- without that give-up being dressed up as
+    a proof.
+
+    A failed iteration leaves `current` untouched, so re-targeting the same
+    breach re-runs the same window over the same options with only a fresh RNG
+    draw. `STAGNATION_TOLERANCE` alone bounds the GLOBAL run of failures, so one
+    unclearable FIXED_POINT breach spent 100 iterations x `max_candidates`
+    evaluations before giving up: 25,601 `find_breaches` calls, measured. In the
+    design lane, where `find_breaches` is the wired catalog rather than this
+    fixture's one-liner, that was ~260 s per solve and the candidate was then
+    discarded anyway.
+    """
+
+    PROTEIN = "M" + "KLIWQRSTVNDEYFPGHACMKLIW"
+
+    def _repair(self, code: object, **kw: object):
+        """Repair against a breach that is reported forever, whatever the codons."""
+        calls = {"n": 0}
+
+        def find_breaches(construct: Construct) -> list[Breach]:
+            calls["n"] += 1
+            return [Breach("unfixable", Interval(30, 40), 1.0, "", fixable_by_codon_choice=True)]
+
+        start = "".join(code.families()[a][0] for a in self.PROTEIN)  # type: ignore[attr-defined]
+        out = repair(
+            start,
+            self.PROTEIN,
+            code,  # type: ignore[arg-type]
+            assemble=make_assembler(self.PROTEIN),
+            find_breaches=find_breaches,
+            seed=3,
+            raise_on_infeasible=False,
+            **kw,  # type: ignore[arg-type]
+        )
+        return out, calls["n"]
+
+    def test_it_gives_up_within_the_per_target_budget(self, env: tuple) -> None:
+        """The bound is PER TARGET, so it does not scale with the global
+        tolerance. One breach, so at most `PER_TARGET_TOLERANCE` searches of it
+        plus the selection pass that finds nothing left."""
+        code, _ = env
+        out, calls = self._repair(code)
+        assert out.random_windows == PER_TARGET_TOLERANCE
+        assert out.iterations <= PER_TARGET_TOLERANCE + 1
+        # 1 initial survey + PER_TARGET_TOLERANCE searches of max_candidates each.
+        assert calls == 1 + PER_TARGET_TOLERANCE * 256
+        assert calls < 25_601, "the pre-#111 cost; a regression here is the bug returning"
+
+    def test_giving_up_is_never_reported_as_convergence(self, env: tuple) -> None:
+        """The whole risk of abandoning a target early. `exhausted_targets` sets
+        `converged`, which claims the space was searched out and the breach
+        cannot be cleared. Abandonment claims only that the search kept missing,
+        so it must report `stagnation` and leave `converged` False -- otherwise
+        this optimisation would manufacture an infeasibility proof."""
+        code, _ = env
+        out, _ = self._repair(code)
+        assert out.stop_reason == "stagnation"
+        assert out.converged is False
+        assert out.clean is False
+        assert out.remaining, "the breach is still there and must be carried"
+
+    def test_it_still_repairs_what_it_can(self, env: tuple) -> None:
+        """The guard must not cost a repair that was reachable. GC_RICH starts
+        out of band and is clearable; abandonment must never fire on a search
+        that is making progress, because any improvement clears the ledger."""
+        code, w = env
+        assemble = make_assembler(GC_RICH)
+        start = optimal_back_translate(
+            GC_RICH, code, forbidden=FORBID, score=cai_lattice_scorer(w.w)
+        )
+        assert gc_breaches(assemble(start)), "fixture must start out of band"
+        out = repair(
+            start,
+            GC_RICH,
+            code,
+            assemble=assemble,
+            find_breaches=gc_breaches,
+            forbidden=FORBID,
+            window=WIN,
+            seed=3,
+        )
+        assert out.clean
+        assert not gc_breaches(assemble(out.cds))

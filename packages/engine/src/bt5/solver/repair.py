@@ -48,9 +48,55 @@ from bt5.solver.reference import expand_forbidden
 
 #: DNA Chisel's calibrated defaults. Not invented numbers.
 EXHAUSTIVE_LIMIT = 10_000
+
+#: Floor on codons perturbed per random trial. Only a floor: the count scales
+#: with the window, see `MUTATION_WINDOW_DIVISOR`.
 MUTATIONS_PER_ITERATION = 2
+
+#: The random branch perturbs `len(window) / this` codons, floored at
+#: `MUTATIONS_PER_ITERATION`.
+#:
+#: A fixed 2 was calibrated for nothing, and it is unreachable for a windowed
+#: COMPOSITION rule. `f5_at_window` is a two-sided GC band over 100 nt with
+#: `WINDOW_MINUS_1` localisation, so its repair window is the breach plus 99 nt
+#: of context either side -- 67-100 codons around a 34-codon breach. Moving that
+#: window's GC fraction across the band needs a coordinated multi-codon shift;
+#: two substitutions cannot deliver one however many times they are drawn, and
+#: re-drawing was exactly the waste `PER_TARGET_TOLERANCE` now bounds.
+#:
+#: Targeting was never the problem: two uniform picks land BOTH inside a
+#: 34-codon breach 11-25% of the time, so dozens of well-placed trials happen
+#: every iteration. Measured on the 260 aa reference design, the fourth solve:
+#:
+#:     2 -> 38 iterations, stagnation, 5 breaches left, candidate discarded
+#:     4 -> 22 iterations, clean          16 -> 15 iterations, clean
+#:     8 -> 27 iterations, clean          32 ->  3 iterations, clean
+#:
+#: A quarter of the window rather than a tuned constant, because the quantity
+#: that must move scales with the window: 25 codons at 100, 17 at 67, and the
+#: floor at 8 or fewer. Small windows are enumerated outright and never reach
+#: this branch, so this only ever governs windows too large to search exactly.
+MUTATION_WINDOW_DIVISOR = 4
+
 MAX_ITERATIONS = 1000
 STAGNATION_TOLERANCE = 100
+
+#: Consecutive failed attempts on ONE breach before it stops being re-selected
+#: while the sequence stands still.
+#:
+#: A failed iteration leaves `current` untouched, so re-targeting the same breach
+#: re-runs the same window over the same options with only a fresh RNG draw --
+#: a memoryless lottery, re-rolled. `STAGNATION_TOLERANCE` alone bounds only the
+#: GLOBAL run of failures, so N hopeless breaches cost N x that many `find_breaches`
+#: calls before anything gives up: measured at 25,601 calls for one unclearable
+#: breach (#111).
+#:
+#: Three, because the search is memoryless: k failures are k independent
+#: `max_candidates`-draw samples, so 3 x 256 = 768 consecutive misses put a
+#: ~95% upper bound of roughly 0.4% on the per-draw success probability. A
+#: fourth round buys a vanishing amount of search for another 256 evaluations.
+#: Any improvement anywhere resets this -- see `_abandon` handling in `repair`.
+PER_TARGET_TOLERANCE = 3
 
 Assembler = Callable[[str], Construct]
 """Splices a candidate CDS into its backbone and returns the assembled construct.
@@ -131,7 +177,7 @@ class RulePolicy:
     to `repair()` are the fallback for any rule without one.
 
     This is caller-supplied on PURPOSE: importing the registry to read the
-    policies off the rule classes would pull the whole 15-rule catalog, Biopython
+    policies off the rule classes would pull the entire rule catalog, Biopython
     and the vendor registry into the solver, make Tier A untestable without the
     catalog, and violate the lane boundary -- and the values live on rule
     INSTANCES (`e2`'s window is `self.window`), which the classes do not carry.
@@ -479,6 +525,13 @@ def repair(
     cur_agg = _aggregate(actionable)
     turns: dict[str, int] = {}
     retired: set[tuple[str, int, int]] = set()
+    # Abandonment is NOT retirement, and the two are kept apart on purpose.
+    # Retirement is SINGLE_PASS saying "this breach has had its attempt"; running
+    # out of retired targets is a real `exhausted_targets` and converges.
+    # Abandonment is "the search kept missing while the sequence stood still",
+    # which is giving up -- so it must never be allowed to report convergence.
+    abandoned: set[tuple[str, int, int]] = set()
+    misses: dict[tuple[str, int, int], int] = {}
     # The certificate is built from what was ACTUALLY worked last, not from
     # `breaches[0]` and the whole protein. These record it.
     last_target: Breach | None = None
@@ -492,14 +545,17 @@ def repair(
             actionable,
             resolve=resolve,
             turns=turns,
-            retired=retired,
+            retired=retired | abandoned,
             codon_map=codon_map,
             construct_length=construct.length,
             circular=construct.is_circular,
             protein_len=len(protein),
         )
         if selected is None:
-            stop_reason = "exhausted_targets"
+            # Honest only if every target got here by retirement. If any was
+            # ABANDONED, the search stopped guessing rather than ran out of
+            # things to try, and `converged` must stay False.
+            stop_reason = "stagnation" if abandoned else "exhausted_targets"
             break  # no actionable breach has a workable, un-retired window
         target, _repair_window, first, last, target_policy = selected
         target_spec = target.spec_id
@@ -522,14 +578,19 @@ def repair(
             candidates = _enumerate(options)
         else:
             random_windows += 1
-            # Guided random: perturb MUTATIONS_PER_ITERATION positions.
+            # Guided random: perturb a FRACTION of the window, never a constant.
+            # This branch is only reached when the window was too large to
+            # enumerate, and how much has to move to clear a windowed statistic
+            # scales with that window -- see `MUTATION_WINDOW_DIVISOR`.
             base = [current[3 * (first + k) : 3 * (first + k) + 3] for k in range(last - first)]
+            mutations = min(
+                len(base),
+                max(MUTATIONS_PER_ITERATION, -(-len(base) // MUTATION_WINDOW_DIVISOR)),
+            )
             candidates = []
             for _ in range(max_candidates):
                 trial = list(base)
-                for pos in rng.choice(
-                    len(trial), size=min(MUTATIONS_PER_ITERATION, len(trial)), replace=False
-                ):
+                for pos in rng.choice(len(trial), size=mutations, replace=False):
                     trial[int(pos)] = str(rng.choice(options[int(pos)]))
                 candidates.append(tuple(trial))
 
@@ -569,6 +630,20 @@ def repair(
         retired_this_iteration = target_policy.repair is RepairPolicy.SINGLE_PASS
         if retired_this_iteration:
             retired.add(_breach_key(target))
+
+        # An improvement moved `current`, so every previous miss was measured
+        # against a sequence that no longer exists. Clear the whole ledger: a
+        # breach that could not be cleared before may be reachable now, which is
+        # exactly the re-targeting FIXED_POINT exists to keep doing. Abandonment
+        # therefore only ever accumulates across a STILL sequence.
+        if improved:
+            misses.clear()
+            abandoned.clear()
+        elif not retired_this_iteration:
+            key = _breach_key(target)
+            misses[key] = misses.get(key, 0) + 1
+            if misses[key] >= PER_TARGET_TOLERANCE:
+                abandoned.add(key)
 
         # Stagnation is for a FIXED_POINT rule re-targeting a breach it cannot
         # clear. A SINGLE_PASS retirement shrinks the eligible set, so it is

@@ -22,7 +22,7 @@ BANNED = re.compile(
 def test_no_banned_prediction_vocabulary_in_engine_source() -> None:
     offenders: list[str] = []
     for path in ENGINE.rglob("*.py"):
-        for n, line in enumerate(path.read_text().splitlines(), 1):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if BANNED.search(line) and "BANNED" not in line:
                 offenders.append(f"{path.relative_to(ENGINE)}:{n}: {line.strip()}")
     assert not offenders, "banned prediction vocabulary:\n" + "\n".join(offenders)
@@ -32,7 +32,7 @@ def test_kmer_index_takes_no_external_database() -> None:
     """BIOSECURITY. Pointing a homology minimiser at an arbitrary target database
     turns BT5 into a general-purpose screening-evasion tool. KmerIndex.of() must
     accept a Construct and nothing else."""
-    src = (ENGINE / "bt5" / "core" / "services.py").read_text()
+    src = (ENGINE / "bt5" / "core" / "services.py").read_text(encoding="utf-8")
     match = re.search(r"def of\(cls, ([^)]*)\)", src)
     assert match, "KmerIndex.of not found"
     params = match.group(1)

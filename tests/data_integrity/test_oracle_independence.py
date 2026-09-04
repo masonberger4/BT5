@@ -21,7 +21,7 @@ ALLOWED_PREFIXES = (
 
 
 def test_oracle_imports_no_lane_module() -> None:
-    tree = ast.parse(VERIFY.read_text())
+    tree = ast.parse(VERIFY.read_text(encoding="utf-8"))
     bad: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
@@ -38,6 +38,6 @@ def test_oracle_imports_no_lane_module() -> None:
 
 
 def test_oracle_does_not_import_the_rules_registry() -> None:
-    src = VERIFY.read_text()
+    src = VERIFY.read_text(encoding="utf-8")
     assert "from bt5.core.registry" not in src
     assert "bt5.rules" not in src

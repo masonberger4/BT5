@@ -44,13 +44,40 @@ RULES: list[tuple[re.Pattern[str], str]] = [
 PATH_KEYS = ("file_path", "notebook_path", "path")
 
 
+def repo_root_for(path: str, fallback: str) -> str:
+    """Anchor on the git root of the TARGET FILE, not the session cwd.
+
+    THE FAILURE THIS EXISTS TO AVOID. Hook `cwd` is the SESSION's cwd, not the project
+    root, and BT5 worktrees live INSIDE the main repo at .claude/worktrees/<slug>/.
+    A session launched in the main repo that edits a worktree file sends cwd=<main>, so
+    relpath() yields ".claude/worktrees/<slug>/pyproject.toml" and no ^-anchored rule
+    matches. The reverse -- a worktree session writing to the main checkout -- yields
+    "../../../pyproject.toml", which relativize() maps to None. Both are silent passes.
+    Both were reproduced: verify.py, core/types.py, pyproject.toml, uv.lock and
+    .github/workflows/ci.yml all returned rc=0 with zero bytes.
+
+    Walking up from the file to the nearest `.git` gives the right root in every case
+    and costs no subprocess. `.git` is a directory in a normal checkout and a FILE in a
+    linked worktree, so os.path.exists covers both. If the file is under no repo at all
+    we fall back to `cwd`, i.e. exactly today's behaviour.
+    """
+    d = os.path.dirname(os.path.realpath(path))
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return os.path.realpath(fallback)
+        d = parent
+
+
 def relativize(raw: str, cwd: str) -> str | None:
     """Absolute tool path -> repo-relative POSIX path, or None if outside the repo."""
     if not raw:
         return None
     try:
         target = os.path.realpath(raw if os.path.isabs(raw) else os.path.join(cwd, raw))
-        root = os.path.realpath(cwd)
+        root = repo_root_for(target, cwd)
     except OSError:
         return None
     rel = os.path.relpath(target, root)

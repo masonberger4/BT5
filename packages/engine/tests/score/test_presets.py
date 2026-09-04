@@ -311,7 +311,9 @@ class TestShippedWeights:
         Rows appear either as a table row `| D4 |` or as bolded prose `**D4 `,
         because the brief uses both forms.
         """
-        brief = (Path(__file__).resolve().parents[4] / "docs" / "research" / "brief.md").read_text()
+        brief = (Path(__file__).resolve().parents[4] / "docs" / "research" / "brief.md").read_text(
+            encoding="utf-8"
+        )
         missing: list[str] = []
         for preset in PRESETS:
             for entry in preset.entries:

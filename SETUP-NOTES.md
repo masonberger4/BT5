@@ -128,13 +128,13 @@ Hook probes worth re-running by hand after any edit:
 ```bash
 # must REWRITE
 echo '{"tool_name":"Bash","tool_input":{"command":"pytest tests/invariants"}}' \
-  | python3 .claude/hooks/compact_output.py
+  | bash .claude/hooks/run_py.sh --optional .claude/hooks/compact_output.py
 # must be SILENT (compound, explicit flag, or a full-output target)
 echo '{"tool_name":"Bash","tool_input":{"command":"pytest -q && mypy"}}' \
-  | python3 .claude/hooks/compact_output.py
+  | bash .claude/hooks/run_py.sh --optional .claude/hooks/compact_output.py
 # must ASK — this is the one whose failure mode is matching nothing
 printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/packages/engine/src/bt5/core/types.py"},"cwd":"%s"}' "$PWD" "$PWD" \
-  | python3 .claude/hooks/protect_paths.py
+  | bash .claude/hooks/run_py.sh --required .claude/hooks/protect_paths.py
 ```
 
 ## Tuning

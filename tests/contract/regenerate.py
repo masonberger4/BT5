@@ -26,7 +26,7 @@ def main() -> int:
     live = surface.extract()
 
     if surface.MANIFEST_PATH.exists():
-        manifest = json.loads(surface.MANIFEST_PATH.read_text())
+        manifest = json.loads(surface.MANIFEST_PATH.read_text(encoding="utf-8"))
         changes = surface.diff(manifest.get("surface", {}), live)
     else:
         manifest = {
@@ -37,7 +37,9 @@ def main() -> int:
         changes = ()
 
     manifest["surface"] = live
-    surface.MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    surface.MANIFEST_PATH.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     fixtures.record()
 
     entries = sum(len(v) for v in live.values())

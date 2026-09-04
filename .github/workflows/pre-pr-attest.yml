@@ -1,16 +1,25 @@
 # pre-pr-attest -- did /pre-pr actually run against the commit being merged?
 #
-# ADVISORY ON PURPOSE. This job is deliberately NOT a required check yet: it is
-# absent from `.github/rulesets/main-protection.json` and absent from
-# `required-checks.needs` in ci.yml. That is a decision, not an oversight.
+# REQUIRED as of 2026-09-03. `pre-pr-attest` is named in
+# `.github/rulesets/main-protection.json` as a PARALLEL required context. It is
+# never an input to `required-checks` -- that gate counts `skipped` as failure
+# (ci.yml, job `required-checks`), which is why `main-broken` is excluded from
+# it too. `rearm` is in check-workflow-gate.py's NON_BLOCKING set for the same
+# reason. Rationale and the accepted risks: docs/decisions/2026-09-03-promote-
+# pre-pr-attest.md.
 #
-#   To promote it, add ONE entry to main-protection.json:
-#       { "context": "pre-pr-attest", "integration_id": 15368 }
-#   and nothing else. It is a PARALLEL required context, never an input to
-#   `required-checks` -- that gate counts `skipped` as failure (ci.yml:295-320),
-#   which is why `main-broken` is excluded from it too.
-#   Precondition: a week of clean runs with the re-arm behaviour confirmed on a
-#   real push.
+#   THE FILE IS A SPEC, NOT THE LIVE CONFIG. Editing it changes nothing until
+#   `scripts/apply-repo-settings.sh` is run by the owner on an authenticated
+#   machine.
+#
+#   IF THIS JOB EVER BREAKS ON `main`, IT BLOCKS ITS OWN FIX. `pull_request_target`
+#   runs the BASE branch copy, so a defect here fails every open pull request --
+#   including the one that would repair it -- and `bypass_actors: []` means no
+#   one, admin included, can merge past it. `/pre-pr-bypass` does NOT help: it is
+#   read by this job, so it clears a MISSING attestation but not a job that died
+#   before reaching that check. The only escape is out of band: set
+#   main-protection to `"enforcement": "disabled"`, merge the fix, turn it back
+#   on. Know that before editing anything below.
 #
 # WHY THIS EXISTS. `/pre-pr` runs code-reviewer, rule-auditor and
 # security-reviewer as subagents inside one Claude session. Their verdicts live
@@ -36,6 +45,33 @@ name: pre-pr-attest
 # cannot edit the check to make itself pass. There is deliberately no checkout
 # step: this job never executes PR code.
 #
+# TWO EVENTS, TWO JOBS, AND ONLY ONE OF THEM IS ALLOWED TO REPORT.
+# A check run attaches to the commit of the workflow run that produced it, and
+# an `issue_comment` run is a DEFAULT-BRANCH run -- so its check lands on main's
+# tip and the pull request never sees it. One job answering both events
+# therefore made the re-arm a no-op that LOOKED like it worked: the attestation
+# turned `pre-pr-attest` green on `main`, while the pull request kept the red
+# check it was opened with and had no way to clear it. #92, #94, #97, #89 and
+# #101 all merged with this check red for that reason and no other. So:
+#
+#   pull_request_target -> `pre-pr-attest`, which owns the check on the HEAD SHA
+#                          and is the only job here that reports a verdict.
+#   issue_comment       -> `rearm`, which reports no VERDICT and instead waits
+#                          for that run to land and re-runs it if it is not
+#                          green, so it re-reads the comments.
+#
+# WHAT THIS STILL DOES NOT PREVENT, so nobody mistakes it for more than it is:
+#   * `author_association` is resolved when the comment list is READ, not when
+#     the comment was posted. Adding someone as a collaborator retroactively
+#     promotes every `/pre-pr <sha>` they ever wrote.
+#   * Only `issue_comment: [created]` is subscribed, but bodies are re-read
+#     live, so a counted author can EDIT an old comment into an attestation
+#     with no new timeline entry. They could equally post a fresh one, so this
+#     costs auditability rather than access.
+#   * The verdict is computed against a head fetched live at step time, while
+#     the check run is bound to the head fixed at event time. Two pushes inside
+#     the concurrency window can decouple them (see the API-read note below).
+#
 # No `paths:`/`paths-ignore:` filter, ever -- check-workflow-gate.py rejects one
 # on any workflow, because a required check that never reports blocks the pull
 # request forever with no error (CLAUDE.md section 9).
@@ -44,9 +80,26 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
+  # REQUIRED now that this is a required context, and it must stay in lockstep
+  # with ci.yml's `merge_group:`. A merge queue evaluates required checks against
+  # the merge-group ref; a required context whose workflow does not trigger on
+  # that event never reports there, and the queue blocks forever with no error --
+  # CLAUDE.md section 9, arrived at through the one door nobody watches, because
+  # enabling a queue is a repository SETTING and touches no file in this repo.
+  # check-workflow-gate.py now fails if the two workflows disagree on this.
+  merge_group:
 
 concurrency:
-  group: pre-pr-attest-${{ github.event.pull_request.number || github.event.issue.number }}
+  # Keyed on the EVENT as well as the pull request. Under one shared group
+  # `cancel-in-progress` let an attestation comment cancel the very
+  # pull_request_target run it was posted to re-arm -- and a cancelled check run
+  # is red on the head SHA with no verdict inside it to explain why.
+  #
+  # `merge_group` carries neither number, so it falls back to the merge-group
+  # head SHA. Without that every merge group would share one group and
+  # `cancel-in-progress` would have them cancel each other -- a cancelled
+  # required check, which blocks the queue.
+  group: pre-pr-attest-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.merge_group.head_sha }}
   cancel-in-progress: true
 
 permissions:
@@ -55,11 +108,18 @@ permissions:
 jobs:
   pre-pr-attest:
     name: pre-pr-attest
-    # Skips only for a comment on a plain issue, which is associated with no
-    # pull request and therefore reports no check anywhere. On every
-    # pull_request_target event this job always runs and always reports, which
-    # is what makes it safe to promote to a required context later.
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    # `pull_request_target` or `merge_group` -- the two events whose check run
+    # lands on a commit that would actually merge: the pull request's head, or
+    # the transient commit the queue builds. It fires on every such event and
+    # ALWAYS REPORTS, which is what makes it safe as a required context; a job
+    # that merely skips would satisfy the requirement while checking nothing.
+    # Comments are handled by `rearm` below, which produces no verdict of its own.
+    #
+    # This comment said "`pull_request_target` ONLY" until `merge_group` was
+    # added a few lines down, in the same commit that removed a different false
+    # claim from this file. Comments here are load-bearing -- this is the file a
+    # reader trusts to understand what gates their merge.
+    if: github.event_name == 'pull_request_target' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -67,13 +127,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PR: ${{ github.event.pull_request.number }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
 
-          # Read the head from the API rather than the event payload: on an
-          # issue_comment event the payload carries no head, and on a stale
-          # re-run the payload's head may no longer be the tip.
+          # A merge group is not a pull request: its payload carries no PR
+          # number, and its head is a transient commit the queue invented, which
+          # nobody could have attested and nobody should. Report and stop.
+          #
+          # This is NOT a hole, and the reason is structural rather than a
+          # promise: a pull request cannot ENTER the queue until the required
+          # checks pass on its own head, and this check is one of them. So by
+          # the time a merge group exists, every pull request in it has already
+          # been attested at the only SHA where an attestation means anything.
+          #
+          # Same shape as ci.yml's `approvals` job, which exits 0 off a pull
+          # request for the same reason -- a PR-time gate cannot re-run itself
+          # somewhere there is no PR. Deliberately mirrored rather than invented.
+          #
+          # Residual, small and worth naming: GitHub may BATCH several pull
+          # requests into one merge group, and this reports on the batch without
+          # re-reading any of them. Each was attested on entry; nothing here
+          # re-checks that an attestation was not edited away afterwards, which
+          # is the same comment-editing residual documented above.
+          if [ "$EVENT" = "merge_group" ]; then
+            echo "merge group: attestation is a pull-request-time gate and was"
+            echo "enforced on each pull request's own head before it could queue."
+            exit 0
+          fi
+
+          # Read the head from the API rather than the event payload. A re-run
+          # replays the ORIGINAL payload, and a re-run is exactly how `rearm`
+          # works -- so the payload's head can be stale by the time it is read,
+          # and an attestation for a superseded commit must not satisfy this.
           HEAD_SHA="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
           echo "pull request #$PR, current head $HEAD_SHA"
 
@@ -83,20 +170,47 @@ jobs:
           echo "$(jq 'length' /tmp/comments.json) comment(s) on this pull request"
 
           # A drive-by commenter must not be able to attest for someone else's
-          # branch, so only an author who can write to this repository counts.
+          # branch, so the author must be OWNER, COLLABORATOR or MEMBER. Note
+          # what that does and does not mean: `author_association` is NOT a
+          # permission check. COLLABORATOR covers read-only and triage
+          # collaborators too, and MEMBER means "in the owning organisation",
+          # which for a personal repository is unreachable but would widen the
+          # set on a transfer to an org. Today the repository has exactly one
+          # collaborator, the owner, at `admin`.
+          #
           # The SHA must be the full 40 characters: a short SHA would let an
           # attestation for one commit satisfy another that shares its prefix.
           #
           # The trailing class must include \r and \n. A comment almost always
           # has prose around the command, so requiring space-tab-or-end-of-string
           # after the SHA silently failed to match every attestation that was not
-          # the entire comment body -- caught by the fixture test below.
+          # the entire comment body.
+          #
+          # An earlier version of this comment said that bug was "caught by the
+          # fixture test below". THERE IS NO FIXTURE TEST -- not below, not
+          # anywhere in the repository. The claim was false when written and is
+          # removed rather than left standing in the one file whose correctness
+          # now gates every merge. This regex has already shipped two distinct
+          # matching bugs (this trailing class, and the leading-whitespace hole
+          # closed in 369429a); it is the single point of decision for the check,
+          # and it has no automated coverage at all. Writing that test is the
+          # highest-value follow-up on this file.
+          #
+          # NO LEADING WHITESPACE, and that is load-bearing rather than tidy.
+          # This used to allow `[ \t]*` before the command, which made THIS JOB'S
+          # OWN FAILURE MESSAGE a valid attestation: the help text below prints
+          # `    /pre-pr <head-sha>` indented four spaces, so a maintainer who
+          # pasted the log into a comment to ask about it silently turned the
+          # check green with no review having happened -- defeating the one
+          # property this file claims ("SKIPPING BECOMES VISIBLE"). Anchoring to
+          # the line start rejects the paste, and rejects a `>` quote-reply too,
+          # while the help text stays indented so it cannot match either way.
           claims() {
             jq -r --arg sha "$HEAD_SHA" --arg cmd "$1" --argjson who "$2" '
               [ .[]
                 | select(.author_association as $a | $who | index($a))
                 | .body
-                | select(test("(^|\\r?\\n)[ \\t]*" + $cmd + "[ \\t]+" + $sha + "([ \\t\\r\\n]|$)"))
+                | select(test("(^|\\r?\\n)" + $cmd + "[ \\t]+" + $sha + "([ \\t\\r\\n]|$)"))
               ] | length' /tmp/comments.json
           }
 
@@ -125,10 +239,181 @@ jobs:
           An attestation names one commit. Pushing again makes it stale on
           purpose -- a review of the previous tree says nothing about this one.
 
+          WHO CAN ATTEST. Only a comment author GitHub reports as OWNER,
+          COLLABORATOR or MEMBER counts. If you are contributing from a fork you
+          are CONTRIBUTOR, and your own /pre-pr comment will be ignored silently
+          -- it will not even start a job. Ask a maintainer to attest, and note
+          they must do it again after every push you make.
+
+          IF COMMENTING DOES NOT CLEAR IT. The comment path works by re-running
+          the check on this commit, and that can fail for reasons unrelated to
+          your diff (the run aged out of the re-run window, the runner queue is
+          saturated, an API error). Any of these forces a fresh run on the SAME
+          commit, without needing a new attestation:
+
+            * close the pull request and reopen it
+            * convert it to a draft and mark it ready again
+            * re-run the pre-pr-attest workflow from the Actions tab
+
           To merge without the review pass, the repository owner may comment:
 
               /pre-pr-bypass $HEAD_SHA
 
-          which records the waiver on the timeline instead of hiding it.
+          which records the waiver on the timeline instead of hiding it. Note
+          the bypass is read by THIS job, so it clears a missing attestation but
+          cannot clear a job that failed before reaching this point.
           EOF
           exit 1
+
+  # ---- Re-arming: the half that was missing --------------------------------
+  # Reports no VERDICT, on purpose. It exists only to make the job above
+  # re-evaluate, because nothing an issue_comment run does can land a check on
+  # the pull request's head SHA. Reporting a verdict from here would put a
+  # second, rival `pre-pr-attest` on a commit that is not the one being merged
+  # -- which is the bug this job replaces, not a fix for it.
+  #
+  # It is NOT check-run-free, and an earlier draft of this comment claimed it
+  # was. Every job emits a check run named by its `name:`, wherever its workflow
+  # run attaches -- so `rearm` reports a check called `rearm` in both places: on
+  # the PULL REQUEST HEAD on a pull_request_target run, where its `if:` is false
+  # and it lands `skipped` (visible in the PR's own check list), and on the
+  # DEFAULT BRANCH TIP on an issue_comment run, where it does the actual work
+  # and is therefore a check reporting on a commit it was not evaluated against.
+  # Harmless in both: the name cannot be confused with `pre-pr-attest`, a
+  # `skipped` conclusion gates nothing, and it is in
+  # NON_BLOCKING. It goes red on `main` if `gh run rerun` exits non-zero, e.g.
+  # a run outside the retention window.
+  #
+  # Deliberately outside any merge gate, and named in check-workflow-gate.py's
+  # NON_BLOCKING set, so that promoting `pre-pr-attest` to a required context
+  # stays the single ruleset line this file's header promises it is.
+  rearm:
+    name: rearm
+    # This repository is PUBLIC, so any account can comment, and `actions: write`
+    # in a drive-by's hands would be a re-run button on someone else's branch.
+    # The association is therefore filtered here as well -- belt and braces, since
+    # the re-run itself re-checks it and counts only OWNER/COLLABORATOR/MEMBER.
+    # The comment body reaches `contains()` and nothing else: it is never
+    # interpolated into a shell command, an argument, or a jq program.
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/pre-pr') &&
+      contains(fromJSON('["OWNER","COLLABORATOR","MEMBER"]'),
+      github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A job-level block REPLACES the workflow-level one outright rather than
+    # merging with it, so every scope absent here is `none` -- including
+    # `contents`, which is why this job could not check out even if it tried.
+    # Re-declaring `pull-requests: read` is therefore load-bearing, not
+    # redundant: drop it and it becomes `none`.
+    permissions:
+      pull-requests: read
+      # All this job CALLS is `gh run rerun`, but the SCOPE is wider than that:
+      # `actions: write` also permits deleting workflow runs and their logs --
+      # the evidence trail this file exists to produce -- and approving pending
+      # fork-PR runs. Not reachable here (the guard below runs before any step,
+      # this job checks out nothing and uses no third-party action), but the
+      # grant is the thing to reason about, not the script.
+      actions: write
+    steps:
+      - name: Re-run the attestation against this pull request's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          HEAD_SHA="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '.head.sha')"
+          echo "pull request #$PR, current head $HEAD_SHA"
+
+          # The newest pull_request_target run for this exact head, whatever its
+          # status. Scoped by head_sha rather than by branch: a run against a
+          # superseded commit is stale by design, and re-running it would prove
+          # nothing.
+          #
+          # WAIT FOR IT TO LAND rather than skipping an in-flight run. The
+          # attesting party pushes and then comments seconds later, so the run
+          # this needs is usually still executing -- and the first cut of this
+          # job exited 0 on exactly that state, which left the check red with
+          # nothing on the way to clear it. Harmless when a human is driving
+          # (comment again), unrecoverable when an agent is: nothing re-comments.
+          #
+          # An in-flight run may also go green by itself. It reads the comment
+          # list at step time, so if the attestation beat it to the API there is
+          # nothing to re-arm -- which is why this polls for the CONCLUSION
+          # instead of unconditionally re-running.
+          DEADLINE=$((SECONDS + 180))
+          while :; do
+            RUN_JSON="$(gh api \
+              "repos/$GH_REPO/actions/workflows/pre-pr-attest.yml/runs?event=pull_request_target&head_sha=$HEAD_SHA&per_page=100" \
+              --jq '[.workflow_runs[]] | sort_by(.run_number, .id) | last // {}')"
+            RUN="$(printf '%s' "$RUN_JSON" | jq -r '.id // empty')"
+            STATUS="$(printf '%s' "$RUN_JSON" | jq -r '.status // empty')"
+            CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r '.conclusion // empty')"
+
+            if [ -z "$RUN" ]; then
+              # TWO causes, indistinguishable from here, so wait rather than
+              # guess. Either the head moved after the comment was posted -- in
+              # which case no run for this SHA will ever appear and the
+              # attestation is stale exactly as intended -- or the run simply
+              # has not propagated into the Actions run list yet.
+              #
+              # The second is the COMMON one for an unattended caller, which
+              # pushes and comments within a second or two. Exiting on the first
+              # empty read would leave the check red with nothing on the way to
+              # clear it: the same failure this job exists to prevent, reached
+              # from a different direction than the in-flight case above. Costs
+              # one bounded wait in the genuinely-stale case, which is rare and
+              # cheap next to a check that can never go green.
+              if [ "$SECONDS" -ge "$DEADLINE" ]; then
+                # FAIL, do not exit 0. Now that `pre-pr-attest` is a required
+                # context, a green `rearm` sitting over a permanently red pull
+                # request is CLAUDE.md section 9's failure exactly -- blocked
+                # with no error to click on. This job is in NON_BLOCKING and
+                # gates nothing, so its red is pure signal and costs no merge.
+                echo "::error::No pull_request_target run for $HEAD_SHA after 180s."
+                echo "The attestation could not be re-armed. Either the head moved"
+                echo "after the comment (attestation is stale by design -- attest the"
+                echo "new head), or no run was ever created for it. To force a fresh"
+                echo "run on the SAME commit, close and reopen the pull request, or"
+                echo "convert it to draft and back; either fires a new"
+                echo "pull_request_target event without changing the SHA."
+                exit 1
+              fi
+              echo "no run for $HEAD_SHA yet; waiting for one to appear"
+              sleep 15
+              continue
+            fi
+
+            [ "$STATUS" = "completed" ] && break
+
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              # Bounded so this job cannot outlive its own timeout-minutes. The
+              # attest job is one ~10s API step, so 180s means something is
+              # wrong upstream, not that it needs longer.
+              # Same reasoning as the branch above: fail loudly rather than
+              # report green over a pull request that is still red. 180s is a
+              # budget on the attest job's ~10s of API work, but it also has to
+              # absorb QUEUE time, and CLAUDE.md section 7 puts the ceiling at 20
+              # concurrent job slots -- so a saturated repository can land here
+              # without anything being wrong.
+              echo "::error::run $RUN was still $STATUS after 180s; not re-arming."
+              echo "Nothing is necessarily broken -- the runner queue may just be"
+              echo "full. Comment the attestation again once that run finishes, or"
+              echo "re-run it directly from the Actions tab."
+              exit 1
+            fi
+            echo "run $RUN is $STATUS; waiting for it to land"
+            sleep 15
+          done
+
+          if [ "$CONCLUSION" = "success" ]; then
+            echo "run $RUN is already green for $HEAD_SHA; nothing to re-arm"
+            exit 0
+          fi
+
+          echo "re-running $RUN ($CONCLUSION) so it re-reads the comments on #$PR"
+          gh run rerun "$RUN"
