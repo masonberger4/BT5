@@ -151,9 +151,11 @@ findings or could not produce a verdict, rather than calling the PR red.
 - The scientific impact, and any change to what the app REFUSES to build ("none" is real).
 - Any review thread you resolved without acting on the substance.
 
-If the owner delegates a merge: squash only, and say in the PR on whose instruction. **The
-owner can also merge past a red required check** (`bypass_actors`, Repository admin) so a
-wedged gate cannot block its own fix — never ask for that instead of fixing what is red.
+If the owner delegates a merge: squash only, and say in the PR on whose instruction.
+**Nobody can merge past a red required check** — `bypass_actors` is empty and rulesets do
+not exempt admins, so red CI blocks the owner too. That is deliberate, and doubly so here:
+you authenticate AS the owner, so any bypass would be yours as much as theirs. Never
+propose one; fix what is red.
 
 ## 7a. Merged branches leave a stale ref behind
 

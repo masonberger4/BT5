@@ -107,33 +107,75 @@ gh api "repos/$REPO/branches/main/protection" >/dev/null 2>&1 \
   && echo "    WARNING: legacy protection exists and stacks most-restrictive-wins; remove it" \
   || echo "    none (good)"
 
-# READ THE BYPASS BACK, do not assume it. The spec names the built-in
-# "Repository admin" role by its numeric id, and a numeric id is exactly the
-# kind of constant that is wrong silently: GitHub accepts any id that resolves,
-# so a wrong one grants the bypass to a DIFFERENT role rather than erroring.
-# That is the one failure this script must not report as success -- the bypass
-# is what stops a wedged required check from blocking every pull request
-# including its own fix (pre-pr-attest.yml's header), so it is load-bearing
-# precisely on the day nobody can test it interactively.
-echo "  bypass actors (expect exactly: Repository admin, pull_request):"
+# THE BYPASS LIST MUST BE EMPTY, and that is the highest-value line in the file
+# rather than an oversight. Rulesets do NOT implicitly exempt repository admins,
+# unlike legacy branch protection -- so an empty list means red CI blocks
+# everyone, the owner included. docs/research/github-setup.md:244 argues it for
+# this repository specifically: "AI agents produce plausible code that fails at
+# the edges; CI being mandatory *for you* is the only thing standing between
+# that and `main`."
+#
+# AND IN THIS REPOSITORY IT IS STRONGER THAN THAT, because agents authenticate
+# as the OWNER. A `RepositoryRole` bypass on the admin role is therefore a
+# bypass held by every Claude session too -- GitHub cannot distinguish the owner
+# at a keyboard from an agent carrying the owner's token. Adding one would turn
+# a mechanical guarantee (nobody merges red) into a prose one (CLAUDE.md 7b
+# asking agents not to), addressed to the same actor that holds the credential.
+# Verified 2026-09-04, on the change that briefly added one; see
+# docs/decisions/2026-09-04-autonomous-ci-owner-merges.md.
+echo "  bypass actors (expect NONE):"
 RULESET_ID="$(gh api "repos/$REPO/rulesets" \
-  --jq '[.[] | select(.name=="main-protection") | .id] | first')"
-BYPASS="$(gh api "repos/$REPO/rulesets/$RULESET_ID" \
-  --jq '.bypass_actors // [] | .[] | "    \(.actor_type) id=\(.actor_id) mode=\(.bypass_mode)"')"
-if [ -z "$BYPASS" ]; then
-  echo "    NONE -- the spec asked for one and the API stored none." >&2
-  echo "    A required check that wedges will block every pull request, yours" >&2
-  echo "    included, with no in-band recovery. Investigate before relying on it." >&2
+  --jq '[.[] | select(.name=="main-protection") | .id] | first' 2>/dev/null || true)"
+if [ -z "$RULESET_ID" ] || [ "$RULESET_ID" = "null" ]; then
+  echo "    could not resolve the main-protection ruleset id; check by hand" >&2
 else
-  echo "$BYPASS"
-  echo "    Confirm in the UI that id=5 renders as 'Repository admin':" >&2
-  echo "      $(gh repo view "$REPO" --json url --jq .url)/settings/rules" >&2
+  BYPASS="$(gh api "repos/$REPO/rulesets/$RULESET_ID" \
+    --jq '.bypass_actors // [] | .[] | "    \(.actor_type) id=\(.actor_id) mode=\(.bypass_mode // "always")"')"
+  if [ -z "$BYPASS" ]; then
+    echo "    none (good)"
+  else
+    echo "$BYPASS" >&2
+    echo "    WARNING: a bypass actor exists. Anything holding that role can merge" >&2
+    echo "    past red CI -- and in this repository that includes every agent" >&2
+    echo "    session, which authenticates as the owner. Remove it unless it was" >&2
+    echo "    added deliberately and recorded in docs/decisions/." >&2
+  fi
 fi
 
 echo
+cat <<'RUNBOOK'
+
+==> IF A REQUIRED CHECK EVER WEDGES
+
+`pre-pr-attest` runs the BASE branch copy of its workflow, so a defect that
+lands on `main` fails every open pull request -- including the one that would
+repair it. With an empty bypass list nobody can merge past that, by design.
+
+The escape hatch is to disable the RULESET briefly, not to grant anyone a
+standing bypass (docs/research/github-setup.md:246 and 8.10). From an
+authenticated machine:
+
+    ID=$(gh api repos/OWNER/REPO/rulesets --jq \
+           '[.[] | select(.name=="main-protection") | .id] | first')
+
+    # 1. read the current state, so you can put it back exactly
+    gh api "repos/OWNER/REPO/rulesets/$ID" > /tmp/main-protection.json
+
+    # 2. disable, merge the repair, re-enable -- minutes, not hours
+    gh api -X PUT "repos/OWNER/REPO/rulesets/$ID" -f enforcement=disabled
+    gh pr merge <N> --squash
+    gh api -X PUT "repos/OWNER/REPO/rulesets/$ID" -f enforcement=active
+
+    # 3. confirm, and read the audit trail the toggle leaves behind
+    gh api "repos/OWNER/REPO/rulesets/$ID" --jq .enforcement
+    gh api "repos/OWNER/REPO/rulesets/$ID/history"
+
+Re-running this script also restores enforcement, since the committed spec
+says "active" -- but do step 3 either way. A ruleset left disabled is a
+repository with no merge gate at all, and nothing will remind you.
+
+RUNBOOK
+
 echo "Done. Open a throwaway PR and confirm the merge box shows: two required"
 echo "checks (required-checks, pre-pr-attest), squash-only, no approval"
-echo "requirement -- and, as repository admin, that you CAN merge past a red"
-echo "required check. That last one is deliberate as of 2026-09-04: it is the"
-echo "in-band escape from a wedged gate. Merging red is now your call to make"
-echo "rather than something the ruleset makes for you."
+echo "requirement, and NO bypass available to you."

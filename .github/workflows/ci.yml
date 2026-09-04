@@ -128,7 +128,9 @@ jobs:
       - name: Test the main-broken predicate
         run: .venv/bin/python .github/scripts/test-main-broken-predicate.py
 
-      # The FOURTH of these, and the one guarding the loosest branch in CI.
+      # The THIRD test that drives a real program EXTRACTED from a workflow file
+      # (after the attestation matcher and the main-broken predicate), and the
+      # one guarding the loosest branch in CI.
       # claude-review-gate's verdict step now has a path that PASSES WITHOUT A
       # VERDICT: a pull request editing claude-review.yml cannot be reviewed at
       # all (the Claude GitHub App will not mint a token for a workflow file
@@ -138,8 +140,8 @@ jobs:
       #
       # A branch turning "no review happened" into a green check is precisely
       # what this repository has agreed not to ship on reading alone. Same
-      # pattern as the three steps above, including the property that makes it
-      # worth having: the script is EXTRACTED from the workflow, not restated.
+      # pattern as the two extraction tests above, including the property that
+      # makes it worth having: the script is EXTRACTED, not restated.
       - name: Test the claude-review verdict step
         run: .venv/bin/python .github/scripts/test-claude-review-selfedit.py
 

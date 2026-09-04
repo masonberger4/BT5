@@ -169,7 +169,6 @@ jobs:
           # cause it hit, and the first live run of this gate blamed a crash for
           # what was really an unconfigured repository.
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           # Used only on the self-edit path below, to read this pull request's
           # labels LIVE. Deliberately not from the event payload: `labels` there
           # is captured at event time and is EMPTY on `opened`, because a label
@@ -186,9 +185,37 @@ jobs:
             # different answers from the reader. Collapsing them into one
             # message sent the first two live failures chasing a crash that
             # never happened.
+            # `HEAD^1`, NOT `$BASE_SHA`, and the difference is a real hole rather
+            # than a tidy-up. `actions/checkout` leaves HEAD at `refs/pull/N/merge`,
+            # whose FIRST PARENT is the base branch tip GitHub merged against
+            # moments ago; `BASE_SHA` is `base.sha` from the event payload, fixed
+            # when the event fired. Diffing payload-base against the merge ref
+            # therefore attributes anything `main` gained in between TO THIS PULL
+            # REQUEST. Reproduced: base M1 -> M2 where M2 edits this file, a branch
+            # off M1 touching only an unrelated path, and `git diff M1 <merge-ref>`
+            # reports this file as changed. Three-dot does not fix it; `HEAD^1`
+            # does, because it is the very tip that was merged in.
+            #
+            # It is reachable, not theoretical: a review faults (six of fifteen
+            # runs once died on the turn cap), `main` then merges a change to this
+            # file, someone clicks re-run failed jobs -- and the re-run replays the
+            # stale payload base against a freshly recomputed merge ref. With
+            # `approved:ci-change` present, which any `.github/` pull request must
+            # carry anyway, a FAULT-class empty verdict would take the self-edit
+            # branch below and exit 0. That is exactly the case the `else` exists
+            # to fail closed on.
+            #
+            # The guard tests `HEAD^2`, not `HEAD^1`, and that is the whole of it:
+            # EVERY commit except the root has a first parent, so `HEAD^1` would
+            # verify on a non-merge checkout and quietly compare HEAD against its
+            # predecessor -- one commit's diff standing in for the pull request's.
+            # A second parent exists only on a merge ref, which is precisely the
+            # condition under which `HEAD^1` means "the base tip". Off a merge ref
+            # (a `push` build, or `ref:` overridden) SELF_EDIT stays `no` and the
+            # fault branch fails closed, which is the safe direction.
             SELF_EDIT=no
-            if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-              git diff --quiet "$BASE_SHA" HEAD -- .github/workflows/claude-review.yml \
+            if git rev-parse --verify --quiet "HEAD^2" >/dev/null; then
+              git diff --quiet "HEAD^1" HEAD -- .github/workflows/claude-review.yml \
                 || SELF_EDIT=yes
             fi
 
