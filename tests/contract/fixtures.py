@@ -270,8 +270,11 @@ def record() -> None:
     for name, value in specimens().items():
         payload = {"recorded_as": _qualname(value), "value": encode(value)}
         path = FIXTURE_DIR / f"{name}.json"
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def load_all() -> dict[str, dict[str, Any]]:
-    return {path.stem: json.loads(path.read_text()) for path in sorted(FIXTURE_DIR.glob("*.json"))}
+    return {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(FIXTURE_DIR.glob("*.json"))
+    }

@@ -93,6 +93,92 @@ class TestRuleContract:
             f"{spec.id}: param_schema drives the UI controls and must be a JSON Schema object"
         )
 
+    def test_is_probeable_per_slot(self, spec: type) -> None:
+        """Every spec must be no-arg constructible AND expose the per-slot probe.
+
+        `score/presets.py::_unscored_enforcement` is the guard that stops a
+        preset weighting a rule that is HARD in the modality the preset is
+        pinned to. It probes by calling `spec()` and then `enforcement_for(slot)`,
+        and it has two fallbacks that both resolve to "treat this spec as
+        scored", i.e. ALLOW the weight: a `TypeError` from the constructor, and a
+        missing `enforcement_for`. Either one silently drops the guard back to
+        the class-level `enforcement` ClassVar.
+
+        That ClassVar is only the FLOOR. Reading it alone is exactly the defect
+        #72 fixed: `d4_internal_polya` declares SOFT and its `enforcement_for`
+        returns HARD_REPAIR on every packaged modality, and two shipped presets
+        came to weight it. A future rule that took a required constructor
+        argument would sail straight back into that hole.
+
+        CAUGHT HERE RATHER THAN THERE, deliberately (#82). At the preset the
+        symptom is a weight that silently appears; at the rule it is a plain fact
+        about the rule, with a message naming it. Same argument
+        `core/registry.py::check_engine_calibration` makes for raising rather
+        than skipping: a skipped rule is a missing constraint nobody sees.
+
+        Unreachable today -- every catalog rule has all-default `__init__`
+        parameters and implements the full Protocol -- but that is a coincidence
+        of the current catalog, not a property of it, and nothing else gates it.
+        """
+        try:
+            rule = spec()
+        except TypeError as exc:  # pragma: no cover - the failure this exists for
+            pytest.fail(
+                f"{spec.id}: must be constructible with no arguments. "
+                f"`_unscored_enforcement` probes rules by calling `spec()`, and on "
+                f"TypeError it falls back to the `enforcement` ClassVar -- the floor, "
+                f"not what the solver routes on -- which is how a HARD rule silently "
+                f"regains an objective weight. Give every parameter a default. ({exc})"
+            )
+        assert callable(getattr(rule, "enforcement_for", None)), (
+            f"{spec.id}: must expose a callable `enforcement_for`. "
+            f"`_unscored_enforcement` reads it with getattr and returns None when it is "
+            f"missing, which the caller reads as 'this spec is scored' -- silent "
+            f"permission to weight the rule off the ClassVar floor."
+        )
+        # `gate` is asserted for a DIFFERENT reason, and conflating the two
+        # misstates the risk. A missing `gate` cannot grant permission to weight:
+        #
+        #     if gate is not None and not gate(slot):
+        #         continue
+        #
+        # with `gate` None the `and` short-circuits, `continue` never fires, and
+        # EVERY slot is probed with `enforcement_for` -- so the guard checks more
+        # slots and is strictly likelier to find a barring Enforcement. What a
+        # missing `gate` really breaks is Protocol conformance, and a `gate` that
+        # exists but is not callable raises TypeError inside `resolve()`.
+        assert callable(getattr(rule, "gate", None)), (
+            f"{spec.id}: must expose a callable `gate`; it is a member of the Spec "
+            f"Protocol (core/spec.py) and `_unscored_enforcement` calls it per slot, "
+            f"so a non-callable one raises inside `resolve()`. Note this is a "
+            f"conformance requirement -- unlike `enforcement_for`, a MISSING `gate` "
+            f"widens the probe rather than silencing it."
+        )
+
+
+def test_every_shipped_preset_resolves_against_the_live_catalog() -> None:
+    """The other half of the #82 guard, and the one that fires on a rule ADDED.
+
+    `test_is_probeable_per_slot` asks whether each spec can be probed.
+    This asks the question that actually ships: does every preset BT5 hands a
+    user still resolve against the catalog as it stands today?
+
+    `resolve()` raises when a preset weights a rule that is not scored in the
+    modality the preset is pinned to -- the #72 defect. That check is only as
+    live as the catalog it runs against, so a rule landing tomorrow with a
+    HARD_REPAIR `enforcement_for` in a weighted preset's modality breaks a
+    shipped preset and nothing else would say so until a user hit it.
+
+    Named in the buildout plan alongside the per-spec assertion above:
+    "all three shipped presets `resolve()` without raising against the live
+    catalog. That is what stops W3/W4/W5 from landing a rule that ..."
+    """
+    from bt5.score.presets import PRESETS, resolve
+
+    assert PRESETS, "no presets are shipped; this guard would be vacuous"
+    for preset in PRESETS:
+        resolve(preset)
+
 
 def test_rule_ids_are_unique_and_sorted_stably() -> None:
     ids = [s.id for s in SPECS]
