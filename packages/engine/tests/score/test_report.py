@@ -96,16 +96,23 @@ class TestScreeningBurden:
             screening_burden(1000, vendor="acme")
 
     def test_a_real_vendor_with_no_figure_on_file_returns_none_rather_than_raising(
-        self,
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Two different failures, and collapsing them is the bug this guards.
 
-        "acme" is nobody's product and that is a caller error. `idt_gblocks` IS
-        orderable -- it is BT5's own default -- and simply has no published
-        error-free length in this repo. Raising for it would make a data gap
-        look like a bad request; answering with eBlocks' 5000 would be worse.
+        "acme" is nobody's product and that is a caller error. A profile that IS
+        orderable and simply has no published error-free length on file is a data
+        gap. Raising for it would make the gap look like a bad request.
+
+        THE ABSENCE IS NOW CONSTRUCTED, NOT BORROWED. Until #56 this test read a
+        real hole in the table -- `idt_gblocks` had no figure -- and asserted the
+        behaviour off it. Every orderable profile now has one, so a test written
+        that way would have silently stopped exercising this path the moment the
+        last gap closed. The assertion is unchanged; only its setup no longer
+        depends on the data staying incomplete.
         """
         assert "idt_gblocks" in PROFILES
+        monkeypatch.delitem(ERROR_FREE_BP, "idt_gblocks")
         assert "idt_gblocks" not in ERROR_FREE_BP
         assert screening_burden(1000, vendor="idt_gblocks") is None
 
@@ -196,8 +203,7 @@ class TestBuildReport:
         assert not report.is_complete
 
     def test_a_run_with_everything_evaluated_is_complete(self) -> None:
-        """Vendor named explicitly: completeness now includes the screening line,
-        and BT5's default vendor has no error-free length on file."""
+        """Vendor named explicitly: completeness includes the screening line."""
         result = self.result()
         report = build_report(
             result, result.candidates[0], translation_table_id=1, vendor="idt_eblocks"
@@ -205,22 +211,42 @@ class TestBuildReport:
         assert report.is_complete
 
     def test_a_vendor_with_no_error_free_length_degrades_rather_than_going_quiet(
-        self,
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The default vendor is gBlocks and BT5 has no fidelity figure for it.
+        """A report missing its screening burden must SAY so, not merely omit it.
 
-        The report must SAY that, not merely omit the line -- a report missing
-        its screening burden looks exactly like one where nobody asked for it.
-        So `burden` is None, a degradation names the vendor, and `is_complete`
-        is False until the number exists. That is deliberate pressure: the
-        alternative is answering with eBlocks' number under gBlocks' name.
+        Omission looks exactly like a run where nobody asked for the number. So
+        `burden` is None, a degradation names the vendor, and `is_complete` is
+        False until a figure exists. That is deliberate pressure -- the
+        alternative is answering with one product's number under another's name.
+
+        As above, the gap is CONSTRUCTED. #56 closed the last real one by putting
+        a published gBlocks figure on file, so this path now has no naturally
+        occurring example and would otherwise have gone untested. Every assertion
+        below is exactly the one that was here before.
         """
+        monkeypatch.delitem(ERROR_FREE_BP, DEFAULT_VENDOR)
         result = self.result()
         report = build_report(result, result.candidates[0], translation_table_id=1)
         assert report.burden is None
         assert not report.is_complete
         assert any("no published error-free length" in d for d in report.degradations)
         assert any(DEFAULT_VENDOR in d for d in report.degradations)
+
+    def test_the_default_vendor_now_carries_its_screening_line(self) -> None:
+        """The other half of #56, and the reason it was worth closing.
+
+        Under BT5's own default vendor the report used to carry no "pick N
+        colonies" line at all. It does now, and `is_complete` is True without the
+        caller having to name a different product.
+        """
+        result = self.result()
+        report = build_report(result, result.candidates[0], translation_table_id=1)
+        assert report.burden is not None
+        assert report.burden.vendor == DEFAULT_VENDOR
+        assert report.burden.error_free_bp == 5000
+        assert report.burden.colonies_to_pick >= 1
+        assert report.is_complete
 
 
 class TestRender:

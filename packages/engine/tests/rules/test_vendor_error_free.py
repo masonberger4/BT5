@@ -81,33 +81,53 @@ class TestTheSidecarAndTheCodeAgree:
                 )
 
 
-class TestTheGblocksGap:
-    """The specific hole #56 names, pinned so it cannot be filled quietly."""
+class TestTheGblocksFigure:
+    """The hole #56 named, now filled -- and pinned so it cannot be filled WRONGLY.
 
-    def test_gblocks_is_recorded_absent(self) -> None:
+    This class replaces `TestTheGblocksGap`, which pinned the absence "so it cannot
+    be filled quietly". It was filled loudly instead: a published IDT figure, its
+    URL, its retrieval date and its verbatim wording, all in the sidecar. What
+    those tests were really defending was never the emptiness -- it was that
+    gBlocks must not silently wear eBlocks' number. Every one of those assertions
+    survives below, aimed at the figure rather than at its absence.
+    """
+
+    def test_gblocks_is_recorded_published_with_its_source(self) -> None:
         entry = sidecar()["idt_gblocks"][FIELD]
-        assert entry["status"] == "ABSENT"
-        assert entry["value"] is None
+        assert entry["status"] == "PUBLISHED"
+        assert entry["value"] == 5000
+        assert entry["source"].strip()
+        assert entry["retrieved"].strip(), "an undated vendor figure is unmaintainable"
 
-    def test_it_names_the_issue_and_what_it_blocks(self) -> None:
+    def test_it_cites_the_gblocks_page_and_not_the_eblocks_one(self) -> None:
+        """THE assertion this class exists for, and the one #56 called the subtle
+        way to get it wrong. The two products publish the same 1:5000, so the
+        value alone cannot tell a correct entry from an inherited one -- only the
+        citation can. eBlocks and gBlocks are different manufacturing processes at
+        one company, and a fidelity figure is a property of the process."""
         entry = sidecar()["idt_gblocks"][FIELD]
-        assert "56" in entry["issue"]
-        assert entry["blocks"].strip()
-        assert entry["to_close"].strip(), "an absence with no route to closing it is a shrug"
+        assert "gblocks-gene-fragments" in entry["source"]
+        assert "eblocks" not in entry["source"].lower()
+        assert entry["status"] != "INHERITED"
 
-    def test_it_records_the_rejected_ways_of_filling_it(self) -> None:
-        """The subtle one is inheriting eBlocks' number across IDT's two product
-        lines. A fidelity figure comes out of a manufacturing process, not a design
-        guideline, and the two products are different processes."""
-        rejected = sidecar()["idt_gblocks"][FIELD]["rejected"]
-        assert "eblocks" in rejected.lower()
-        assert "5000" in rejected
+    def test_it_is_the_standard_product_not_hifi(self) -> None:
+        """gBlocks HiFi is a different product on the same page with a different
+        figure (1:12,000). Applying it here would understate the screening burden
+        by more than a factor of two -- the unsafe direction."""
+        entry = sidecar()["idt_gblocks"][FIELD]
+        assert entry["value"] != 12000
+        assert "hifi" in entry["notes"].lower(), "the confusable product must be named"
+        assert PROFILES["idt_gblocks"].length_bp == (125, 3000), (
+            "the standard product's range; HiFi is 1000-3000 and would need its own key"
+        )
 
-    def test_the_gap_is_on_the_default_vendor_which_is_why_it_matters(self) -> None:
+    def test_the_default_vendor_now_carries_a_figure(self) -> None:
+        """Why closing this mattered: with no figure, BT5's OWN default produced a
+        report with no 'pick N colonies' line."""
         from bt5.rules.vendors import DEFAULT_VENDOR
 
         assert DEFAULT_VENDOR == "idt_gblocks"
-        assert DEFAULT_VENDOR not in ERROR_FREE_BP
+        assert ERROR_FREE_BP[DEFAULT_VENDOR] == 5000
 
     def test_no_fidelity_figure_is_inherited_across_products(self) -> None:
         """Inheritance elsewhere in this file is within a VENDOR. For a fidelity

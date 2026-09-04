@@ -57,17 +57,35 @@ ERROR_FREE_BP: dict[str, int] = {
     "twist_gene_fragment_adapter_on": 7500,
     # https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/eblocks-gene-fragments
     "idt_eblocks": 5000,
-    # NOTE the absence of "idt_gblocks", which is DEFAULT_VENDOR. No published
-    # error-free length is on file for gBlocks, and there are two wrong ways to
-    # fill that hole. Inventing a figure is obvious. The subtle one is inheriting
-    # eBlocks' 5000 across IDT's two product lines: a fidelity number comes out
-    # of a manufacturing process, not a design guideline, and eBlocks and gBlocks
-    # are different processes. `test_the_vendor_changes_the_answer` already says
-    # what that costs -- "reporting one vendor's number under another's name is
-    # the kind of quiet error a lab pays for in plates". So BT5 says it does not
-    # know, and the report carries a degradation saying so. See issue #54.
+    # https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/gblocks-gene-fragments
+    # "gBlocks Gene Fragments are double-stranded DNA fragments 125-3000 bp in
+    # length with a median error rate of less than 1:5000." Retrieved 2026-09-04.
+    #
+    # INDEPENDENTLY PUBLISHED FOR gBLOCKS, NOT INHERITED FROM eBLOCKS -- and that
+    # distinction is the entire reason #56 was an issue rather than a
+    # two-character edit. The two products genuinely carry the same figure, and
+    # IDT states both side by side in one comparison table on this page, so the
+    # coincidence is theirs and not ours. The citation above is the gBlocks page;
+    # it must never be re-pointed at the eBlocks URL, because a fidelity number
+    # comes out of a manufacturing process and these are two processes at one
+    # company. `test_the_vendor_changes_the_answer`: "reporting one vendor's
+    # number under another's name is the kind of quiet error a lab pays for in
+    # plates."
+    #
+    # NOT gBlocks HiFi, which is a SEPARATE product (1000-3000 bp, NGS
+    # sequence-verified, "median error rate of less than 1:12,000" on the same
+    # page). `vendors.py` gives idt_gblocks length_bp=(125, 3000), which is the
+    # standard product's range and is how the two are told apart here. A HiFi
+    # profile would need its own key and its own 12000.
+    #
+    # MEDIAN, AND A BOUND. IDT publishes "less than 1:5000" as a median; the
+    # model below wants a mean rate. Reading one as the other is an
+    # interpretation -- the same one the eBlocks entry already makes -- and the
+    # "less than" puts E = 5000 at the CONSERVATIVE end, which over-estimates
+    # colonies to pick. That is the safe direction for a bench instruction.
+    "idt_gblocks": 5000,
 }
-ERROR_FREE_LAST_VERIFIED = "2026-08-28"
+ERROR_FREE_LAST_VERIFIED = "2026-09-04"
 
 #: How sure the user wants to be of having at least one perfect clone.
 DEFAULT_CONFIDENCE = 0.95
