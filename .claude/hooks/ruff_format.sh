@@ -14,7 +14,12 @@ INPUT="$(cat)"
 RUFF=".venv/bin/ruff"
 [ -x "$RUFF" ] || exit 0
 
-FILE=$(printf '%s' "$INPUT" | python3 -c '
+# Resolve the interpreter the way every other hook does -- see .claude/hooks/run_py.sh.
+# Advisory only: `ruff format --check .` in CI is the real gate, so a machine with no
+# working Python 3 skips formatting instead of failing the edit.
+PY=$(bash .claude/hooks/run_py.sh --which) || exit 0
+
+FILE=$(printf '%s' "$INPUT" | "$PY" -c '
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)

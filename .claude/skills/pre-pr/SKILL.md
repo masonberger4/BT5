@@ -35,6 +35,19 @@ Take its report verbatim into the `GATES` line below. If it returns `ENV: MISSIN
 `ENV: INCOMPLETE`, that is **BROKEN**, not FAIL — run `/bootstrap`, then restart this
 chain.
 
+Also run the routing verifier, which `gates.sh` does not cover:
+
+```bash
+bash .claude/verify-setup.sh
+```
+
+It checks the things whose failure mode is silence — a hook that no longer runs, an
+agent file with no `description`, a rules glob matching nothing. Its first check is a
+negative control proving it can still fail; if that control does not report `rc=2`, the
+verifier is blind and every `ok` after it is worthless. Treat non-zero as RED like any
+other gate. It needs no `.venv` for the hook probes, but PyYAML (hence `/bootstrap`) for
+the frontmatter sections — it says so rather than skipping silently.
+
 Only if `gate-runner` is unavailable, run it here yourself:
 
 ```bash

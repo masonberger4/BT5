@@ -90,7 +90,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "python3 .claude/hooks/statusline.py"
+    "command": "bash .claude/hooks/run_py.sh --statusline .claude/hooks/statusline.py"
   },
   "hooks": {
     "SessionStart": [
@@ -113,11 +113,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/compact_output.py"
+            "command": "bash .claude/hooks/run_py.sh --optional .claude/hooks/compact_output.py"
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/push_gate.py"
+            "command": "bash .claude/hooks/run_py.sh --optional .claude/hooks/push_gate.py"
           }
         ]
       },
@@ -126,7 +126,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/protect_paths.py"
+            "command": "bash .claude/hooks/run_py.sh --required .claude/hooks/protect_paths.py"
           }
         ]
       },
@@ -135,7 +135,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/push_gate.py"
+            "command": "bash .claude/hooks/run_py.sh --required .claude/hooks/push_gate.py"
           }
         ]
       }
