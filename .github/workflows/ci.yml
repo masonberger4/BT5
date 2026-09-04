@@ -285,8 +285,36 @@ jobs:
           SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RESULTS: ${{ toJSON(needs) }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+
+          # A SUPERSEDED run is not a broken commit. `cancelled` is in this job's
+          # `if:` because a cancellation can hide a real break -- but the dominant
+          # cause by far is `cancel-in-progress` killing the still-running checks
+          # for commit N when commit N+1 lands on top of it. Merging six pull
+          # requests in ten minutes filed five "main is red" issues that way
+          # (#136, #137, #138, #140, #141), every one of them naming an
+          # intermediate commit whose tests were never allowed to finish, and
+          # every one of them false. An alarm that cries wolf five times in ten
+          # minutes is worse than no alarm, because the next real break lands in
+          # the noise.
+          #
+          # So suppress ONLY when BOTH hold: nothing actually failed, and this
+          # commit is no longer the branch tip. A real `failure` still files
+          # whatever the tip is, and a cancellation AT the tip still files --
+          # that is the case where something may genuinely be wrong and no later
+          # run will cover it. A break at an intermediate commit that is real is
+          # inherited by the tip and reported there instead.
+          if ! printf '%s' "$RESULTS" | jq -e 'any(.[]; .result == "failure")' >/dev/null; then
+            TIP="$(gh api "repos/$GH_REPO/commits/$BRANCH" --jq .sha 2>/dev/null || true)"
+            if [ -n "${TIP:-}" ] && [ "$TIP" != "$SHA" ]; then
+              echo "No job failed -- only cancellations -- and $SHA is no longer the"
+              echo "tip of $BRANCH (now $TIP). This run was superseded; not filing."
+              exit 0
+            fi
+          fi
+
           TITLE="main is red at ${SHA:0:9}"
           # One issue per commit, not one per re-run. `--search` is scoped to
           # open issues so a closed one does not suppress a fresh break on a
