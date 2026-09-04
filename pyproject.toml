@@ -25,7 +25,34 @@ fold = ["viennarna==2.7.2"]
 
 # Biosecurity. The biorisk-only tier is <1 GB and ships ON BY DEFAULT.
 # The full protein/nucleotide similarity tier needs ~600 GB and is explicit opt-in.
-screen = ["commec>=0.2"]
+#
+# COMMENTED OUT, NOT DELETED (#106). `commec` is real, active and MIT-licensed --
+# ibbis-bio/common-mechanism, currently v2.1.0 -- but it is not published on PyPI,
+# and `pypi.org/pypi/commec/json` is a 404. uv resolves the WHOLE project, every
+# extra whether or not you asked for it, so an unresolvable extra made `uv run`,
+# `uv sync` and `uv lock` all fail in the repo root. CI never noticed: every job
+# installs named extras with `uv pip install -e ".[dev,...]"`, which never visits
+# `screen`, and no `uv.lock` is checked in.
+#
+# Nothing imports `commec` today -- screening is unimplemented -- so the extra
+# bought nothing and cost every ad-hoc `uv` invocation. Left in place as a comment
+# rather than deleted so the intent stays visible and re-adding it is a reviewable
+# one-line change rather than an archaeology exercise.
+#
+# The VCS form below is verified to resolve (`uv lock` on a minimal probe:
+# "Resolved 4 packages in 936ms", exit 0), and is the shape to restore when the
+# screen lane is actually built:
+#
+#     screen = ["commec @ git+https://github.com/ibbis-bio/common-mechanism@v2.1.0"]
+#
+# Not adopted NOW because it resolves without working: upstream declares no
+# `dependencies` key at all ("This is not a pure python project; dependencies are
+# managed through environment.yml"), so a pip/uv install yields the Python package
+# with none of its HMMER/BLAST binaries. Pinning a tag today also pins one that
+# will be stale by the time the lane exists, which is when the conda/binary story
+# has to be solved anyway.
+#
+# screen = ["commec>=0.2"]
 
 server = ["fastapi>=0.110", "uvicorn>=0.29", "sse-starlette>=2.0"]
 export = ["openpyxl>=3.1"]
