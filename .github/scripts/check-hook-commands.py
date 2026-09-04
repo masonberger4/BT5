@@ -87,10 +87,14 @@ def commands(settings: dict[str, Any]) -> list[tuple[str, str, str]]:
             matcher = (group or {}).get("matcher")
             for hook in (group or {}).get("hooks") or []:
                 if hook.get("type") == "command" and isinstance(hook.get("command"), str):
-                    # A matcher that is absent means "every tool", i.e. strictly broader
-                    # coverage. Represent it as "*" rather than "" so it is never
-                    # mistaken for a matcher that names nothing.
-                    out.append((event, "*" if matcher is None else str(matcher), hook["command"]))
+                    # An absent matcher AND an empty-string matcher both mean "every
+                    # tool", i.e. strictly BROADER coverage than any alternation. Both
+                    # normalise to "*" so neither is mistaken for a matcher that names
+                    # nothing: treating "" as a literal would fail a correctly-wired hook
+                    # that covers Write, and a false failure here reds a required check
+                    # for every open PR.
+                    blank = matcher is None or str(matcher).strip() == ""
+                    out.append((event, "*" if blank else str(matcher), hook["command"]))
     return out
 
 
