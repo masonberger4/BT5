@@ -908,3 +908,118 @@ class TestTheFallbackWhenNothingSolves:
 
         with pytest.raises(DesignError, match="no candidate survived"):
             _panel(self._NothingSweeps(None), steps=1, k=5)  # type: ignore[arg-type]
+
+
+class TestCandidateProvenance:
+    """Where a caller finds a design's provenance, pinned in both directions (#99).
+
+    #89 restructured the walking skeleton's single annotated result into a panel,
+    and `annotate()` became a per-EXPORT step: it is called once, on the winner,
+    and its output feeds the GenBank string only. Nothing attaches it back to a
+    `Candidate`, so `candidate.construct` is the raw assembly for every candidate
+    including the baseline. A review bot on `design/runner.py:567` read that as a
+    provenance loss, and #99 asks the lane owner to decide whether it is one.
+
+    Nothing tested it either way -- `.sequence` was compared and `.features` and
+    `.annotations` never were -- so the decision had nothing to overturn and no
+    way to notice a drift. This class is that missing pin. It does NOT decide
+    #99; it states exactly what is true today so the choice is between two
+    described states rather than two guesses.
+
+    IF #99 DECIDES THE CURRENT SHAPE IS INTENDED, this class stays and the
+    `Candidate` docstring in `core/result.py` should say annotation is an export
+    step (a `core/` docstring, so via `/contract-change`).
+
+    IF #99 DECIDES IT IS AN OVERSIGHT, `test_candidate_constructs_are_unannotated`
+    is the test to invert -- and it names, in its own message, what the fix has to
+    supply. Do not delete it; make it assert the annotated shape instead.
+    """
+
+    def test_design_hash_is_on_the_candidate_itself(
+        self, backbone: VectorBackbone, fast: Any
+    ) -> None:
+        """The load-bearing half, and the reason the current shape may be fine.
+
+        `Candidate.design_hash` is a first-class FIELD. A caller wanting
+        provenance reads it directly and never has to parse a GenBank comment, so
+        an unannotated `construct` costs nothing as long as this holds. If this
+        test ever fails, the #99 question stops being a style call and becomes a
+        real loss.
+        """
+        res = fast(backbone)
+        for candidate in res.result.candidates:
+            assert candidate.design_hash, f"{candidate.label} has no design_hash"
+        hashes = {c.design_hash for c in res.result.candidates}
+        assert len(hashes) == len(res.result.candidates), (
+            "two candidates share a design_hash; the hash is the tube label and "
+            "two tubes under one name is the failure core/result.py names"
+        )
+
+    def test_the_hash_reaches_the_report_and_the_genbank(
+        self, backbone: VectorBackbone, fast: Any
+    ) -> None:
+        """What `core/result.py`'s Candidate docstring actually promises: "the
+        content hash travels onto the report, the GenBank note and the order
+        file". It says nothing about `Candidate.construct`, which is why the
+        current shape is defensible -- the promise is about where the hash
+        ARRIVES, and it arrives."""
+        res = fast(backbone)
+        winner = res.result.candidates[0]
+        assert winner.design_hash in res.genbank
+        assert winner.design_hash in res.rendered
+        assert any(winner.design_hash in entry.name for entry in res.orders)
+
+    def test_candidate_constructs_are_unannotated(
+        self, backbone: VectorBackbone, fast: Any
+    ) -> None:
+        """THE #99 PIN. Every candidate carries the raw assembly, not the
+        annotated one: no `bt5_origin` provenance stamps and no design comment.
+
+        Inverting this is the fix if #99 decides annotation belongs on the
+        candidate. What that fix must supply is exactly what this test looks for.
+        """
+        from bt5.vector.annotate import ORIGIN_QUALIFIER
+
+        res = fast(backbone)
+        panel = [*res.result.candidates]
+        if res.result.native_baseline is not None:
+            panel.append(res.result.native_baseline)
+        for candidate in panel:
+            construct = candidate.construct
+            stamped = [f for f in construct.features if ORIGIN_QUALIFIER in f.qualifiers]
+            assert not stamped, (
+                f"{candidate.label}: construct now carries {len(stamped)} "
+                f"{ORIGIN_QUALIFIER} stamps. If #99 was decided in favour of "
+                f"annotating candidates, invert this test rather than deleting it."
+            )
+            assert "comment" not in (construct.annotations or {}), (
+                f"{candidate.label}: construct now carries a provenance comment; "
+                f"see #99 and invert this test."
+            )
+
+    def test_the_exported_construct_is_annotated_and_the_candidate_is_not(
+        self, backbone: VectorBackbone, fast: Any
+    ) -> None:
+        """The two shapes side by side, which is what makes the #99 choice legible.
+
+        Same sequence, different annotation: whatever is missing from
+        `candidate.construct` is present in the export, so nothing is LOST -- it
+        is only reachable from one object rather than two.
+        """
+        import io as _io
+
+        from bt5.vector import read_genbank
+        from bt5.vector.annotate import ORIGIN_QUALIFIER
+
+        res = fast(backbone)
+        winner = res.result.candidates[0]
+        exported = read_genbank(_io.StringIO(res.genbank))
+
+        assert exported.sequence == winner.construct.sequence, (
+            "the export is a different sequence from the candidate it came from"
+        )
+        assert [f for f in exported.features if ORIGIN_QUALIFIER in f.qualifiers], (
+            "the export carries no provenance stamps either; then the #99 question "
+            "is not where annotation lives but whether it happens at all"
+        )
+        assert len(exported.features) >= len(winner.construct.features)
