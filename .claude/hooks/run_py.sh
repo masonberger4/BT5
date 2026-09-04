@@ -158,10 +158,20 @@ elif [ -z "$PY" ]; then
   exits 49 with empty stdout, which Claude Code treats as a NON-blocking hook failure --
   i.e. silently. Install Python 3.11, or set BT5_PYTHON in
   .claude/settings.local.json -> \"env\" to a working interpreter."
-else
+elif [ ! -e "$SCRIPT" ]; then
   MSG="BT5 hooks: '$SCRIPT' does not exist (cwd: $PWD), so the hook did NOT run.
   .claude/settings.json references a script that is not on disk. Fix the path or the
   settings entry; .github/scripts/check-hook-commands.py fails CI on exactly this."
+else
+  # Reached when the file EXISTS but -f or -r said no: a directory, a dangling symlink,
+  # or a readable-bit problem. Reporting 'does not exist' here would send the reader
+  # hunting for a missing file that is sitting right in front of them -- the same
+  # misdirection as verify-setup.sh's old false 'invalid JSON', which this branch of the
+  # repo exists to stop shipping.
+  MSG="BT5 hooks: '$SCRIPT' exists but could not be read (cwd: $PWD), so the hook did
+  NOT run. It is present, so this is not a wrong path in .claude/settings.json: check
+  that it is a regular file and readable (permissions, a directory of that name, or a
+  dangling symlink)."
 fi
 
 case "$MODE" in
