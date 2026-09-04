@@ -7,7 +7,7 @@ production code path calls is a rule that cannot refuse anything.
 
 THIS IS THE CALLER `repair.py` WAS BUILT FOR. `RulePolicy`'s own docstring says
 the per-rule policies must be *caller-supplied* -- because importing the registry
-to read them would pull the whole 15-rule catalog, Biopython and the vendor
+to read them would pull the entire rule catalog, Biopython and the vendor
 registry into the solver, and because the values live on rule INSTANCES
 (`e2.window` is `self.window`), not the classes. This module is that caller: the
 one place #58 sanctions the solver lane reaching the rules, and it hands
