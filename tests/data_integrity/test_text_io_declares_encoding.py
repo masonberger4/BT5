@@ -26,13 +26,16 @@ enables it and mirrors its call set deliberately.
 The subprocess half has no ruff equivalent and is not redundant with it. `text=True`
 without `encoding=` decodes the child's stdout through the same locale default --
 `Popen.__init__` calls `_text_encoding()` for exactly the reason `open()` does. It is
-listed second here because the enumeration in #102 counted only file I/O and missed
-it; `python -X warn_default_encoding` found seven live sites, including git output
-read by `.claude/hooks/`.
+listed second here because #102's enumeration counted only file I/O and missed it:
+running the suite under `python -X warn_default_encoding` is what surfaced the class,
+and this AST scan is what then found all seven sites.
 
-The whole file is a static stand-in for `-X warn_default_encoding`, which is the
-authority. That flag cannot be the gate because it only reports lines that actually
-EXECUTE, and most of these are error paths.
+WHY A STATIC SCAN RATHER THAN THAT FLAG. `-X warn_default_encoding` is the authority
+on this property, but it reports only lines that actually EXECUTE. Measured: with the
+seven subprocess sites restored to their pre-fix state, the flag catches exactly two
+of them. The other five are in `.claude/hooks/` and `.github/scripts/`, which pytest
+never imports -- so as a gate the flag would pass a tree that still had five of the
+seven. Turning it on also needs `pyproject.toml`.
 """
 
 from __future__ import annotations

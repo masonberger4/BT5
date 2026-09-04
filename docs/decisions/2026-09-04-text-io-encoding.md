@@ -39,12 +39,14 @@ git-tracked `.py` file, in two tests (file I/O, subprocess decode).
 **Evidence:**
 
 - 35 file sites found by AST walk, matching #102's count exactly; 0 remain after the fix.
-- `python -X warn_default_encoding -W error::EncodingWarning -m pytest tests packages/engine/tests`
-  → 8 failures before, all 7 subprocess sites plus the new guard's own `git ls-files` call.
-  After: **2116 passed**, with the single third-party frame excluded
-  (`-W ignore::EncodingWarning:openpyxl.worksheet._writer`; `openpyxl/worksheet/_writer.py:36`
-  opens a text `NamedTemporaryFile` with no encoding — upstream's defect, not ours, and our
-  xlsx cell values are ASCII).
+- `python -X warn_default_encoding -W error::EncodingWarning -m pytest tests packages/engine/tests`,
+  with the third-party frame excluded (`-W ignore::EncodingWarning:openpyxl.worksheet._writer`;
+  `openpyxl/worksheet/_writer.py:36` opens a text `NamedTemporaryFile` with no encoding —
+  upstream's defect, not ours, and our xlsx cell values are ASCII):
+  **6 failed / 2110 passed** with the seven subprocess sites restored to their pre-fix
+  state, **2116 passed** after. The flag catches only **2 of the 7** subprocess sites,
+  because the other five are in `.claude/hooks/` and `.github/scripts/`, which pytest
+  never imports — which is precisely why the gate is a static scan and not the flag.
 - Guard probed both ways: it fires on `open`, `Path.open`, `read_text`, `write_text`,
   `NamedTemporaryFile` and subprocess text mode; it stays quiet on `mode="rb"`, `os.open`,
   `**kwargs` passthrough and calls that already name an encoding.
