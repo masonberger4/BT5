@@ -108,11 +108,17 @@ permissions:
 jobs:
   pre-pr-attest:
     name: pre-pr-attest
-    # `pull_request_target` ONLY -- the one event whose check run lands on the
-    # commit the pull request would merge. It fires on every such event and
-    # always reports, which is what makes it safe to promote to a required
-    # context later. Comments are handled by `rearm` below, which deliberately
-    # produces no check of its own.
+    # `pull_request_target` or `merge_group` -- the two events whose check run
+    # lands on a commit that would actually merge: the pull request's head, or
+    # the transient commit the queue builds. It fires on every such event and
+    # ALWAYS REPORTS, which is what makes it safe as a required context; a job
+    # that merely skips would satisfy the requirement while checking nothing.
+    # Comments are handled by `rearm` below, which produces no verdict of its own.
+    #
+    # This comment said "`pull_request_target` ONLY" until `merge_group` was
+    # added a few lines down, in the same commit that removed a different false
+    # claim from this file. Comments here are load-bearing -- this is the file a
+    # reader trusts to understand what gates their merge.
     if: github.event_name == 'pull_request_target' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5

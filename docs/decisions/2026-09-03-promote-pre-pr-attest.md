@@ -28,9 +28,17 @@ Four changes ship in the same diff because promotion is what makes each of them 
    carries `if: always()` and does run in a queue — that would have blocked all of CI the
    moment the guard shipped. Caught by this script's own negative test, not in review.
 
-   Verified in three directions: passes as shipped; rejects a workflow that drops the
-   `merge_group:` trigger; rejects a workflow that keeps the trigger but narrows the
-   producing job's `if:`.
+   It also demands a *positive* `== 'merge_group'` rather than the mere substring, because
+   `!= 'merge_group'` contains the substring while meaning the opposite — skipped on
+   exactly the event the check exists to cover. The first cut called that safe; review
+   caught it. The known limitation is stated in the code: a correct non-equality form
+   (`contains(fromJSON('[...]'), github.event_name)`) is flagged, which is the safe
+   direction to be wrong in, since the fix is one edit and a false pass is a gate that
+   enforces nothing and never goes red.
+
+   Verified in four directions: passes as shipped; rejects a dropped `merge_group:`
+   trigger; rejects a job `if:` narrowed to equality on another event; rejects
+   `!= 'merge_group'`.
 3. **`rearm`'s two silent-green exits now fail.** "No run after 180s" and "still in flight
    after 180s" both returned 0, so `rearm` reported green over a pull request that stayed
    red — CLAUDE.md §9's signature, from a direction the guard does not model. Harmless

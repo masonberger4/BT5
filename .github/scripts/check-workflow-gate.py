@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import sys
 from typing import Any
 
@@ -193,25 +194,40 @@ def main() -> int:
         # rejecting. Blocking is loud; a silent pass is not.
         #
         # A textual check, not an evaluation -- GitHub expressions cannot be
-        # evaluated here. The rule: a condition is suspect only if it BRANCHES ON
-        # THE EVENT (mentions `github.event_name` or `github.event.`) without
-        # naming `merge_group`. A condition that does not discriminate on the
-        # event cannot exclude one, so it passes.
+        # evaluated here. The rule: a condition is suspect if it BRANCHES ON THE
+        # EVENT (mentions `github.event_name` or `github.event.`) without
+        # POSITIVELY admitting `merge_group`. A condition that does not
+        # discriminate on the event cannot exclude one, so it passes.
         #
         # `if: always()` is why this is not simply "must contain merge_group".
         # ci.yml's `required-checks` carries exactly that, runs on every event
         # including a merge group, and a naive check flagged it -- which would
         # have blocked all of CI the moment this guard shipped. Caught by this
         # script's own negative test, not in review.
+        #
+        # And it demands `== 'merge_group'` rather than the mere substring,
+        # because `!= 'merge_group'` CONTAINS the substring while meaning the
+        # exact opposite: skipped on precisely the event this check exists to
+        # guarantee coverage for. A substring test called that safe.
+        #
+        # Known limitation, stated rather than hidden: a positive form that is
+        # not an equality -- say
+        # `contains(fromJSON('["pull_request_target","merge_group"]'), github.event_name)`
+        # -- is flagged even though it is correct. That is the safe direction to
+        # be wrong in: the fix is one edit to the `if:`, whereas a false pass is
+        # a merge gate that enforces nothing and never goes red.
         condition = str((body or {}).get("if") or "")
         branches_on_event = "github.event_name" in condition or "github.event." in condition
-        if branches_on_event and "merge_group" not in condition:
+        admits_merge_group = re.search(r"==\s*['\"]merge_group['\"]", condition) is not None
+        if branches_on_event and not admits_merge_group:
             problems.append(
                 f"{wf}: triggers on `merge_group`, but the job producing the "
-                f"required check {context!r} has an `if:` that never mentions it, "
-                f"so it is skipped on that event -- and a skipped check SATISFIES "
-                f"a required status check. The queue would merge with this gate "
-                f"enforcing nothing. Name the event in the `if:`, or drop the "
+                f"required check {context!r} has an `if:` that does not positively "
+                f"admit it (no `== 'merge_group'`; note a `!= 'merge_group'` names "
+                f"the event while excluding it), so the job is skipped on that "
+                f"event -- and a skipped check SATISFIES a required status check. "
+                f"The queue would merge with this gate enforcing nothing. Add "
+                f"`github.event_name == 'merge_group'` to the `if:`, or drop the "
                 f"`if:` so the job always runs."
             )
 
