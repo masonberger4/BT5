@@ -48,7 +48,36 @@ from bt5.solver.reference import expand_forbidden
 
 #: DNA Chisel's calibrated defaults. Not invented numbers.
 EXHAUSTIVE_LIMIT = 10_000
+
+#: Floor on codons perturbed per random trial. Only a floor: the count scales
+#: with the window, see `MUTATION_WINDOW_DIVISOR`.
 MUTATIONS_PER_ITERATION = 2
+
+#: The random branch perturbs `len(window) / this` codons, floored at
+#: `MUTATIONS_PER_ITERATION`.
+#:
+#: A fixed 2 was calibrated for nothing, and it is unreachable for a windowed
+#: COMPOSITION rule. `f5_at_window` is a two-sided GC band over 100 nt with
+#: `WINDOW_MINUS_1` localisation, so its repair window is the breach plus 99 nt
+#: of context either side -- 67-100 codons around a 34-codon breach. Moving that
+#: window's GC fraction across the band needs a coordinated multi-codon shift;
+#: two substitutions cannot deliver one however many times they are drawn, and
+#: re-drawing was exactly the waste `PER_TARGET_TOLERANCE` now bounds.
+#:
+#: Targeting was never the problem: two uniform picks land BOTH inside a
+#: 34-codon breach 11-25% of the time, so dozens of well-placed trials happen
+#: every iteration. Measured on the 260 aa reference design, the fourth solve:
+#:
+#:     2 -> 38 iterations, stagnation, 5 breaches left, candidate discarded
+#:     4 -> 22 iterations, clean          16 -> 15 iterations, clean
+#:     8 -> 27 iterations, clean          32 ->  3 iterations, clean
+#:
+#: A quarter of the window rather than a tuned constant, because the quantity
+#: that must move scales with the window: 25 codons at 100, 17 at 67, and the
+#: floor at 8 or fewer. Small windows are enumerated outright and never reach
+#: this branch, so this only ever governs windows too large to search exactly.
+MUTATION_WINDOW_DIVISOR = 4
+
 MAX_ITERATIONS = 1000
 STAGNATION_TOLERANCE = 100
 
@@ -549,14 +578,19 @@ def repair(
             candidates = _enumerate(options)
         else:
             random_windows += 1
-            # Guided random: perturb MUTATIONS_PER_ITERATION positions.
+            # Guided random: perturb a FRACTION of the window, never a constant.
+            # This branch is only reached when the window was too large to
+            # enumerate, and how much has to move to clear a windowed statistic
+            # scales with that window -- see `MUTATION_WINDOW_DIVISOR`.
             base = [current[3 * (first + k) : 3 * (first + k) + 3] for k in range(last - first)]
+            mutations = min(
+                len(base),
+                max(MUTATIONS_PER_ITERATION, -(-len(base) // MUTATION_WINDOW_DIVISOR)),
+            )
             candidates = []
             for _ in range(max_candidates):
                 trial = list(base)
-                for pos in rng.choice(
-                    len(trial), size=min(MUTATIONS_PER_ITERATION, len(trial)), replace=False
-                ):
+                for pos in rng.choice(len(trial), size=mutations, replace=False):
                     trial[int(pos)] = str(rng.choice(options[int(pos)]))
                 candidates.append(tuple(trial))
 
