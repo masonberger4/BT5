@@ -532,7 +532,9 @@ class TestCompleteness:
         what would have caught the rewording that got past the previous shape.
         """
         root = Path(__file__).resolve().parents[4] / "packages/engine/src/bt5"
-        corpus = "".join((root / name).read_text() for name in DEGRADATION_SOURCE_FILES)
+        corpus = "".join(
+            (root / name).read_text(encoding="utf-8") for name in DEGRADATION_SOURCE_FILES
+        )
         for pattern, (sample, fragment) in DEGRADATION_SOURCES.items():
             assert len(fragment) >= 12, f"{pattern!r}: fragment {fragment!r} is too short"
             assert fragment in sample, f"{pattern!r}: {fragment!r} is not in its own sample"

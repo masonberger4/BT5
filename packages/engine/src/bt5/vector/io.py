@@ -241,7 +241,7 @@ def _open_text(source: str | Path | IO[str]) -> IO[str]:
             # Read eagerly rather than handing back an open handle: the caller
             # has no way to close it, and a leaked descriptor per parsed vector
             # is the kind of thing that only shows up under a batch run.
-            return _io.StringIO(path.read_text())
+            return _io.StringIO(path.read_text(encoding="utf-8"))
         if isinstance(source, str):
             return _io.StringIO(source)
         raise VectorError(f"no such vector file: {path}")
@@ -322,7 +322,7 @@ def write_genbank(record: SeqRecord, target: str | Path | IO[str] | None = None)
     text = handle.getvalue()
     if target is not None:
         if isinstance(target, str | Path):
-            Path(target).write_text(text)
+            Path(target).write_text(text, encoding="utf-8")
         else:
             target.write(text)
     return text

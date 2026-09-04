@@ -536,7 +536,9 @@ class TestServicesBoundary:
     def test_the_rule_never_imports_the_codon_lane(self) -> None:
         """`Services` is what decouples M4 from M5; an import edge would bypass it."""
         root = Path(__file__).resolve().parents[4]
-        source = (root / "packages/engine/src/bt5/rules/catalog/c3_min_max.py").read_text()
+        source = (root / "packages/engine/src/bt5/rules/catalog/c3_min_max.py").read_text(
+            encoding="utf-8"
+        )
         assert "bt5.codon" not in source
         assert "from bt5.core.services import" in source
 

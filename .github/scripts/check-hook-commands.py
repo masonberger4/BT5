@@ -186,6 +186,7 @@ def probe(payload: dict[str, Any], env_extra: dict[str, str] | None = None) -> t
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
     )
     return proc.returncode, proc.stdout
@@ -246,7 +247,11 @@ def check_modes(referenced: set[str]) -> None:
     # one that matters: it is what a POSIX checkout materialises.
     want = sorted(referenced | {LAUNCHER})
     proc = subprocess.run(
-        ["git", "ls-files", "-s", "--", *want], cwd=ROOT, capture_output=True, text=True
+        ["git", "ls-files", "-s", "--", *want],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     if proc.returncode != 0:
         fail(f"git ls-files failed ({proc.returncode}); cannot verify hook file modes.")

@@ -68,7 +68,7 @@ def load_on(doc: dict[str, Any]) -> Any:
 
 
 def required_contexts() -> set[str]:
-    spec = json.loads(RULESET.read_text())
+    spec = json.loads(RULESET.read_text(encoding="utf-8"))
     return {
         check["context"]
         for rule in spec.get("rules", [])
@@ -102,7 +102,7 @@ def main() -> int:
     produced: dict[str, tuple[pathlib.Path, Any]] = {}
     triggers: dict[pathlib.Path, set[str]] = {}
     for wf in sorted(WORKFLOWS.glob("*.y*ml")):
-        doc = yaml.safe_load(wf.read_text()) or {}
+        doc = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
         jobs = doc.get("jobs") or {}
         on = load_on(doc)
 

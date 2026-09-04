@@ -30,7 +30,7 @@ REGENERATE = "python tests/contract/regenerate.py"
 @pytest.fixture(scope="module")
 def manifest() -> dict:
     assert surface.MANIFEST_PATH.exists(), f"no recorded contract; run {REGENERATE}"
-    return json.loads(surface.MANIFEST_PATH.read_text())
+    return json.loads(surface.MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
 def test_the_live_contract_matches_the_recorded_one(manifest: dict) -> None:
