@@ -14,7 +14,7 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 - **pytest exits 2, 3, 4 and 5 are BROKEN**, not FAIL: collection error, internal error,
   usage error, and no-tests-collected. Never report any of them as PASS.
 - **Never re-run a gate with looser flags to get green.** Never skip, `xfail`, loosen or
-  delete a test (CLAUDE.md §4). If a property fails and also fails on the merge base, it
+  delete a test (CLAUDE.md §3.9). If a property fails and also fails on the merge base, it
   is a pre-existing bug: record a fixture under `tests/data/regressions/`, open an issue,
   and say so in the PR.
 - **mypy is a required CI job** (as of #63) and is in `required-checks.needs`. Running
@@ -104,7 +104,7 @@ This marker is **local only** — it is gitignored (`.gitignore:19`) and its dig
 on a clean checkout, so it can never be CI's evidence. Step 10 is what makes this run
 visible off this machine.
 
-**9. PR.** Open it as a **draft** (CLAUDE.md §7 — drafts skip the expensive jobs, and CI
+**9. PR.** Open it as a **draft** (CLAUDE.md §4 — drafts skip the expensive jobs, and CI
 capacity is the binding constraint: 20 slots, ~12 per Python PR, so at most 5 open
 non-draft PRs). Fill in `.github/pull_request_template.md`, including the **Scientific
 impact** section: say what changed about the sequences the app produces, or "none".

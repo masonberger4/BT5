@@ -18,7 +18,7 @@ because the dependency is missing. Installing a subset produces a type-check res
 cannot trust.
 
 **This takes minutes.** Never run it from a hook, and never run it unprompted on a user's
-behalf mid-task: `uv pip install` is a state change, and CLAUDE.md §5 makes dependency
+behalf mid-task: `uv pip install` is a state change, and CLAUDE.md §2 makes dependency
 events a human decision.
 
 ## Verify
@@ -33,4 +33,4 @@ resolve to `/root/.local/bin`, whose interpreter has no numpy, so bare `pytest` 
 on a `conftest.py` import error and bare `mypy` emits phantom errors.
 
 `uv.lock` is not checked in; `uv pip install -e` resolves from `pyproject.toml`. Do not
-create a lockfile (CLAUDE.md §5).
+create a lockfile (CLAUDE.md §2).

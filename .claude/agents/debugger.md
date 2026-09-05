@@ -65,7 +65,7 @@ than one that has not.
 ## Do NOT
 
 - Do not edit, write, or apply anything.
-- Do not skip, `xfail`, loosen or delete a test to make the failure go away (CLAUDE.md §4).
+- Do not skip, `xfail`, loosen or delete a test to make the failure go away (CLAUDE.md §3.9).
 - Do not widen the investigation beyond the failure you were given.
 - Do not call something a flake. Either it reproduces, or you say it does not and why.
 - Do not return a patch you have not explained the mechanism for.

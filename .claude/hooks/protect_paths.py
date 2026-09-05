@@ -13,7 +13,7 @@ It covers two gaps that the repo's own tooling does not:
     startup. A hook matching both Edit and Write is the only mechanism that covers it.
   * pyproject.toml / uv.lock -- check-approval-labels.sh says of them, verbatim,
     "protected by CLAUDE.md section 2 but no label is named for them, so they are
-    deliberately NOT enforced here." CLAUDE.md section 5 calls a lockfile conflict
+    deliberately NOT enforced here." CLAUDE.md section 2 calls a lockfile conflict
     across parallel PRs the single most expensive merge failure in this repo.
 
 Decision is "ask", never "deny": a subagent cannot answer a prompt, and a block it
@@ -37,7 +37,7 @@ RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^benchmarks/(baseline\.json|tolerances\.yaml)$"), "approved:algorithm-change"),
     (re.compile(r"^data/(genetic_codes|codon_usage)/"), "approved:data-change"),
     (re.compile(r"^\.github/"), "approved:ci-change"),
-    (re.compile(r"^(pyproject\.toml|uv\.lock)$"), "NO LABEL EXISTS -- see CLAUDE.md section 5"),
+    (re.compile(r"^(pyproject\.toml|uv\.lock)$"), "NO LABEL EXISTS -- see CLAUDE.md section 2"),
     (re.compile(r"^\.claude/agent-memory/"), "reviewed agent memory"),
 ]
 
@@ -111,7 +111,7 @@ def main() -> int:
             if label.startswith("NO LABEL"):
                 reason = (
                     f"{rel} is protected by CLAUDE.md section 2, and no approved:* label "
-                    f"covers it -- CI will NOT stop this. Section 5: every dependency is "
+                    f"covers it -- CI will NOT stop this. Section 2: every dependency is "
                     f"already declared; a lockfile conflict across parallel PRs is the most "
                     f"expensive merge failure in this repo. Open an issue instead."
                 )
