@@ -107,24 +107,13 @@ jobs:
       - name: Guard the hook launchers
         run: .venv/bin/python .github/scripts/check-hook-commands.py
 
-      # The attestation matcher is one regex inside pre-pr-attest.yml, and it is
-      # the whole decision for whether a commit was reviewed. It has already
-      # shipped two matching bugs -- a trailing class that rejected every
-      # attestation with prose around it, and a leading `[ 	]*` that made the
-      # job's own indented help text a valid attestation when pasted. Both were
-      # caught by reading, which does not scale and did not catch them the first
-      # time. This drives the REAL jq program, extracted from the workflow, over
-      # fixtures. `jq` is preinstalled on ubuntu runners; the script exits 2
+      # `main-broken`'s suppression predicate is embedded bash/jq that no pytest
+      # can reach, and it decides whether a break on `main` is announced at all.
+      # Its false-positive half already cost five bogus issues in ten minutes
+      # (#136-#141). This drives the REAL jq program, extracted from this file,
+      # over those five payloads, and checks the shell guard around it
+      # structurally. `jq` is preinstalled on ubuntu runners; the script exits 2
       # rather than reporting a pass if it is ever absent.
-      - name: Test the attestation matcher
-        run: .venv/bin/python .github/scripts/test-attestation-matcher.py
-
-      # Same argument, one job over: `main-broken`'s suppression predicate is
-      # embedded bash/jq that no pytest can reach, and it decides whether a
-      # break on `main` is announced at all. Its false-positive half already
-      # cost five bogus issues in ten minutes (#136-#141). This drives the REAL
-      # jq program, extracted from this file, over those five payloads, and
-      # checks the shell guard around it structurally.
       - name: Test the main-broken predicate
         run: .venv/bin/python .github/scripts/test-main-broken-predicate.py
 

@@ -41,24 +41,23 @@ gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
   -F can_approve_pull_request_reviews=false >/dev/null
 echo "    default token read-only; Actions cannot approve PRs"
 
-# Fork pull requests must not run workflows unreviewed, and this became
-# load-bearing when `pre-pr-attest` was promoted to a required context.
+# Fork pull requests must not run workflows unreviewed. This guards
+# `required-checks`, which as of 2026-09-05 is the ONLY required context.
 #
 # WHY. A required status check is matched by CONTEXT NAME plus integration id,
 # and 15368 is the generic "GitHub Actions" app -- not this workflow, not this
 # job. A `pull_request`-triggered workflow runs the file FROM THE PULL REQUEST'S
 # OWN BRANCH. So a pull request that adds `.github/workflows/anything.yml` with a
-# job named `pre-pr-attest` (or `required-checks`) produces a second check run of
-# that exact name, from that exact app, on that exact SHA -- and it can be made
-# to succeed trivially. Nothing in check-workflow-gate.py sees it: that script
-# reads the workflows the repo already ships, not ones a pull request introduces.
+# job named `required-checks` produces a second check run of that exact name,
+# from that exact app, on that exact SHA -- and it can be made to succeed
+# trivially. Nothing in check-workflow-gate.py sees it: that script reads the
+# workflows the repo already ships, not ones a pull request introduces.
 #
 # GitHub's default here is `first_time_contributors`, which lets a RETURNING
 # outside contributor's workflows run unreviewed. `all_external_contributors`
 # requires a human to approve every fork run, which is what actually stands
-# between that name collision and a forged green. Note this is the pre-existing
-# exposure of `required-checks` too; promotion did not create it, it raised the
-# payoff.
+# between that name collision and a forged green. Dropping `pre-pr-attest` from
+# the ruleset narrowed the target but did not remove it.
 gh api -X PUT "repos/$REPO/actions/permissions/fork-pr-contributor-approval" \
   -f approval_policy=all_external_contributors >/dev/null
 echo "    every fork-PR workflow run needs human approval"

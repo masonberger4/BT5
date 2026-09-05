@@ -148,7 +148,7 @@ def check_protect_paths(cmds: list[tuple[str, str, str]], settings: dict[str, An
                 f"PreToolUse[{matcher}]: {PROTECT} must be launched --required. It is the "
                 f"only mechanical enforcement of CLAUDE.md section 2 for the Write tool "
                 f"and for pyproject.toml / uv.lock, and no CI job covers it -- "
-                f"claude-review grants no Edit/Write tool, so it never runs on a runner."
+                f"it is a local PreToolUse guard and never runs on a runner."
             )
             continue
         # Exact alternation membership, NOT a substring test: `WriteX`, `WriteFile` and

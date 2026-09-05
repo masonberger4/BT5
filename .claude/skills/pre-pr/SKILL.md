@@ -101,29 +101,16 @@ and `git diff HEAD` to `.claude/.pre-pr-marker` so the push gate knows this ran 
 this exact tree.
 
 This marker is **local only** — it is gitignored (`.gitignore:19`) and its digest is empty
-on a clean checkout, so it can never be CI's evidence. Step 10 is what makes this run
-visible off this machine.
+on a clean checkout, so it can never be CI's evidence. **Nothing outside this machine
+records that this chain ran.** The `pre-pr-attest` check that once made skipping visible
+was removed on 2026-09-05 (`docs/decisions/2026-09-05-remove-claude-usage-ci-checks.md`);
+running this chain is now discipline, not enforcement. That is the accepted cost — say in
+the PR that you ran it, and what it said.
 
 **9. PR.** Open it as a **draft** (CLAUDE.md §7 — drafts skip the expensive jobs, and CI
 capacity is the binding constraint: 20 slots, ~12 per Python PR, so at most 5 open
 non-draft PRs). Fill in `.github/pull_request_template.md`, including the **Scientific
 impact** section: say what changed about the sequences the app produces, or "none".
-
-**10. Attest, once the PR exists and the final push has landed.** Comment on the PR with
-the full 40-character SHA of the head being reviewed:
-
-```
-/pre-pr <head-sha>
-```
-
-The `pre-pr-attest` check reads that comment. **Attest last** — an attestation names one
-commit, and pushing again makes it stale on purpose, because a review of the previous tree
-says nothing about this one. Do not attest a SHA you have not just reviewed; the whole
-value of the check is that the claim is on the record and auditable.
-
-If a gate or a review came back blocking and you are pushing anyway, do **not** attest —
-say so in the PR instead and let the check stay red. Only the repo owner may waive it, with
-`/pre-pr-bypass <head-sha>`.
 
 ## Report
 
@@ -135,6 +122,5 @@ PROVENANCE   run | skipped (no Spec provenance changed)
 PAIRED TESTS ok | missing: <ids>
 MEMORY       clean | <files>
 LABELS       <labels needed>
-ATTESTED     <head-sha> | withheld: <why>
 VERDICT      READY (draft) | BLOCKED: <what>
 ```
