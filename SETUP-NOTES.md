@@ -143,7 +143,7 @@ Start conservative; promote only the agents that underperform. Signals:
 
 1. **`code-reviewer`'s `memory: project`.** Switch to `local` the first time
    `git status --porcelain | grep agent-memory` shows a memory file inside a lane PR's
-   diff, or the first conflict in it across two parallel branches — CLAUDE.md §5 names
+   diff, or the first conflict in it across two parallel branches — CLAUDE.md §2 names
    cross-PR conflicts as the most expensive failure here.
 2. **`gate-runner` at haiku/high.** The cheapest bet, resting on the weakest assumption:
    that `effort` is honored on haiku. `scripts/gates.sh` is the insurance, but the agent
@@ -166,7 +166,7 @@ Start conservative; promote only the agents that underperform. Signals:
   multi-turn work, re-invoke each turn.
 - **Overriding `Explore` changes what loads.** Built-in `Explore` and `Plan` skip the
   CLAUDE.md hierarchy; a project agent named `Explore` may not. That is part of why
-  CLAUDE.md is kept under 200 lines and why no `.claude/rules/` file is un-`paths:`ed.
+  CLAUDE.md is kept under 120 lines and why no `.claude/rules/` file is un-`paths:`ed.
 - **Cloud and web sessions may ignore these settings.** `CLAUDE_EFFORT` and
   `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` take precedence over `model`/`effortLevel`.
   These settings govern local CLI sessions.
