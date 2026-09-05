@@ -498,10 +498,12 @@ class TestCompleteness:
         or not, host tables shipped or not), so the same protection is expressed
         as a closed set of RECOGNISED sentences instead."""
         res = fast(backbone)
-        # BOTH lists. `provenance.degradations` is what `design()` assembles
-        # and `build_report` may add to the report's copy via
-        # `extra_degradations`, so scanning only provenance could leave a source
-        # uncovered -- in the test named for catching uncovered sources.
+        # BOTH lists. `provenance.degradations` is what `design()` assembles;
+        # the report's copy is scanned too so that a second source cannot slip
+        # past unremarked -- in the test named for catching uncovered sources.
+        # There is no second source today: `build_report` appends nothing of its
+        # own since the screening-burden line went, and `extra_degradations` has
+        # no caller. The union is the guard against that changing quietly.
         seen = set(res.result.provenance.degradations) | set(res.report.degradations)
         assert set(res.report.degradations) >= set(res.result.provenance.degradations)
         for degradation in seen:
@@ -649,7 +651,7 @@ class TestHostUsageResolvesThroughTheRuleSMap:
     Resolving through `c1_cai.CAI_REFERENCE_SET` is what keeps the sweep steering
     toward the same table C1 scores against. A second mapping here would be free
     to drift from it -- a namespace that overlaps the real one "by one key and by
-    coincidence" is the bug PR #53 fixed twice.
+    coincidence" is the bug PR #53 fixed twice (issue #54).
     """
 
     def test_every_host_resolves_the_way_the_rule_s_map_says(self) -> None:

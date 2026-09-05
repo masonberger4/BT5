@@ -28,17 +28,28 @@ PR #131 would have added IDT's published gBlocks figure, the last one missing. B
 `DEFAULT_VENDOR = "idt_gblocks"`, that single value would have switched the number on
 for every default-configuration run — the first time BT5 would have told a typical user
 a colony count. Reviewing that PR is what surfaced the scope question, and the answer
-made the PR moot. #131 is closed `not_planned`; #56, which asked for the figure, is
-closed the same way.
+made the PR moot. #131 is closed unmerged; #56, which asked for the figure, is closed
+`not_planned`.
 
 ### What changes for the user
 
 - The report no longer carries a "Synthesis screening" section.
-- **A default run is now `is_complete == True`.** It was permanently `False`: gBlocks
-  had no figure on file, so `build_report` appended a degradation on every default run
-  and `is_complete` reads `degradations`. BT5 was reporting itself incomplete over a
-  number it has now stopped trying to compute. Completeness is once again about whether
-  the configured *objectives* were evaluated, which is what the field is for.
+- **One forced source of incompleteness is gone. A default `design()` run is still
+  `is_complete == False`.** `build_report` used to append a degradation on *every*
+  default run, because `DEFAULT_VENDOR` is gBlocks, gBlocks had no figure on file, and
+  `is_complete` reads `degradations`. That is gone: `build_report` over a `DesignResult`
+  carrying no degradations now returns complete. A real `design()` run does not — it
+  still carries the unscreened biosecurity verdict and whatever else `design()` records,
+  which is why `tests/design/test_increment.py` continues to assert
+  `res.report.is_complete is False`. The change is that BT5 no longer reports itself
+  incomplete over a number it has stopped trying to compute; it is not that runs are now
+  complete.
+
+  *Corrected 2026-09-05, after this decision merged as #150.* The commit message and
+  #150's body both state the stronger claim — "a default run is now `is_complete ==
+  True`" — and that is wrong. It was verified against a hand-built `build_report()` call
+  rather than a `design()` run, which is exactly the distinction the sentence needed to
+  make.
 - Nothing about the designed sequences changes. No solver, rule, weight or ranking is
   touched; this removes a reporting line, not a design behaviour.
 
@@ -73,13 +84,20 @@ removes its only current use.
 
 ### Tests
 
-`packages/engine/tests/rules/test_vendor_error_free.py` is deleted whole — every test in
-it guarded the fidelity figures or the M3/M4 seam that carried them. In
+`packages/engine/tests/rules/test_vendor_error_free.py` is deleted whole. Every test in
+it guarded the fidelity figures or the M3/M4 seam that carried them, with **one
+exception worth naming**: `test_absent_is_named_in_the_about_block` guarded the
+`_about.policy` prose, which this decision deliberately keeps. That prose is therefore
+unpinned — nothing now fails if someone deletes the ABSENT definition. The policy text
+itself now says so, and says a future ABSENT entry must bring its own test. In
 `tests/score/test_report.py`, `TestScreeningBurden` and two further tests go the same
 way. This is not §4 suppression: the covered behaviour no longer exists. Two tests were
 kept and adapted rather than deleted, because they cover something that survives —
 `test_a_run_with_everything_evaluated_is_complete` (which named a vendor only to dodge
-the gBlocks degradation) and `test_no_degradation_arrives_unremarked` in
-`tests/design/test_increment.py`, whose closed set of recognised degradation sentences
-loses one entry and whose fragment check would otherwise fail against a sentence no
-module emits any more.
+the gBlocks degradation) and two guards in `tests/design/test_increment.py` that share one table.
+`DEGRADATION_SOURCES` loses its screening-burden entry, which
+`test_no_degradation_arrives_unremarked` reads as its closed set of recognised
+sentences; and `DEGRADATION_SOURCE_FILES` loses `score/report.py`, which
+`test_each_fragment_anchors_its_pattern_to_a_real_source_sentence` reads to check every
+fragment still appears in an emitting module. That second check is the one that would
+have failed outright, against a sentence no module emits any more.
