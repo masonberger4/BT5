@@ -25,16 +25,16 @@ fixture — never reach into their directory.
 
 ## 2. Protected paths
 
-`verify.py`, `core/**`, `tests/{contract,invariants,data_integrity}/**`, `benchmarks/`
-baselines, `data/{genetic_codes,codon_usage}/**` and `.github/**` each need a matching
-`approved:*` label. A PreToolUse hook asks before every such edit and names the label —
-trust the prompt, don't memorize the table. `pyproject.toml`/`uv.lock`: **never add a
-dependency**; on a lockfile conflict rebase and regenerate, never hand-merge.
+Each needs its `approved:*` label: `verify.py` and `tests/{invariants,data_integrity}/**` →
+`oracle-change`; `core/**` and `tests/contract/**` → `contract-change`; `benchmarks/`
+baselines → `algorithm-change`; `data/{genetic_codes,codon_usage}/**` → `data-change`;
+`.github/**` → `ci-change`. The edit hook says so too, but read-only reviewers never fire it.
+`pyproject.toml`/`uv.lock`: **never add a dependency**; on a lockfile conflict rebase and
+regenerate — never hand-merge it.
 
-`core/` is frozen. **MINOR** = a new type, a new defaulted field, a new enum member.
-**MAJOR** = a removal, rename, changed annotation/default/signature, a field losing its
-default, a new protocol method — needs an RFC and a deprecation shim. Use
-`/contract-change`; classification MUST precede regeneration.
+`core/` is frozen. **MINOR** = a new type, a defaulted field, an enum member. **MAJOR** = a
+removal, rename, changed annotation/default/signature, a field losing its default, a new
+protocol method — needs an RFC and a deprecation shim. `/contract-change`; classify FIRST.
 
 ## 3. Rules that are not negotiable
 
@@ -70,9 +70,9 @@ default, a new protocol method — needs an RFC and a deprecation shim. Use
 
 Branch from `main`. Squash only. Fill in the PR template, including "scientific impact" —
 what changed about the sequences the app produces, not just the code. Open as a **draft**
-until done: drafts skip the expensive CI jobs and CI capacity is the binding constraint
-(~5 open non-draft PRs max). Before pushing run `/pre-pr`. After a merge the stale ref needs
-`git remote prune origin` — `git fetch --prune origin main` prunes only `origin/main`.
+until done: drafts skip the expensive CI jobs, and CI capacity binds (~5 non-draft PRs max).
+Before pushing run `/pre-pr`. After a merge: `git remote prune origin` (NOT `--prune origin
+main`, which prunes only `origin/main`), then `git checkout -B <branch> origin/main`.
 
 **An agent may squash-merge its own PR once CI is green** — green means **both** required
 contexts on the PR's CURRENT head: `required-checks` **and** `pre-pr-attest`. Checking only
