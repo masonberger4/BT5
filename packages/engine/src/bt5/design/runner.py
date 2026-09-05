@@ -260,8 +260,8 @@ def _host_usage(host: HostId) -> tuple[CodonUsage | None, str | None]:
     another's set -- HEK293 uses the human one. A second mapping here would be a
     second answer to "which table is this host scored against", free to drift
     from the one C1 actually scores with: the sweep would steer toward one table
-    while the scorecard reported against another. `score/report.py`'s
-    `ERROR_FREE_BP` docstring records what that costs when it happens.
+    while the scorecard reported against another -- the same overlapping-
+    namespace bug PR #53 fixed twice.
 
     Absence is still a gap in BT5's data, not an error in the request, so it
     degrades the null from host-frequency to uniform-synonymous sampling and
@@ -660,7 +660,6 @@ def design(
         winner,
         translation_table_id=table_id,
         preset_id=preset_id or "",
-        vendor=vendors.keys[0],
         advisories=advisories,
     )
 

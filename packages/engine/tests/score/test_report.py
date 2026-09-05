@@ -8,19 +8,15 @@ silently dropped objective, no defaulted genetic code.
 
 from __future__ import annotations
 
-import math
 import re
 
 import pytest
 from bt5.core.result import Candidate, Conflict, DesignResult, ObjectiveScore, ScoreCard
 from bt5.core.types import Construct, Interval, Provenance, Segment, SegmentKind, Topology
-from bt5.rules.vendors import DEFAULT_VENDOR, PROFILES, orderable_keys
 from bt5.score.report import (
-    ERROR_FREE_BP,
     QcReport,
     build_report,
     render,
-    screening_burden,
 )
 
 CDS = "ATGAAACCCGGGTTTTAA"
@@ -57,92 +53,6 @@ def candidate(*scores: ObjectiveScore, label: str = "a") -> Candidate:
         scorecard=ScoreCard(scores=scores),
         design_hash="abc123def456",
     )
-
-
-class TestScreeningBurden:
-    def test_matches_the_published_formula(self) -> None:
-        b = screening_burden(1500, vendor="idt_eblocks")
-        assert b.error_free_bp == ERROR_FREE_BP["idt_eblocks"]
-        assert b.p_perfect == pytest.approx(math.exp(-1500 / 5000))
-
-    def test_colonies_reach_the_requested_confidence(self) -> None:
-        """The number is only useful if picking that many actually gets you there."""
-        for length in (300, 1500, 3000, 6000):
-            b = screening_burden(length, vendor="idt_eblocks")
-            reached = 1.0 - (1.0 - b.p_perfect) ** b.colonies_to_pick
-            assert reached >= b.confidence
-            one_fewer = 1.0 - (1.0 - b.p_perfect) ** (b.colonies_to_pick - 1)
-            if b.colonies_to_pick > 1:
-                assert one_fewer < b.confidence, "and it must not be more than needed"
-
-    def test_a_longer_construct_costs_more_picking(self) -> None:
-        short = screening_burden(1000, vendor="idt_eblocks")
-        long = screening_burden(4000, vendor="idt_eblocks")
-        assert long.colonies_to_pick > short.colonies_to_pick
-        assert long.p_perfect < short.p_perfect
-
-    def test_the_vendor_changes_the_answer(self) -> None:
-        """Twist's error-free length is longer, so the same insert needs less
-        screening. Reporting one vendor's number under another's name is the
-        kind of quiet error a lab pays for in plates."""
-        twist = screening_burden(6000, vendor="twist_gene_fragment")
-        eblocks = screening_burden(6000, vendor="idt_eblocks")
-        assert twist is not None
-        assert eblocks is not None
-        assert twist.colonies_to_pick < eblocks.colonies_to_pick
-
-    def test_an_unknown_vendor_is_refused_rather_than_defaulted(self) -> None:
-        with pytest.raises(ValueError, match="unknown vendor 'acme'"):
-            screening_burden(1000, vendor="acme")
-
-    def test_a_real_vendor_with_no_figure_on_file_returns_none_rather_than_raising(
-        self,
-    ) -> None:
-        """Two different failures, and collapsing them is the bug this guards.
-
-        "acme" is nobody's product and that is a caller error. `idt_gblocks` IS
-        orderable -- it is BT5's own default -- and simply has no published
-        error-free length in this repo. Raising for it would make a data gap
-        look like a bad request; answering with eBlocks' 5000 would be worse.
-        """
-        assert "idt_gblocks" in PROFILES
-        assert "idt_gblocks" not in ERROR_FREE_BP
-        assert screening_burden(1000, vendor="idt_gblocks") is None
-
-    def test_no_vendor_chosen_is_refused_rather_than_answered_with_a_shrug(self) -> None:
-        """`none` is not a vendor whose fidelity we happen to lack.
-
-        How many colonies to pick is a question only a vendor can answer, so
-        returning None for `none` would read as "this product has no figure on
-        file" when the truth is that nobody picked a product. Same refusal E1
-        and E9 make, for the same reason.
-        """
-        with pytest.raises(ValueError, match="not orderable from anyone"):
-            screening_burden(1000, vendor="none")
-
-    def test_no_fourth_vendor_namespace(self) -> None:
-        """Every key here must name a real orderable configuration.
-
-        This table used to be keyed on "twist" and "idt_eblocks", overlapping
-        the real registry by one key and by accident, so screening_burden raised
-        for BT5's own DEFAULT_VENDOR and accepted "twist", which names nothing
-        anyone can order. That is the third instance of the bug PR #53 fixed
-        twice. See issue #54.
-        """
-        assert set(ERROR_FREE_BP) <= set(orderable_keys())
-
-    def test_the_vendor_numbers_carry_a_verification_date(self) -> None:
-        """Vendor figures drift -- Twist moved its homopolymer limit from 14 to
-        30 bp between 2023 and 2026 -- so an undated one is unmaintainable."""
-        b = screening_burden(1000, vendor="idt_eblocks")
-        assert b is not None
-        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", b.last_verified)
-
-    def test_rejects_nonsense_inputs(self) -> None:
-        with pytest.raises(ValueError, match="length must be positive"):
-            screening_burden(0)
-        with pytest.raises(ValueError, match="confidence must be in"):
-            screening_burden(1000, confidence=1.0)
 
 
 class TestBuildReport:
@@ -196,31 +106,17 @@ class TestBuildReport:
         assert not report.is_complete
 
     def test_a_run_with_everything_evaluated_is_complete(self) -> None:
-        """Vendor named explicitly: completeness now includes the screening line,
-        and BT5's default vendor has no error-free length on file."""
-        result = self.result()
-        report = build_report(
-            result, result.candidates[0], translation_table_id=1, vendor="idt_eblocks"
-        )
-        assert report.is_complete
+        """Nothing unavailable and nothing degraded means complete.
 
-    def test_a_vendor_with_no_error_free_length_degrades_rather_than_going_quiet(
-        self,
-    ) -> None:
-        """The default vendor is gBlocks and BT5 has no fidelity figure for it.
-
-        The report must SAY that, not merely omit the line -- a report missing
-        its screening burden looks exactly like one where nobody asked for it.
-        So `burden` is None, a degradation names the vendor, and `is_complete`
-        is False until the number exists. That is deliberate pressure: the
-        alternative is answering with eBlocks' number under gBlocks' name.
+        This needed a vendor named explicitly while the report computed a
+        screening burden: BT5's own default had no error-free length on file, so
+        every default run carried a degradation and no run was ever complete
+        without overriding the vendor. The report no longer sizes colony
+        picking, so completeness is once again about the objectives alone.
         """
         result = self.result()
         report = build_report(result, result.candidates[0], translation_table_id=1)
-        assert report.burden is None
-        assert not report.is_complete
-        assert any("no published error-free length" in d for d in report.degradations)
-        assert any(DEFAULT_VENDOR in d for d in report.degradations)
+        assert report.is_complete
 
 
 class TestRender:
@@ -291,11 +187,6 @@ class TestRender:
         text = render(self.report())
         assert "Not fixable by codon choice" in text
         assert "uAUG at 812" in text
-
-    def test_shows_the_screening_burden_as_an_instruction(self) -> None:
-        text = render(self.report())
-        assert "pick" in text
-        assert "colonies" in text
 
     def test_the_strain_protocol_keeps_its_caveat(self) -> None:
         assert "covers the long repeats only" in render(self.report())

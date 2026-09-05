@@ -47,8 +47,10 @@ the refspec, so that form prunes only `origin/main` (CLAUDE.md §7a).
    islands).
 4. **E3 — windowed GC** bands at 50/100 bp.
 5. **F5 — the AT-window rule.**
-6. **Issue #56** — no error-free length on file for gBlocks, so the default report
-   cannot state a screening burden. `rules/_provenance.json` is your file.
+6. ~~**Issue #56** — no error-free length on file for gBlocks.~~ Closed `not_planned`
+   on 2026-09-05: BT5 no longer states a screening burden at all, so there is no figure
+   to find. The `error_free_bp` block is gone from `rules/_provenance.json`.
+   `docs/decisions/2026-09-05-no-colony-picking-guidance.md`.
 
 Take them one PR at a time if large; every rule ships with its paired test in the same
 PR.

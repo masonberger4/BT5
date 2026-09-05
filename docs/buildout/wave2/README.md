@@ -276,5 +276,8 @@ Stated so no session wanders into it:
   `baseline.json` and `tolerances.yaml`. Creating it is an owner decision under
   `approved:algorithm-change`, and building a baseline from numbers about to move twice is
   wasted work. A Wave 3 decision, taken after the ranking stops moving.
-- **#56** — no published IDT error-free length for gBlocks. Only the owner can close it, by
-  finding the figure. Not a code task.
+- **#56** — closed `not_planned` on 2026-09-05. It asked for IDT's published error-free length
+  for gBlocks, the last figure missing from the screening-burden calculation. The owner's call
+  was that the calculation itself is out of scope: BT5 does not tell the user how many colonies
+  to pick. The feature is gone, so the figure is not wanted — do NOT go looking for it.
+  `docs/decisions/2026-09-05-no-colony-picking-guidance.md`.
