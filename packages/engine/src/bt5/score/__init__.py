@@ -61,13 +61,9 @@ from bt5.score.presets import (
     resolve,
 )
 from bt5.score.report import (
-    DEFAULT_CONFIDENCE,
-    ERROR_FREE_BP,
     QcReport,
-    ScreeningBurden,
     build_report,
     render,
-    screening_burden,
 )
 from bt5.score.steering import (
     REPEAT_STEERING_PENALTY,
@@ -89,13 +85,9 @@ __all__ = [
     "PLATE_SIZE",
     "IDT_HEADERS",
     "DEFAULT_PLATE_NAME",
-    "screening_burden",
     "render",
     "build_report",
-    "ScreeningBurden",
     "QcReport",
-    "ERROR_FREE_BP",
-    "DEFAULT_CONFIDENCE",
     "AAV",
     "BACTERIAL",
     "DEFAULT_NULL_N",

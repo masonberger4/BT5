@@ -42,12 +42,6 @@
       "source": "docs/design/vendor-gc-calibration.md",
       "measured_on": "2026-08-28",
       "notes": "18-probe ladder through the Twist order form: <=25% Not Accepted, 30-80% all Standard, including 80%. Floor 0.28 splits the refused 25% from the accepted 30%."
-    },
-    "error_free_bp": {
-      "status": "PUBLISHED",
-      "value": 7500,
-      "source": "https://www.twistbioscience.com/faq/gene-synthesis",
-      "notes": "Mean bp per error, consumed by score/report.py's ERROR_FREE_BP as P(perfect clone) = exp(-length / error_free_bp). Recorded here because a fidelity figure is a vendor number like any other and the reader of the code needs its source; the value itself lives in score/, which is M3's lane."
     }
   },
   "twist_gene_fragment_adapter_on": {
@@ -87,12 +81,6 @@
         0.28,
         0.8
       ]
-    },
-    "error_free_bp": {
-      "status": "INHERITED",
-      "from": "twist_gene_fragment",
-      "value": 7500,
-      "notes": "Inheritance within a single PRODUCT, not merely within a vendor: adapter-on is a checkout option on the same synthesis process. That is the safest form of the inheritance vendors.py already permits for GC bands and run limits."
     }
   },
   "idt_gblocks": {
@@ -131,15 +119,6 @@
       "source": "docs/design/vendor-gc-calibration.md",
       "measured_on": "2026-08-28",
       "notes": "18-probe ladder through the gBlocks plate-entry complexity checker: <=25% Denied, 30-65% clean, 70-75% Accepted-Moderate (an acceptance with a surcharge), 80% Denied. The ceiling 0.77 is the solved Denied threshold from the penalty line score = 1.40*GC%-83.8, fit on three exact hits. IDT's own STATED target is 32-62%, which is a soft scored preference and not where they refuse -- the measurement is what is encoded."
-    },
-    "error_free_bp": {
-      "status": "ABSENT",
-      "value": null,
-      "issue": "https://github.com/masonberger4/BT5/issues/56",
-      "blocks": "The DEFAULT report's screening burden. idt_gblocks is DEFAULT_VENDOR, so with no figure on file score/report.py's `screening_burden` returns None and build_report emits a degradation instead of 'pick N colonies'. The absence is therefore visible to the user rather than silent, which is the correct behaviour and not a bug to route around.",
-      "rejected": "TWO ways of filling this were considered and both are wrong. (1) Inventing a figure. (2) The subtle one: inheriting idt_eblocks' 5000 across IDT's two product lines. A fidelity number comes out of a MANUFACTURING PROCESS, not a design guideline, and eBlocks and gBlocks are different processes -- so this would be one vendor's number wearing another product's name, the quiet error score/report.py's own test_the_vendor_changes_the_answer says a lab pays for in plates. Inheritance in this file is within a vendor AND, for a fidelity figure, must be within a product.",
-      "to_close": "A published gBlocks error rate or error-free length from an IDT page BT5 can link, or a measured figure. Verified 2026-09-02: the gBlocks product page https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/gblocks-gene-fragments could not be retrieved (redirect loop), so the absence stands unchanged rather than being closed from memory.",
-      "notes": "Recorded as a first-class ABSENT entry rather than left out. A missing key is indistinguishable from one nobody considered, and score/report.py:60-68 already carries the reasoning in a code comment in another lane -- this file is where the provenance of a vendor number belongs."
     }
   },
   "idt_eblocks": {
@@ -176,12 +155,6 @@
         0.77
       ],
       "notes": "The calibration ladder was run through gBlocks plate entry only, so this is one IDT product's measurement applied to another. Inheriting inside a vendor is the policy; nothing is carried across one, because the ladder's finding IS that Twist ships 80% as Standard where IDT denies it."
-    },
-    "error_free_bp": {
-      "status": "PUBLISHED",
-      "value": 5000,
-      "source": "https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/eblocks-gene-fragments",
-      "notes": "IDT's eBlocks figure. It must NOT be carried across to gBlocks -- see that profile's own error_free_bp entry."
     }
   },
   "_dropped": {

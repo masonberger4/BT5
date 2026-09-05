@@ -246,8 +246,10 @@ plus the short design hash (so the tube label traces back to the run that produc
 as bare ACGT. Keep a plain `Name,Sequence` CSV path for non-plate/tube orders and other vendors.
 Vendor profiles live in a data file with a `last_verified` date, since these templates drift.
 
-Screening burden is reported alongside: P(perfect clone) ≈ exp(−L/E), E ≈ 7,500 bp (Twist) or
-5,000 bp (IDT eBlocks), so the report states how many colonies to pick for 95% confidence.
+BT5 does NOT report a screening burden. P(perfect clone) ≈ exp(−L/E) is real and E11 in the
+brief records it, but how many colonies to pick is bench protocol rather than sequence design,
+and it was the one number in the report BT5 computed for the user's bench rather than for the
+construct. Removed 2026-09-05 — `docs/decisions/2026-09-05-no-colony-picking-guidance.md`.
 
 ---
 

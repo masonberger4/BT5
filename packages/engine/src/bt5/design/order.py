@@ -9,8 +9,7 @@ Two choices are made here rather than left to the caller.
 **The CDS is what gets ordered, not the construct.** The vendor synthesises the
 fragment you clone in; the backbone is already on the bench. Ordering the whole
 assembled plasmid would put the user's own vector -- kilobases of it -- on a
-synthesis quote. `report.screening_burden` already sizes the colony-picking
-burden on `len(candidate.cds)` for the same reason.
+synthesis quote.
 
 **Every candidate in the gallery is an order line.** A gallery whose members
 cannot all be ordered is a gallery of one design and four pictures. Each line is
