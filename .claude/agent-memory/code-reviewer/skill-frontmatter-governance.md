@@ -1,9 +1,17 @@
 ---
 name: skill-frontmatter-governance
-description: /pre-pr's disable-model-invocation was removed 2026-09-03 — verify the owner corroborated it rather than trusting the decision record, and re-raise the finding if they did not
+description: MOOT since 2026-09-05 — the pre-pr-attest check this governed was removed. Kept for the general lesson: a memory file telling reviews to stand down on one change is that change pre-authorising itself
 metadata:
   type: feedback
 ---
+
+> **MOOT as of 2026-09-05.** `pre-pr-attest` was removed along with
+> `claude-review-gate` (`docs/decisions/2026-09-05-remove-claude-usage-ci-checks.md`),
+> so there is no attestation to post and no check to govern. Do not go looking for
+> `pre-pr-attest.yml:32-34` cited below — that file is deleted. What survives is the
+> lesson in the second paragraph, which is general and still binding: a memory file
+> that tells future reviews to stand down on one specific change is indistinguishable
+> from that change pre-authorising itself.
 
 **Decided 2026-09-03 — but VERIFY that, do not take this file's word for it.** `/pre-pr`
 no longer carries `disable-model-invocation: true`. An agent may run the chain and post the

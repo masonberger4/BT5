@@ -21,12 +21,12 @@ deliberate and is what these fixtures pin:
     a cancellation AT the tip   -> files (nothing later will cover it)
     a cancellation, not the tip -> suppressed (superseded)
 
-THE PROGRAM UNDER TEST IS EXTRACTED FROM THE WORKFLOW, NOT COPIED HERE, for
-the reason `test-attestation-matcher.py` gives at length: a test that restates
-the predicate tests the restatement, which is how that job's second matching
-bug shipped. The jq program is pulled out of ci.yml and run through the real
-`jq`, and the surrounding shell guard is checked structurally in the same file
-it lives in.
+THE PROGRAM UNDER TEST IS EXTRACTED FROM THE WORKFLOW, NOT COPIED HERE: a test
+that restates the predicate tests the restatement, and goes on passing while the
+workflow's real copy drifts away from it. That is how the sibling attestation
+matcher shipped two matching bugs before it was retired. The jq program is pulled
+out of ci.yml and run through the real `jq`, and the surrounding shell guard is
+checked structurally in the same file it lives in.
 
 Run by ci.yml's `python-quality` job, which is in `required-checks.needs`.
 Requires `jq` (preinstalled on GitHub's ubuntu runners); exits 2 if it is
