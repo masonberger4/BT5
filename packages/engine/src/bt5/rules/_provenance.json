@@ -133,13 +133,13 @@
       "notes": "18-probe ladder through the gBlocks plate-entry complexity checker: <=25% Denied, 30-65% clean, 70-75% Accepted-Moderate (an acceptance with a surcharge), 80% Denied. The ceiling 0.77 is the solved Denied threshold from the penalty line score = 1.40*GC%-83.8, fit on three exact hits. IDT's own STATED target is 32-62%, which is a soft scored preference and not where they refuse -- the measurement is what is encoded."
     },
     "error_free_bp": {
-      "status": "ABSENT",
-      "value": null,
-      "issue": "https://github.com/masonberger4/BT5/issues/56",
-      "blocks": "The DEFAULT report's screening burden. idt_gblocks is DEFAULT_VENDOR, so with no figure on file score/report.py's `screening_burden` returns None and build_report emits a degradation instead of 'pick N colonies'. The absence is therefore visible to the user rather than silent, which is the correct behaviour and not a bug to route around.",
-      "rejected": "TWO ways of filling this were considered and both are wrong. (1) Inventing a figure. (2) The subtle one: inheriting idt_eblocks' 5000 across IDT's two product lines. A fidelity number comes out of a MANUFACTURING PROCESS, not a design guideline, and eBlocks and gBlocks are different processes -- so this would be one vendor's number wearing another product's name, the quiet error score/report.py's own test_the_vendor_changes_the_answer says a lab pays for in plates. Inheritance in this file is within a vendor AND, for a fidelity figure, must be within a product.",
-      "to_close": "A published gBlocks error rate or error-free length from an IDT page BT5 can link, or a measured figure. Verified 2026-09-02: the gBlocks product page https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/gblocks-gene-fragments could not be retrieved (redirect loop), so the absence stands unchanged rather than being closed from memory.",
-      "notes": "Recorded as a first-class ABSENT entry rather than left out. A missing key is indistinguishable from one nobody considered, and score/report.py:60-68 already carries the reasoning in a code comment in another lane -- this file is where the provenance of a vendor number belongs."
+      "status": "PUBLISHED",
+      "value": 5000,
+      "source": "https://www.idtdna.com/pages/products/genes-and-gene-fragments/double-stranded-dna-fragments/gblocks-gene-fragments",
+      "retrieved": "2026-09-04",
+      "quote": "gBlocks Gene Fragments are double-stranded DNA fragments 125-3000 bp in length with a median error rate of less than 1:5000.",
+      "closes": "https://github.com/masonberger4/BT5/issues/56",
+      "notes": "INDEPENDENTLY PUBLISHED FOR gBLOCKS, NOT INHERITED. idt_eblocks carries the same 5000, and that coincidence is IDT's rather than ours: the gBlocks product page states both figures side by side in one comparison table (gBlocks 1:5000 / length 125-3000 bp; eBlocks 1:5000 / length 300-1500 bp), and the length column is what identifies which is which -- 125-3000 is this profile's own length_bp. The source above is the gBlocks page and must never be re-pointed at the eBlocks URL. The rejected-inheritance reasoning in the previous ABSENT entry still stands and is why this is PUBLISHED rather than INHERITED. NOT gBlocks HiFi, which is a separate product on the same page (1000-3000 bp, NGS sequence-verified, 'median error rate of less than 1:12,000'); 12000 must never be applied to this profile. MEDIAN, AND A BOUND: IDT publishes 'less than 1:5000' as a median while report.py's exp(-L/E) wants a mean, so reading one as the other is an interpretation -- the same one idt_eblocks already makes -- and 'less than' puts 5000 at the conservative end, over-estimating colonies to pick, which is the safe direction for a bench instruction. RETRIEVAL: the 2026-09-02 attempt recorded here failed on a redirect loop and the absence was correctly left standing rather than closed from memory. The page returns HTTP 200 to a client that follows redirects with a cookie jar."
     }
   },
   "idt_eblocks": {
