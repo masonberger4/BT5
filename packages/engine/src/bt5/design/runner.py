@@ -261,7 +261,7 @@ def _host_usage(host: HostId) -> tuple[CodonUsage | None, str | None]:
     second answer to "which table is this host scored against", free to drift
     from the one C1 actually scores with: the sweep would steer toward one table
     while the scorecard reported against another -- the same overlapping-
-    namespace bug PR #53 fixed twice.
+    namespace bug PR #53 fixed twice (issue #54).
 
     Absence is still a gap in BT5's data, not an error in the request, so it
     degrades the null from host-frequency to uniform-synonymous sampling and
