@@ -14,7 +14,7 @@ the posture.
 
 BT5's output is already the textbook method for evading nucleotide-homology screening.
 Constraining the k-mer index to the assembled construct is the only thing that keeps it
-from being a general-purpose evasion tool. CLAUDE.md §9 therefore bans two things
+from being a general-purpose evasion tool. CLAUDE.md §3.11 therefore bans two things
 outright: any "minimize identity to a reference sequence" objective, and any `KmerIndex`
 accepting an external database.
 
@@ -67,7 +67,7 @@ BLOCKING
   kmers.py:158  ConstructKmerIndex.of gains `ref_path: str | None = None`. The frozen
                 Protocol in core/services.py is unchanged, so
                 test_kmer_index_takes_no_external_database still passes — but this is
-                exactly the external-database constructor CLAUDE.md §9 bans.
+                exactly the external-database constructor CLAUDE.md §3.11 bans.
 CONCERNS
   <one line each>
 CLEAR

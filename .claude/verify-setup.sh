@@ -166,13 +166,29 @@ elif grep -rn --include='*.md' -E '^effort: *ultracode' .claude/agents .claude/s
 else ok "no agent or skill declares an invalid effort"; fi
 
 echo "== CLAUDE.md =="
+# CLAUDE.md is loaded in full on every turn, so its length is a per-turn cost. The
+# budget is 120, not 200: the file was cut to 100 lines deliberately, and a ceiling
+# with 100 lines of headroom cannot notice it creeping back.
 L=$(wc -l < CLAUDE.md)
-[ "$L" -lt 200 ] && ok "CLAUDE.md $L lines (< 200)" || bad "CLAUDE.md $L lines (>= 200)"
-N=$(sed -n '/## 3\./,/## 4\./p' CLAUDE.md | grep -cE '^[0-9]\. \*\*')
-[ "$N" -eq 7 ] && ok "all 7 correctness statements present" || bad "only $N of 7 correctness statements"
-for s in "## Stack" "## Delegation" "## Compact instructions"; do
-  grep -q "^$s" CLAUDE.md && ok "$s present" || bad "$s missing"
-done
+[ "$L" -le 120 ] && ok "CLAUDE.md $L lines (<= 120)" || bad "CLAUDE.md $L lines (> 120)"
+# `[0-9]+`, not `[0-9]`: section 3 passed ten items when suppression and the never-list
+# were folded into it, and a single-digit class silently stops counting at item 9 --
+# it reports a WRONG number rather than failing to match, which is the harder bug to see.
+N=$(sed -n '/^## 3\./,/^## 4\./p' CLAUDE.md | grep -cE '^[0-9]+\. \*\*')
+[ "$N" -eq 12 ] && ok "all 12 non-negotiable rules present" || bad "only $N of 12 non-negotiable rules"
+# Anchors, not headings. Two of these used to be `##` sections and are now folded into
+# other sections; what must not vanish is the RULE, so match the rule's own text.
+while IFS='|' read -r pat label; do
+  grep -qE "$pat" CLAUDE.md && ok "$label present" || bad "$label missing"
+done <<'ANCHORS'
+^## 1\. Stay in your lane|lane ownership
+^## 2\. Protected paths|protected paths
+^## 3\. Rules that are not negotiable|non-negotiable rules
+^## 4\. Branching, PRs and merging|branching and merging
+^## 5\. Context management|delegation and context
+[Ee]very command uses .*[.]venv/bin|the .venv/bin invocation rule
+\*\*Compaction must preserve:\*\*|the compaction checklist
+ANCHORS
 
 echo
 [ "$FAIL" -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"

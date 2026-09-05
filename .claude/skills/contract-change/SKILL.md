@@ -56,7 +56,7 @@ a changed signature, a new protocol method.
 
 A fixture records that a value built under the old contract still constructs. Re-recording
 it does not make an old caller work — it only stops recording that it doesn't. Same rule
-as CLAUDE.md §4.
+as CLAUDE.md §3.9.
 
 ## The direction that catches people
 

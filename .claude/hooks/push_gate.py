@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse: ask before pushing a tree /pre-pr has not gated.
 
-CI capacity is this repo's binding constraint -- CLAUDE.md section 7: 20 concurrent job
+CI capacity is this repo's binding constraint -- CLAUDE.md section 4: 20 concurrent job
 slots, ~12 per Python PR, so at most 5 open non-draft pull requests. Pushing a red PR is
 therefore the most expensive mistake available here, and it is a scheduling cost the
 model cannot observe from inside a turn.
@@ -102,7 +102,7 @@ def main() -> int:
                 "permissionDecision": "ask",
                 "permissionDecisionReason": (
                     f"/pre-pr {why}. CI capacity is the binding constraint here "
-                    f"(CLAUDE.md section 7: 20 slots, ~12 jobs per Python PR, at most 5 open "
+                    f"(CLAUDE.md section 4: 20 slots, ~12 jobs per Python PR, at most 5 open "
                     f"non-draft PRs), so a red push is expensive. Run /pre-pr first, or "
                     f"approve to push anyway."
                 ),

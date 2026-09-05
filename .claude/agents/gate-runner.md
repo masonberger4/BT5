@@ -23,7 +23,7 @@ test -x .venv/bin/python || -> ENV=MISSING
 
 On `MISSING` or `INCOMPLETE`, **return immediately**. Report the state and name
 `/bootstrap`. Do **not** run `uv pip install` yourself: it is a state change that takes
-minutes, and CLAUDE.md §5 makes dependency events a human decision.
+minutes, and CLAUDE.md §2 makes dependency events a human decision.
 
 ## Phase 1 — the gates
 

@@ -23,7 +23,7 @@ changed, plus enough surrounding context to judge it. Nothing else.
 2. **Protected paths (§2).** Does any changed path need an `approved:*` label?
    `verify.py`, `core/**`, `tests/contract/**`, `tests/invariants/**`,
    `tests/data_integrity/**`, `data/**`, `.github/**`, `benchmarks/**`. Say which label.
-3. **The seven correctness rules (§3).** In particular, for anything in this diff:
+3. **The correctness rules (§3).** In particular, for anything in this diff:
    an explicit genetic-code table, never defaulted; no emitted codon that is also a stop
    in the target table; rules taking a `Construct`, never a bare string; forward motifs
    in `LatticeTerms.forbidden` rather than a hand-rolled reverse-strand scan, and
@@ -31,11 +31,11 @@ changed, plus enough surrounding context to judge it. Nothing else.
    hard constraints never carrying an objective weight; `RepairPolicy.FIXED_POINT`
    wherever a repair can create new instances of what it removes; `np.random.default_rng(seed)`
    and never global RNG state.
-4. **Suppression (§4).** Any test skipped, `xfail`ed, loosened, or deleted? Any
+4. **Suppression (§3.9).** Any test skipped, `xfail`ed, loosened, or deleted? Any
    Hypothesis property weakened? Any snapshot regenerated instead of fixed? These are
    never acceptable — flag them as blocking regardless of the reason given.
-5. **Dependencies (§5).** Any change to `pyproject.toml` or a lockfile? Blocking.
-6. **The never-list (§9).** A `paths:` filter on a workflow owning a required check; a
+5. **Dependencies (§2).** Any change to `pyproject.toml` or a lockfile? Blocking.
+6. **The never-list (§3.10–3.12).** A `paths:` filter on a workflow owning a required check; a
    CI job not added to `required-checks.needs`; an identity-minimisation objective; a
    `KmerIndex` reaching an external database; any reported expression level, titer,
    yield or fold-improvement.
