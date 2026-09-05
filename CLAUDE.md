@@ -74,10 +74,12 @@ until done: drafts skip the expensive CI jobs, and CI capacity binds (~5 non-dra
 Before pushing run `/pre-pr`. After a merge: `git remote prune origin` (NOT `--prune origin
 main`, which prunes only `origin/main`), then `git checkout -B <branch> origin/main`.
 
-**An agent may squash-merge its own PR once CI is green** — green means **both** required
-contexts on the PR's CURRENT head: `required-checks` **and** `pre-pr-attest`. Checking only
-the first is the mistake this sentence exists to prevent; the merge box then refuses with a
-bare `required_status_checks` failure. Green is necessary, not sufficient — four things go
+**An agent may squash-merge its own PR once CI is green** — green means the ONE required
+context on the PR's CURRENT head: `required-checks`. `pre-pr-attest` was a second required
+context until 2026-09-05, when it and `claude-review-gate` went for spending Claude usage on
+every push (`docs/decisions/2026-09-05-remove-claude-usage-ci-checks.md`). Nothing now proves
+`/pre-pr` ran against the commit being merged, so the line above is discipline, not a gate,
+and skipping it is invisible again. Green is necessary, not sufficient — four things go
 to the owner instead: an `approved:*` label on a §2 path (the label signs off the change, not
 the merge); a recorded pre-existing bug (§3.9); a non-"none" scientific impact or any change
 to what the app REFUSES to build; an unresolved review thread. Say in the PR why it qualified.

@@ -170,10 +170,6 @@ DEGRADATION_SOURCES: dict[str, tuple[str, str]] = {
         "forbidden motif TCTAGA carried by the backbone, excluded from enforcement",
         " carried by the backbone, excluded from enforcement",
     ),
-    r"screening burden unavailable:": (
-        "screening burden unavailable: no published error-free length on file for x",
-        "screening burden unavailable: no published error-free length on file ",
-    ),
 }
 
 KNOWN_DEGRADATIONS = tuple(DEGRADATION_SOURCES)
@@ -195,7 +191,6 @@ def _assert_recognised(degradation: str) -> None:
 #: The modules that emit a degradation sentence.
 DEGRADATION_SOURCE_FILES = (
     "design/runner.py",
-    "score/report.py",
     "structure/vienna.py",
 )
 
@@ -503,9 +498,9 @@ class TestCompleteness:
         or not, host tables shipped or not), so the same protection is expressed
         as a closed set of RECOGNISED sentences instead."""
         res = fast(backbone)
-        # BOTH lists. `provenance.degradations` is what `design()` assembles;
-        # `build_report` appends its own (the screening-burden line) to the
-        # report's copy, so scanning only provenance leaves a whole source
+        # BOTH lists. `provenance.degradations` is what `design()` assembles
+        # and `build_report` may add to the report's copy via
+        # `extra_degradations`, so scanning only provenance could leave a source
         # uncovered -- in the test named for catching uncovered sources.
         seen = set(res.result.provenance.degradations) | set(res.report.degradations)
         assert set(res.report.degradations) >= set(res.result.provenance.degradations)
@@ -653,9 +648,8 @@ class TestHostUsageResolvesThroughTheRuleSMap:
 
     Resolving through `c1_cai.CAI_REFERENCE_SET` is what keeps the sweep steering
     toward the same table C1 scores against. A second mapping here would be free
-    to drift from it, and `score/report.py`'s `ERROR_FREE_BP` docstring records
-    what a namespace that overlaps the real one "by one key and by coincidence"
-    costs.
+    to drift from it -- a namespace that overlaps the real one "by one key and by
+    coincidence" is the bug PR #53 fixed twice.
     """
 
     def test_every_host_resolves_the_way_the_rule_s_map_says(self) -> None:

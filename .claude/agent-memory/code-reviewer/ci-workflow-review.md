@@ -5,6 +5,10 @@ metadata:
   type: project
 ---
 
+> **Note, 2026-09-05.** `pre-pr-attest.yml` and `claude-review.yml` were deleted
+> (`docs/decisions/2026-09-05-remove-claude-usage-ci-checks.md`). Findings below that
+> cite line numbers in those files are historical record, not live references.
+
 Seen reviewing PR #104 (branch claude/github-ci-checks-2969e5, 2026-09-03), fixing the
 `pre-pr-attest` re-arm no-op (issue_comment runs are default-branch runs, so a check
 posted from one never lands on a PR head).

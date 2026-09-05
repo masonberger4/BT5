@@ -22,8 +22,8 @@
 # guaranteed on the Linux web container. `python` is absent from many Linux images, and
 # on Windows it works only by PATH ordering (a second, dead WindowsApps `python` stub
 # sits one entry behind the good one). `py` exists only on Windows. `.venv/bin/python`
-# is absent from a fresh checkout and from the claude-review CI job, which runs no
-# bootstrap, and `uv venv` never creates `bin/python3` on Windows at all. Hence: probe
+# is absent from a fresh checkout and from any CI job that runs no bootstrap, and
+# `uv venv` never creates `bin/python3` on Windows at all. Hence: probe
 # at hook-run time, ordered for speed, correct regardless of order.
 #
 # TIERS. The tier is a property of the REGISTRATION SITE, not of the script.
