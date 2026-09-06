@@ -374,6 +374,22 @@ class CrypticTranscription:
         The solver closes these under reverse complement at automaton
         construction, so `ATTATA` also removes sense-strand `TATAAT` -- argued in
         the module docstring, and kept.
+
+        DO NOT "SIMPLIFY" THE FOUR EXTENDED -10 EXPANSIONS AWAY. Every
+        `TGnTATAAT` contains `TATAAT` and every revcomp `ATTATAnCA` contains
+        `ATTATA`, so as a SET they look redundant -- and they are not, because
+        `design/catalog.py:57-84::partition_forbidden` filters PER PATTERN and
+        drops any motif the immutable backbone already carries. Both shipped
+        lentiviral backbones carry `ATTATA` and `TATACT`, so on a real design
+        those two are dropped as carried and the four 9-mers are the ONLY D5
+        patterns that reach the automaton and the I6 oracle. Declaring just the
+        6-mers makes this rule contribute nothing at Tier A while still claiming
+        HARD_LATTICE. Measured on `real_lenti_pFTMGW_EF177827.gb`:
+
+            expanded  usable=('TGATATAAT','TGCTATAAT','TGGTATAAT','TGTTATAAT')
+            narrowed  usable=()
+
+        Pinned by `test_the_expansions_are_what_survives_partitioning`.
         """
         return LatticeTerms(
             forbidden=(ANTISENSE_MINUS_10, *EXTENDED_MINUS_10_PATTERNS, SIGMA38_MINUS_10)

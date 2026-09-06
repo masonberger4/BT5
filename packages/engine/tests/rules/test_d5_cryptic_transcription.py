@@ -12,12 +12,20 @@ explicitly rather than left to a happy path.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from bt5.core.context import Modality
 from bt5.core.registry import discover
 from bt5.core.spec import Breach, Enforcement, Evaluation, RepairPolicy
-from bt5.core.types import Construct, reverse_complement
+from bt5.core.types import (
+    Construct,
+    Interval,
+    Segment,
+    SegmentKind,
+    Topology,
+    reverse_complement,
+)
 from bt5.rules.catalog.d5_cryptic_transcription import (
     AT_TRACT_GAP,
     SPACER_MAX,
@@ -135,6 +143,49 @@ class TestLatticeTerms:
         assert "TATAAT" not in CrypticTranscription().lattice_terms(None).forbidden
 
 
+class TestWhatActuallyReachesTheAutomaton:
+    """The guard against a simplification that reads as obviously correct.
+
+    As a SET the four extended -10 expansions are redundant: each contains
+    `TATAAT`, which `ATTATA`'s reverse-complement closure already forbids. But
+    `design/catalog.py::partition_forbidden` filters PER PATTERN and drops any
+    motif the immutable backbone already carries -- and both shipped lentiviral
+    backbones carry `ATTATA` and `TATACT`. Declare only the 6-mers and D5
+    contributes NOTHING to the Tier-A automaton or the I6 oracle while still
+    claiming HARD_LATTICE.
+
+    This test is the reason that stays true. It reaches across into the design
+    lane deliberately: the property it protects does not exist in either lane
+    alone.
+    """
+
+    BACKBONES = (
+        "tests/data/backbones/real_lenti_pFTMGW_EF177827.gb",
+        "tests/data/backbones/synthetic_lenti_ef1a.gb",
+    )
+
+    @pytest.mark.parametrize("path", BACKBONES)
+    def test_the_expansions_are_what_survives_partitioning(self, path: str) -> None:
+        from bt5.design.catalog import partition_forbidden
+        from bt5.vector.backbone import insertion_site_from_interval
+        from bt5.vector.io import read_genbank
+
+        root = Path(__file__).resolve().parents[4]
+        backbone = read_genbank(str(root / path))
+        site = insertion_site_from_interval(Interval(720, 780, 1), label="mcs", table_id=1)
+
+        declared = CrypticTranscription().lattice_terms(None).forbidden
+        usable, carried = partition_forbidden(declared, backbone, site)
+
+        assert usable, (
+            "every D5 pattern was dropped as backbone-carried, so the rule "
+            "reaches neither the automaton nor the oracle while still declaring "
+            "HARD_LATTICE"
+        )
+        assert set(usable) == {f"TG{base}TATAAT" for base in "ACGT"}
+        assert set(carried) == {"ATTATA", "TATACT"}
+
+
 class TestMotifParts:
     def test_the_antisense_hexamer_is_a_breach(self) -> None:
         ev = run(CrypticTranscription(), construct("ATG" + PAD + "ATTATA" + PAD + "TAA"))
@@ -196,6 +247,32 @@ class TestSigma70Architecture:
         ev = run(CrypticTranscription(), self._promoter(spacer_len))
         assert of_kind(ev, "sigma70_architecture") == []
 
+    def test_the_spacer_bounds_are_the_brief_s_numbers(self) -> None:
+        """The other spacer tests parametrize off these constants, so they pin
+        inclusivity but not the values -- 15 could drift to 14, or 19 to 22, with
+        the whole suite green. brief.md:111 gives 15-19."""
+        assert (SPACER_MIN, SPACER_MAX) == (15, 19)
+
+    @pytest.mark.parametrize(
+        ("spacer_len", "fires"), [(14, False), (15, True), (19, True), (20, False)]
+    )
+    def test_the_bounds_hold_through_behaviour_not_just_the_constants(
+        self, spacer_len: int, fires: bool
+    ) -> None:
+        """The same bounds pinned through what the rule DOES, with the lengths
+        written as literals, so a change to either constant fails here even if
+        every parametrized-off-the-constant test still passes."""
+        c = construct("ATG" + PAD + "TTGACA" + "C" * spacer_len + "TATAAT" + PAD + "TAA")
+        assert bool(of_kind(run(CrypticTranscription(), c), "sigma70_architecture")) is fires
+
+    def test_the_repair_window_reaches_the_whole_architecture(self) -> None:
+        """`solver/catalog.py:286` reads `self.window` into `RulePolicy` and
+        falls back to 50 for anything that is not an int. Nothing else asserts
+        this solver-facing contract."""
+        rule = CrypticTranscription()
+        assert isinstance(rule.window, int)
+        assert rule.window == len("TTGACA") + SPACER_MAX + len("TATAAT") == 31
+
     def test_one_mismatch_in_the_minus_35_still_matches(self) -> None:
         """brief.md:111 says "within 1 mismatch", so an exact-only scan would
         miss most real cryptic promoters."""
@@ -211,6 +288,59 @@ class TestSigma70Architecture:
         breach must describe the whole architecture."""
         (breach,) = of_kind(run(CrypticTranscription(), self._promoter(17)), "sigma70_architecture")
         assert breach.interval.length == 6 + 17 + 6
+
+
+class TestGeometryAcrossTheOrigin:
+    """The geometry half's wrap machinery, which had no test at all.
+
+    Deleting `scan = seq + seq[: span - 1]` from `_geometry_breaches` left the
+    entire engine suite green while an origin-spanning promoter went silently
+    undetected, and deleting the `% n` in `fwd` left it green while a
+    minus-strand wrapped hit raised ValueError out of `Interval`. The motif
+    closure does not cover this: the 1-mismatch -10 variants are deliberately
+    not in `forbidden`, so a wrapped promoter built from one is invisible
+    everywhere else.
+    """
+
+    #: A -10 one mismatch from TATAAT, so the geometry fires without a motif
+    #: breach on the same bases.
+    PROMOTER = "TTGACA" + "C" * 17 + "TATAAG"
+
+    def _spanning(self, seq: str, *, circular: bool = True) -> Construct:
+        return Construct(
+            seq,
+            Topology.CIRCULAR if circular else Topology.LINEAR,
+            (Segment(Interval(0, len(seq)), SegmentKind.DESIGNABLE_CDS, "cds"),),
+        )
+
+    def _seq(self) -> str:
+        """The promoter split across the origin: 20 nt close the sequence, 9 open it."""
+        return self.PROMOTER[20:] + PAD * 4 + self.PROMOTER[:20]
+
+    def test_a_promoter_spanning_the_origin_is_caught(self) -> None:
+        c = self._spanning(self._seq())
+        (breach,) = of_kind(run(CrypticTranscription(), c), "sigma70_architecture")
+        assert breach.interval == Interval(33, 62)
+        assert breach.interval.wraps(c.length)
+
+    def test_the_same_bases_laid_out_linearly_are_clean(self) -> None:
+        """The control: circularity is what creates this promoter."""
+        c = self._spanning(self._seq(), circular=False)
+        assert of_kind(run(CrypticTranscription(), c), "sigma70_architecture") == []
+
+    def test_a_wrapped_minus_strand_hit_maps_back_without_going_negative(self) -> None:
+        """`fwd`'s `% n` is what keeps this from raising out of `Interval`."""
+        c = self._spanning(reverse_complement(self._seq()))
+        ev = run(CrypticTranscription(), c, context(slot(), cassette_orientation=-1))
+        (breach,) = of_kind(ev, "sigma70_architecture")
+        assert breach.interval.start >= 0
+        assert breach.interval.wraps(c.length)
+        n = c.length
+        reported = [int(tok) for tok in re.findall(r"hexamer at (\d+)", breach.message)]
+        for pos in reported:
+            assert any(
+                breach.interval.start <= pos + k * n < breach.interval.end for k in (0, 1)
+            ), f"{pos} is outside {breach.interval} even allowing for the wrap"
 
 
 class TestAtTract:
@@ -326,6 +456,28 @@ class TestStrand:
             assert breach.interval.start <= pos < breach.interval.end, (
                 f"position {pos} in the message falls outside {breach.interval}"
             )
+
+    @pytest.mark.parametrize(
+        ("orientation", "interest", "fires"),
+        [(1, 1, True), (-1, -1, True), (1, -1, False), (-1, 1, False)],
+    )
+    def test_the_two_strand_inputs_are_composed_not_read_singly(
+        self, orientation: int, interest: int, fires: bool
+    ) -> None:
+        """`strand_for` composes `cassette_orientation` with the slot's
+        `strand_of_interest`, and only the product decides which strand is read.
+
+        Every other test here leaves `strand_of_interest` at its +1 default, so
+        replacing `strand_for(ctx, slot)` with a bare `ctx.cassette_orientation`
+        left the whole engine suite green. `core/spec.py:280-283` records that
+        this function once did return the field unchanged, so this is a
+        regression surface the codebase has actually been on."""
+        c = construct("ATG" + PAD + "TTGACA" + SPACER + "TATAAT" + PAD + "TAA")
+        ctx = context(
+            slot(strand_of_interest=interest),  # type: ignore[arg-type]
+            cassette_orientation=orientation,  # type: ignore[arg-type]
+        )
+        assert bool(of_kind(run(CrypticTranscription(), c, ctx), "sigma70_architecture")) is fires
 
     def test_the_breach_carries_the_slot_that_found_it(self) -> None:
         c = construct("ATG" + PAD + "TTGACA" + SPACER + "TATAAT" + PAD + "TAA")
