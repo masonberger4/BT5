@@ -11,11 +11,13 @@ explicitly rather than left to a happy path.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from bt5.core.context import Modality
 from bt5.core.registry import discover
 from bt5.core.spec import Breach, Enforcement, Evaluation, RepairPolicy
-from bt5.core.types import Construct
+from bt5.core.types import Construct, reverse_complement
 from bt5.rules.catalog.d5_cryptic_transcription import (
     AT_TRACT_GAP,
     SPACER_MAX,
@@ -216,7 +218,7 @@ class TestAtTract:
         return construct("ATG" + PAD + tract + "C" * gap + "TATAAT" + PAD + "TAA")
 
     @pytest.mark.parametrize("tract", ["TATTTAT", "AATTT"])
-    def test_a_tract_exactly_five_bp_upstream_is_a_promoter(self, tract: str) -> None:
+    def test_a_tract_at_the_measured_offset_is_a_promoter(self, tract: str) -> None:
         ev = run(CrypticTranscription(), self._tract(AT_TRACT_GAP, tract))
         (breach,) = of_kind(ev, "at_tract")
         assert tract in breach.message
@@ -228,6 +230,44 @@ class TestAtTract:
         this offset. A window instead of an exact offset would report the
         AT-richness of ordinary sequence."""
         assert of_kind(run(CrypticTranscription(), self._tract(gap)), "at_tract") == []
+
+    @pytest.mark.parametrize(("tract", "gap_seq"), [("TATTTAT", "TGAC"), ("AATTT", "TGAC")])
+    def test_the_papers_own_constructs_are_caught(self, tract: str, gap_seq: str) -> None:
+        """The regression test for an off-by-one that shipped past a green suite.
+
+        These are Warman & Grainger's Table 1 primers verbatim -- tract, then
+        `TGAC`, then `TATAAT`. The 103/103 result was measured on exactly this
+        geometry, so a rule citing it and not firing here is citing a result it
+        cannot reproduce.
+
+        `AT_TRACT_GAP` was 5, read straight from brief.md:111's "3' end sits
+        exactly 5 bp upstream". That is a POSITION offset (-17 to -12), not a gap
+        width: the paper's own primers put FOUR bases in between. At 5 the rule
+        scored zero breaches on both constructs below, and fired instead on a
+        one-base-shifted class nobody has tested."""
+        assert len(gap_seq) == AT_TRACT_GAP, "the primer's gap is the rule's constant"
+        c = construct("ATG" + PAD + tract + gap_seq + "TATAAT" + PAD + "TAA")
+        assert of_kind(run(CrypticTranscription(), c), "at_tract")
+
+
+class TestTheCalibrationAnchorIsNotATestVector:
+    """The dengue-2 promoter is why the hazard is taken seriously. It is NOT
+    something this rule detects, and that is pinned here so nobody later reads
+    the citation as a recall claim."""
+
+    def test_the_dengue_minus_35_is_three_mismatches_and_so_is_not_matched(self) -> None:
+        """`TCAACG` vs `TTGACA` differs at three positions -- above the brief's
+        1-mismatch budget, and above even the schema's maximum of 2."""
+        assert sum(a != b for a, b in zip("TCAACG", "TTGACA", strict=True)) == 3
+        for budget in (1, 2):
+            assert "TCAACG" not in _within_one_mismatch("TTGACA", budget)
+
+    def test_the_dengue_spacer_is_outside_the_range_the_brief_gives(self) -> None:
+        """The published coordinates are -35 at nt 53 and -10 at nt 72, so the
+        spacer is 13 bp -- not the 17 brief.md:111 states, and below SPACER_MIN
+        either way. A second, independent reason the anchor cannot match."""
+        assert 72 - (53 + 6) == 13
+        assert not SPACER_MIN <= 13 <= SPACER_MAX
 
 
 class TestScoredPathUnavailable:
@@ -268,6 +308,24 @@ class TestStrand:
         reverse = run(CrypticTranscription(), c, context(slot(), cassette_orientation=-1))
         assert of_kind(forward, "sigma70_architecture")
         assert of_kind(reverse, "sigma70_architecture") == []
+
+    def test_minus_strand_positions_agree_between_interval_and_message(self) -> None:
+        """A breach whose prose contradicts its own interval is not actionable.
+
+        `emit` remaps the interval into construct coordinates, but the messages
+        were formatted from raw reverse-strand scan indices -- so on a
+        reverse-oriented cassette the -35 and -10 were printed at each other's
+        positions."""
+        promoter = "ATG" + PAD + "TTGACA" + SPACER + "TATAAT" + PAD + "TAA"
+        c = construct(reverse_complement(promoter))
+        ev = run(CrypticTranscription(), c, context(slot(), cassette_orientation=-1))
+        (breach,) = of_kind(ev, "sigma70_architecture")
+        reported = [int(tok) for tok in re.findall(r"hexamer at (\d+)", breach.message)]
+        assert reported, "the message must name both element positions"
+        for pos in reported:
+            assert breach.interval.start <= pos < breach.interval.end, (
+                f"position {pos} in the message falls outside {breach.interval}"
+            )
 
     def test_the_breach_carries_the_slot_that_found_it(self) -> None:
         c = construct("ATG" + PAD + "TTGACA" + SPACER + "TATAAT" + PAD + "TAA")
