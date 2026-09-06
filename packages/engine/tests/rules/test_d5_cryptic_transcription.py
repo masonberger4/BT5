@@ -101,8 +101,31 @@ class TestContract:
 
 class TestLatticeTerms:
     def test_declares_the_three_pattern_shaped_parts(self) -> None:
+        """The extended -10 is declared pre-expanded, so six strings cover three
+        sub-rules."""
         forbidden = set(CrypticTranscription().lattice_terms(None).forbidden)
-        assert forbidden == {"ATTATA", "TGNTATAAT", "TATACT"}
+        assert forbidden == {
+            "ATTATA",
+            "TATACT",
+            "TGATATAAT",
+            "TGCTATAAT",
+            "TGGTATAAT",
+            "TGTTATAAT",
+        }
+
+    def test_every_declared_motif_is_pure_acgt(self) -> None:
+        """The regression this rule was the first in the catalog to hit.
+
+        `LatticeTerms.forbidden` is documented IUPAC and the SOLVER supports it
+        (#73, closed by #77). But `design/catalog.py:77` still carries the interim
+        guard from #71 and raises `DesignError` on any degenerate base before the
+        solver ever sees the pattern, so a bare `TGNTATAAT` here failed 51
+        end-to-end design tests. Declaring the expansion is the in-lane fix;
+        this pins it."""
+        forbidden = CrypticTranscription().lattice_terms(None).forbidden
+        assert forbidden, "a HARD_LATTICE rule must declare motifs"
+        for motif in forbidden:
+            assert set(motif) <= set("ACGT"), f"{motif} is not pure ACGT"
 
     def test_does_not_list_tataat_because_the_closure_supplies_it(self) -> None:
         """`ATTATA` IS the reverse complement of `TATAAT`. Listing both would
@@ -129,13 +152,13 @@ class TestMotifParts:
 
     def test_the_extended_minus_10_matches_every_n_expansion(self) -> None:
         """`TGnTATAAT` needs no -35, so each of the four expansions is its own
-        promoter. The message must name the substring actually present, not the
-        IUPAC pattern that was listed."""
+        promoter and each is declared in its own right. The message must name the
+        substring actually present."""
         for base in "ACGT":
             motif = f"TG{base}TATAAT"
             ev = run(CrypticTranscription(), construct("ATG" + PAD + motif + PAD + "TAA"))
-            found = [b for b in of_kind(ev, "motif") if b.detail["motif"] == "TGNTATAAT"]
-            assert found, f"TGNTATAAT must match {motif}"
+            found = [b for b in of_kind(ev, "motif") if b.detail["motif"] == motif]
+            assert found, f"the extended -10 must match {motif}"
             assert found[0].detail["found"] == motif
             assert motif in found[0].message
 

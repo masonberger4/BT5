@@ -23,7 +23,7 @@ Five parts, and they do not all have the same shape:
 
 WHY THIS RULE CARRIES TWO ENFORCEMENT MECHANISMS
 ------------------------------------------------
-(b), (d) and (e) are fixed or IUPAC strings, so the Tier-A automaton can make
+(b), (d) and (e) are finite string sets, so the Tier-A automaton can make
 them unreachable by construction. (a) and (c) are GEOMETRY -- two elements at a
 declared distance -- and no finite forbidden-string set expresses "15 to 19 bases
 apart". Enumerating it would be 19 x 5 x 19 x 4^spacer patterns.
@@ -111,11 +111,29 @@ MINUS_10 = "TATAAT"
 SPACER_MIN = 15
 SPACER_MAX = 19
 
-#: `brief.md:111` (b) and (d). IUPAC `N` is expanded by the solver BEFORE the
-#: reverse-complement closure (docs/decisions/2026-09-01-expand-forbidden-iupac.md);
-#: one N is 4 concrete patterns, far under MAX_PATTERN_EXPANSION = 1024.
+#: `brief.md:111` (b) and (d). The brief writes the extended -10 as `TGnTATAAT`,
+#: and that IUPAC form is kept here because it is what the row says.
 EXTENDED_MINUS_10 = "TGNTATAAT"
 SIGMA38_MINUS_10 = "TATACT"
+
+#: The extended -10 PRE-EXPANDED to its four ACGT forms, which is what
+#: `lattice_terms` actually declares.
+#:
+#: The solver itself handles IUPAC: PR #77 closed issue #73 by expanding
+#: degenerate bases before the reverse-complement closure
+#: (docs/decisions/2026-09-01-expand-forbidden-iupac.md), and one `N` is four
+#: patterns, far under `MAX_PATTERN_EXPANSION = 1024`. But the DESIGN lane still
+#: carries the interim guard #73 itself calls "a guard, not a fix":
+#: `design/catalog.py:77` raises `DesignError` on any non-ACGT character in the
+#: forbidden set, and it was never retired when #77 landed. It runs before the
+#: solver sees the pattern, so a bare `TGNTATAAT` fails every end-to-end design.
+#:
+#: Expanding here rather than removing the guard there is a lane call, not a
+#: preference: `design/` is M11 and this rule owns only `rules/catalog/`. The
+#: expansion is exactly what the solver would compute, so the constraint is
+#: unchanged -- each of the four is still closed under reverse complement by the
+#: solver. When the stale guard goes, this collapses back to the one IUPAC string.
+EXTENDED_MINUS_10_PATTERNS: tuple[str, ...] = tuple(f"TG{base}TATAAT" for base in "ACGT")
 
 #: `brief.md:112` (e). The novel part.
 ANTISENSE_MINUS_10 = "ATTATA"
@@ -125,6 +143,15 @@ ANTISENSE_MINUS_10 = "ATTATA"
 #: the offset is exact and not a window.
 AT_TRACTS: tuple[str, ...] = ("TATTTAT", "AATTT")
 AT_TRACT_GAP = 5
+
+#: What each declared pattern is called in a finding, keyed by the pattern as
+#: `lattice_terms` declares it -- so the four expansions of the extended -10 all
+#: carry the same name.
+MOTIF_LABELS: dict[str, str] = {
+    ANTISENSE_MINUS_10: "antisense -10 (revcomp of TATAAT) on the sense strand",
+    SIGMA38_MINUS_10: "sigma-38 -10 variant",
+    **dict.fromkeys(EXTENDED_MINUS_10_PATTERNS, "extended -10 (needs no -35)"),
+}
 
 #: The widest promoter architecture this rule recognises: -35 (6) + longest
 #: spacer (19) + -10 (6). Read by `solver/catalog.py:286` into
@@ -310,7 +337,9 @@ class CrypticTranscription:
         construction, so `ATTATA` also removes sense-strand `TATAAT` -- argued in
         the module docstring, and kept.
         """
-        return LatticeTerms(forbidden=(ANTISENSE_MINUS_10, EXTENDED_MINUS_10, SIGMA38_MINUS_10))
+        return LatticeTerms(
+            forbidden=(ANTISENSE_MINUS_10, *EXTENDED_MINUS_10_PATTERNS, SIGMA38_MINUS_10)
+        )
 
     def evaluate(self, c: Construct, ctx: DesignContext, svc: Services) -> Evaluation:
         """Motif parts on the closed set; geometry once per slot, on its strand."""
@@ -352,11 +381,7 @@ class CrypticTranscription:
         `Evaluation`, so a rule that reported nothing here would look like a
         clean scan of the parts it never checked.
         """
-        labels = {
-            EXTENDED_MINUS_10: "extended -10 (needs no -35)",
-            SIGMA38_MINUS_10: "sigma-38 -10 variant",
-            ANTISENSE_MINUS_10: "antisense -10 (revcomp of TATAAT) on the sense strand",
-        }
+        labels = MOTIF_LABELS
         out: list[Breach] = []
         for motif, pos in find_motifs(c, list(labels)):
             iv = Interval(pos, pos + len(motif))
