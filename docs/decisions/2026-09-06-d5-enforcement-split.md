@@ -93,3 +93,54 @@ is exactly the condition CLAUDE.md §3.6 names.
 
 **Where:** branch `claude/next-build-plan-cjmqj6`; wave-2 slice W3
 (`docs/buildout/wave2/w3-d5-cryptic-transcription.md`).
+
+---
+
+## 2026-09-06 — the brief's "5 bp upstream" is a position offset, and D5 read it as a gap
+
+**Decided:** `AT_TRACT_GAP = 4`, meaning **four bases between** the AT-tract and the −10-like
+hexamer — not five. `brief.md:111` says the tract's "3′ end sits exactly 5 bp upstream of a
+−10-like hexamer", which reads naturally as five intervening bases and is how D5 first
+shipped. It is a **position** offset: Warman & Grainger place the tract at promoter
+positions −23..−17 and the −10 at −12..−7, and −17 to −12 is five positions but four bases
+in between. Their Table 1 primers settle it without arithmetic — `tatttat` + `TGAC` +
+`tataat`.
+
+The consequence of the original reading was not a near-miss. Run against both constructs
+the 103/103 result was measured on, the rule returned **zero** AT-tract breaches, and fired
+instead on a one-base-shifted class nobody has tested. The rule cited a result it could not
+reproduce, and the paired test asserted the wrong offset was correct in both directions.
+
+**Rejected:**
+
+- *Keeping 5 because the brief says 5.* The brief is a summary; the rule-auditor's whole
+  question is whether the cited source supports the number, and here it does not. Following
+  the summary over the source would have shipped a rule that misses its own calibration set.
+- *Widening to a window of 4-5, or 3-6.* "Appropriately positioned" is the entire finding —
+  the paper's own control is a randomized tract at a **fixed** offset. A window would report
+  the AT-richness of ordinary sequence, which is the noise this sub-rule exists to avoid.
+- *Reporting both offsets at different magnitudes.* Same objection, plus it would invent a
+  strength ordering no source measured.
+
+**Evidence:** reproduced before the constant was touched — `TATTTAT`+`TGAC`+`TATAAT` and
+`AATTT`+`TGAC`+`TATAAT` both scored 0 `at_tract` breaches at gap 5 and 1 at gap 4.
+`test_the_papers_own_constructs_are_caught` now pins the primers themselves, so the citation
+and the code cannot drift apart again.
+
+**Also settled in the same audit:**
+
+- The **dengue-2 anchor is not a test vector**, and nothing may imply it is. Its −35
+  `TCAACG` is 3 mismatches from `TTGACA` (above even the schema's maximum budget of 2), and
+  its real spacer is 13 bp — `brief.md:111`'s "17-bp spacer" does not survive the paper's own
+  coordinates (nt 53 → nt 72). The paper also does not contain the word "uncloneable", and it
+  showed the −35 **not** essential, so `sign="qualifies"`. Two tests pin the non-detection
+  with the reason, because an unpinned negative reads as recall the rule does not have.
+- **`Evidence.CONTESTED`, not `EVIDENCE_BACKED`.** `brief.md:110` marks D5 "H/S" and attaches
+  no A/B/C letter (legend at `brief.md:46`), so the badge is the rule's own call. The part
+  enforced most aggressively — `ATTATA`, unreachable by construction — rests on a
+  computational study with no transcription assay.
+- **`brief.md:209` cannot support the IVT gate** and was dropped from `gate()`'s docstring:
+  it is the by-expression-host table and has no IVT mRNA column. `brief.md:110`'s "applies to
+  ALL constructs regardless of final host" carries the decision alone.
+
+**Where:** branch `claude/next-build-plan-cjmqj6`, commit `18a3163`; PR #153.
