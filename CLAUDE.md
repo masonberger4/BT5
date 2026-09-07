@@ -1,7 +1,8 @@
 # BT5 — contract for AI coding sessions
 
 Design: `docs/PLAN.md`. Science: `docs/research/brief.md`. Reach both via `docs-miner`,
-never inline; rationale that isn't here lives in `.claude/rules/`. Python 3.11, one package
+never inline; rationale that isn't here lives in `.claude/rules/` (per-lane) and
+`docs/decisions/` (settled calls, incl. rejected ones). Python 3.11, one package
 in src-layout at `packages/engine/src/bt5`. **Every command uses `.venv/bin/…`, never the
 bare name.** No `.venv`? Run `/bootstrap`.
 
@@ -35,9 +36,13 @@ baselines → `algorithm-change`; `data/{genetic_codes,codon_usage}/**` → `dat
 `pyproject.toml`/`uv.lock`: **never add a dependency**; on a lockfile conflict rebase and
 regenerate — never hand-merge it.
 
-`core/` is frozen. **MINOR** = a new type, a defaulted field, an enum member. **MAJOR** = a
-removal, rename, changed annotation/default/signature, a field losing its default, a new
-protocol method — needs an RFC and a deprecation shim. `/contract-change`; classify FIRST.
+`core/` is frozen, and `tests/contract/surface.py:22-25` is the classifier. **MINOR** = a new
+type, a defaulted field, an enum member, a field GAINING a default. **MAJOR** = a removal,
+rename, changed annotation/signature, a changed default *value*, a field LOSING its default,
+a new protocol method — needs an RFC and a deprecation shim. `/contract-change`; classify FIRST.
+
+`.claude/agent-memory/**` carries no label but the edit hook asks anyway: it is an instruction
+channel that ships inside the PR diff, so read any change to it before you accept it.
 
 ## 3. Rules that are not negotiable
 
@@ -50,7 +55,8 @@ protocol method — needs an RFC and a deprecation shim. `/contract-change`; cla
    `LatticeTerms.forbidden` and let the solver close the set. Directional scored models are
    NOT revcomp-symmetric — they must read `slot.strand_of_interest`.
 5. **Hard constraints are never a penalty weight.** Use `HARD_LATTICE`, `HARD_REPAIR` or
-   `HARD_CHECK`, each with `default_weight` 0.0; `steering_weight` nudges the DP.
+   `HARD_CHECK`, each with `default_weight` 0.0. `steering_weight` is a declared channel the
+   solver does not read yet — today's only Tier-A steering is `solve_with_gc_steering`.
 6. **Splice-site removal must use `RepairPolicy.FIXED_POINT`.** A single pass ships a
    construct whose donors were removed *into* new donors, and the validator passes it.
 7. **Seed every RNG explicitly** with `np.random.default_rng(seed)`. Global `np.random.*`
@@ -62,8 +68,10 @@ protocol method — needs an RFC and a deprecation shim. `/contract-change`; cla
    A property failing on your PR **and** on the merge base is a pre-existing bug: record a
    fixture under `tests/data/regressions/`, open an issue, say so in the PR — **owner** merges.
 10. **Never give a workflow that owns a required check a `paths:` filter**, and never add a
-   CI job without adding it to `required-checks.needs` — a required check that never reports
-   blocks the PR forever, with no error anywhere.
+   CI job without adding it to `required-checks.needs` — or, if it is skipped on
+   `pull_request` (as `main-broken` is), to `NON_BLOCKING` in `check-workflow-gate.py`, since
+   a `skipped` dependency counts as failure. A required check that never reports blocks the
+   PR forever, with no error anywhere.
 11. **Never add a "minimize identity to a reference sequence" objective**, or let `KmerIndex`
    accept an external database — constraining the index to the assembled construct is all
    that keeps BT5 from being a general-purpose screening-evasion tool.
@@ -93,13 +101,15 @@ to what the app REFUSES to build; an unresolved review thread. Say in the PR why
 ## 5. Context management
 
 Volume work goes to a subagent so its output never enters this window. Capability failure
-raises the model; diligence failure raises the effort. `docs/**` → `docs-miner` · code →
+raises the model; diligence failure raises the effort. `docs/{research,design}/**` and
+`PLAN.md` → `docs-miner` (read `decisions/` and `buildout/` directly) · code →
 `Explore` · gates → `gate-runner` · ≥5 identical edits → `/cheap-pass` · a missed fix →
 `debugger` · before a PR → `/pre-pr` · cross-lane, `core/`, or a MINOR/MAJOR call →
 `/architect` · stuck → `/escalate`. **Never bare-Read a source file over 20 KB** — the big
-ones are in `vector/` and `rules/`; use `offset`/`limit`, or delegate. **Append settled
-decisions** to `docs/decisions/` each work slice as one new `YYYY-MM-DD-slug.md`: what
-survives compaction is what lives on disk, and one shared file collides across sessions.
+ones are in `rules/`, `design/`, `solver/`, `vector/`; use `offset`/`limit`, or delegate.
+**Append settled decisions** to `docs/decisions/` each work slice as one new
+`YYYY-MM-DD-slug.md`: what survives compaction is what lives on disk, and one shared file
+collides across sessions.
 
 **Compaction must preserve:** the task and its acceptance criteria; lane, branch and
 `approved:*` label; every touched file path; the failing gate, node ids and **exact error
