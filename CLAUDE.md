@@ -16,11 +16,14 @@ vocabulary from the schema.
 
 ## 1. Stay in your lane
 
-One lane per PR; you own exactly one directory under `bt5/` and edit no other: M1 `solver/`,
-M2 `vector/`, M3 `score/`, M4 `rules/catalog/`, M5 `codon/`, M6 `structure/`, M8 `cassette/`.
-Rules never touch the solver or the oracle; nothing but M1 touches the solver. M7/M9/M10
-(`packaging/`, `packages/server/`, `apps/web/`) are planned. Cross-lane changes need an issue
-first; blocked on another lane, code against the protocol in `bt5/core/` and a recorded
+One lane per PR; you own a **declared set of paths** and edit no other. Under `bt5/`: M1
+`solver/`, M2 `vector/`, M3 `score/`, M4 `rules/catalog/`, M5 `codon/`, M6 `structure/`,
+M8 `cassette/`, M11 `design/`. M7 is `packaging/` (repo root, not under `bt5/`) plus
+`bt5/cli.py`. M9/M10 (`packages/server/`, `apps/web/`) are planned. A lane is usually one
+directory but not always — the live matrix is `docs/buildout/wave2/README.md`, where W2 owns
+`design/` **and** `score/`; take your path set from there, not from the count. Rules never
+touch the solver or the oracle; nothing but M1 touches the solver. Cross-lane changes need an
+issue first; blocked on another lane, code against the protocol in `bt5/core/` and a recorded
 fixture — never reach into their directory.
 
 ## 2. Protected paths
@@ -70,9 +73,12 @@ protocol method — needs an RFC and a deprecation shim. `/contract-change`; cla
 
 Branch from `main`. Squash only. Fill in the PR template, including "scientific impact" —
 what changed about the sequences the app produces, not just the code. Open as a **draft**
-until done: drafts skip the expensive CI jobs, and CI capacity binds (~5 non-draft PRs max).
-Before pushing run `/pre-pr`. After a merge: `git remote prune origin` (NOT `--prune origin
-main`, which prunes only `origin/main`), then `git checkout -B <branch> origin/main`.
+until done — it cannot be merged by mistake. A draft does **not** save CI: every job runs on
+drafts too (`claude-review-gate`, the one job that skipped them, went on 2026-09-05), and CI
+capacity binds (~5 non-draft PRs max). Before pushing run `/pre-pr`. After a merge:
+`git remote prune origin` (NOT `--prune origin main`, which prunes only `origin/main`), then
+`git fetch origin main && git checkout -B <branch> origin/main` — `remote prune` fetches
+nothing, so without the fetch the new branch starts at the **pre-merge** commit.
 
 **An agent may squash-merge its own PR once CI is green** — green means the ONE required
 context on the PR's CURRENT head: `required-checks`. `pre-pr-attest` was a second required
