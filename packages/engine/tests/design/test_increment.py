@@ -976,40 +976,52 @@ class TestTheFallbackWhenNothingSolves:
 
 
 class TestCandidateProvenance:
-    """Where a caller finds a design's provenance, pinned in both directions (#99).
+    """Where a caller finds a design's provenance. DECIDED (#99): annotation exports.
 
     #89 restructured the walking skeleton's single annotated result into a panel,
     and `annotate()` became a per-EXPORT step: it is called once, on the winner,
     and its output feeds the GenBank string only. Nothing attaches it back to a
     `Candidate`, so `candidate.construct` is the raw assembly for every candidate
     including the baseline. A review bot on `design/runner.py:567` read that as a
-    provenance loss, and #99 asks the lane owner to decide whether it is one.
+    provenance loss, and #99 asked the lane owner whether it was one.
 
-    Nothing tested it either way -- `.sequence` was compared and `.features` and
-    `.annotations` never were -- so the decision had nothing to overturn and no
-    way to notice a drift. This class is that missing pin. It does NOT decide
-    #99; it states exactly what is true today so the choice is between two
-    described states rather than two guesses.
+    **It is not.** Closed 2026-09-07 in favour of the shape these tests pin, on
+    the argument that ordering DNA needs a sequence and not a map:
 
-    IF #99 DECIDES THE CURRENT SHAPE IS INTENDED, this class stays and the
-    `Candidate` docstring in `core/result.py` should say annotation is an export
-    step (a `core/` docstring, so via `/contract-change`).
+    - `design/order.py:50-53` builds every order line from `candidate.cds`, so
+      all six panel members -- winner, gallery and `native_baseline` -- are
+      already orderable with a name, a hash and a sequence. Annotation is not on
+      that path, and a caller annotates in their own tooling anyway.
+    - `design_hash` is a first-class `Candidate` FIELD, so provenance is read
+      directly and never parsed out of a GenBank comment. `core/result.py`
+      promises the hash reaches "the report, the GenBank note and the order
+      file" -- a claim about where it ARRIVES, and it arrives. It says nothing
+      about `Candidate.construct`, so it is correct as written and was
+      deliberately left alone rather than amended through `/contract-change`.
+    - Annotating the panel would run four scans and a `ConstructKmerIndex` build
+      per construct, six times over, against G7's 10 s bar -- to produce a map
+      that is regenerated downstream.
 
-    IF #99 DECIDES IT IS AN OVERSIGHT, `test_candidate_constructs_are_unannotated`
-    is the test to invert -- and it names, in its own message, what the fix has to
-    supply. Do not delete it; make it assert the annotated shape instead.
+    So this class stops being a placeholder and becomes the record: the decision
+    lives here, in the lane that owns it, rather than in a frozen `core/`
+    docstring.
+
+    Annotating candidates is therefore a REVERSAL, not a fix. It needs a reason
+    the three points above do not already answer, and
+    `test_candidate_constructs_are_unannotated` is the test to invert when one
+    appears. Do not delete it; make it assert the annotated shape instead.
     """
 
     def test_design_hash_is_on_the_candidate_itself(
         self, backbone: VectorBackbone, fast: Any
     ) -> None:
-        """The load-bearing half, and the reason the current shape may be fine.
+        """The load-bearing half, and the reason the decided shape is fine.
 
         `Candidate.design_hash` is a first-class FIELD. A caller wanting
         provenance reads it directly and never has to parse a GenBank comment, so
-        an unannotated `construct` costs nothing as long as this holds. If this
-        test ever fails, the #99 question stops being a style call and becomes a
-        real loss.
+        an unannotated `construct` costs nothing as long as this holds. It is
+        the premise #99 was closed on: if this test ever fails, that decision
+        loses its argument and should be reopened.
         """
         res = fast(backbone)
         for candidate in res.result.candidates:
@@ -1037,11 +1049,14 @@ class TestCandidateProvenance:
     def test_candidate_constructs_are_unannotated(
         self, backbone: VectorBackbone, fast: Any
     ) -> None:
-        """THE #99 PIN. Every candidate carries the raw assembly, not the
-        annotated one: no `bt5_origin` provenance stamps and no design comment.
+        """THE #99 PIN, and now the decided shape. Every candidate carries the
+        raw assembly, not the annotated one: no `bt5_origin` provenance stamps
+        and no design comment.
 
-        Inverting this is the fix if #99 decides annotation belongs on the
-        candidate. What that fix must supply is exactly what this test looks for.
+        #99 closed in favour of this, so a failure here is a REGRESSION --
+        annotation has come back onto the candidate path -- and not a fix
+        landing. What a deliberate reversal must supply is exactly what this test
+        looks for.
         """
         from bt5.vector.annotate import ORIGIN_QUALIFIER
 
@@ -1054,18 +1069,20 @@ class TestCandidateProvenance:
             stamped = [f for f in construct.features if ORIGIN_QUALIFIER in f.qualifiers]
             assert not stamped, (
                 f"{candidate.label}: construct now carries {len(stamped)} "
-                f"{ORIGIN_QUALIFIER} stamps. If #99 was decided in favour of "
-                f"annotating candidates, invert this test rather than deleting it."
+                f"{ORIGIN_QUALIFIER} stamps. #99 decided annotation is an export "
+                f"step, so this is a regression unless that decision was "
+                f"reopened; if it was, invert this test rather than deleting it."
             )
             assert "comment" not in (construct.annotations or {}), (
-                f"{candidate.label}: construct now carries a provenance comment; "
-                f"see #99 and invert this test."
+                f"{candidate.label}: construct now carries a provenance comment. "
+                f"#99 decided against annotating candidates; read this class's "
+                f"docstring before inverting this test."
             )
 
     def test_the_exported_construct_is_annotated_and_the_candidate_is_not(
         self, backbone: VectorBackbone, fast: Any
     ) -> None:
-        """The two shapes side by side, which is what makes the #99 choice legible.
+        """The two shapes side by side, which is what made the #99 choice legible.
 
         Same sequence, different annotation: whatever is missing from
         `candidate.construct` is present in the export, so nothing is LOST -- it
